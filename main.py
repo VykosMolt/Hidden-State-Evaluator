@@ -19,15 +19,17 @@ print(f"Model is on: {next(model.parameters()).device}")
 
 model.config.early_exit_threshold = 0.87
 
+conversation_history = []
+
 while True:
     prompt = input("\nEnter prompt (or 'quit' to exit): ")
     if prompt.lower() == "quit":
         break
 
-    messages = [{"role": "user", "content": prompt}]
+    conversation_history.append({"role": "user", "content": prompt})
 
     inputs = tokenizer.apply_chat_template(
-        messages,
+        conversation_history,
         tokenize=True,
         add_generation_prompt=True,
         return_tensors="pt"
@@ -37,10 +39,15 @@ while True:
 
     print("Generating...")
     outputs = model.generate(
-        inputs,attention_mask=attention_mask,
+        inputs,
+        attention_mask=attention_mask,
         max_new_tokens=1024,
         temperature=1.0,
         top_p=0.7
     )
 
-    print(tokenizer.decode(outputs[0], skip_special_tokens=True))
+    full_response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    assistant_response = full_response.split("assistant")[-1].strip()
+    print("\n" + assistant_response)
+
+    conversation_history.append({"role": "assistant", "content": assistant_response})
