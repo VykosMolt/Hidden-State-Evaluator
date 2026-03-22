@@ -17,6 +17,8 @@ model = AutoModelForCausalLM.from_pretrained(
 print("Model loaded successfully!")
 print(f"Model is on: {next(model.parameters()).device}")
 
+model.config.early_exit_threshold = 0.87
+
 while True:
     prompt = input("\nEnter prompt (or 'quit' to exit): ")
     if prompt.lower() == "quit":
@@ -36,7 +38,7 @@ while True:
     print("Generating...")
     outputs = model.generate(
         inputs,attention_mask=attention_mask,
-        max_new_tokens=2048,
+        max_new_tokens=1024,
         temperature=1.0,
         top_p=0.7
     )
