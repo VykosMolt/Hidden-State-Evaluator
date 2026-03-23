@@ -44,6 +44,7 @@ def hook_fn(module, input, output):
     captured["hidden_states_list"] = [h.detach() for h in output[1]]
 
 def get_all_hidden_states(model, tokens):
+    captured.clear()
     with torch.no_grad():
         model(**tokens)
 
@@ -66,20 +67,21 @@ def pairwise_loss(score_chosen, score_rejected):
 
 def trajectory_loss(scores_chosen, scores_rejected):
     n = len(scores_chosen)
-
-    # final step is the authoritative judgment
     final_loss = pairwise_loss(scores_chosen[-1], scores_rejected[-1])
 
-    # earlier steps provide auxiliary signal
     if n > 1:
+        weights = torch.linspace(0.5, 1.0, steps=n-1).to(scores_chosen[0].device)
+        weights = weights / weights.sum()
+
         aux_loss = sum(
-            pairwise_loss(sc, sr)
-            for sc, sr in zip(scores_chosen[:-1], scores_rejected[:-1])
-        ) / (n - 1)
+            w * pairwise_loss(sc, sr)
+            for w, sc, sr in zip(weights, scores_chosen[:-1], scores_rejected[:-1])
+        )
+        # normalize by loop count relative to expected 4 steps
+        aux_loss = aux_loss * (n / 4.0)
         return final_loss + 0.1 * aux_loss
 
     return final_loss
-
 # --- Main Training ---
 def train():
     print("Loading tokenizer...")
