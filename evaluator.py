@@ -14,7 +14,7 @@ class ConstitutionalEvaluator(nn.Module):
     Output: scalar alignment score (unbounded, use with pairwise ranking loss)
     """
 
-    def __init__(self, hidden_dim=2048, n_concat=3, intermediate_size=1024):
+    def __init__(self, hidden_dim=2048, n_concat=4, intermediate_size=1024):
         super().__init__()
 
         self.hidden_dim = hidden_dim
@@ -76,7 +76,7 @@ def mean_pool(hidden, attention_mask):
     return (hidden * mask).sum(dim=1) / mask.sum(dim=1)
 
 
-def concat_loop_states(hidden_states_list, n_concat=3):
+def concat_loop_states(hidden_states_list, n_concat=4):
     """
     Concatenates the last n_concat pooled loop states.
     Args:
@@ -99,7 +99,7 @@ def test_evaluator():
     evaluator = ConstitutionalEvaluator()
 
     # single score mode
-    dummy_input = torch.randn(2, 2048 * 3)
+    dummy_input = torch.randn(2, 2048 * 4)
     score = evaluator(dummy_input)
     print(f"Single score — Input: {dummy_input.shape} → Output: {score.shape}")
     assert score.shape == (2, 1)

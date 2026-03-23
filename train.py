@@ -8,7 +8,7 @@ import os
 
 # --- Configuration ---
 MODEL_NAME = "ByteDance/Ouro-2.6B-Thinking"
-BATCH_SIZE = 4
+BATCH_SIZE = 2
 EPOCHS = 3
 LEARNING_RATE = 1e-4
 MAX_LENGTH = 1024
@@ -61,7 +61,7 @@ def get_all_hidden_states(model, tokens):
 # --- Pairwise Ranking Loss ---
 def pairwise_loss(score_chosen, score_rejected):
     ranking_loss = -torch.log(torch.sigmoid(score_chosen - score_rejected)).mean()
-    l2_reg = 0.01 * (score_chosen**2 + score_rejected**2).mean()
+    l2_reg = 0.001 * (score_chosen**2 + score_rejected**2).mean()
     return ranking_loss + l2_reg
 
 def trajectory_loss(scores_chosen, scores_rejected):
@@ -76,7 +76,7 @@ def trajectory_loss(scores_chosen, scores_rejected):
             pairwise_loss(sc, sr)
             for sc, sr in zip(scores_chosen[:-1], scores_rejected[:-1])
         ) / (n - 1)
-        return final_loss + 0.3 * aux_loss
+        return final_loss + 0.1 * aux_loss
 
     return final_loss
 
