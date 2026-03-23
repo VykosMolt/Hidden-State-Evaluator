@@ -1,10 +1,11 @@
+import os
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from datasets import load_dataset
 from evaluator import ConstitutionalEvaluator, mean_pool, concat_loop_states
-import os
 
 # --- Configuration ---
 MODEL_NAME = "ByteDance/Ouro-2.6B-Thinking"
@@ -19,7 +20,7 @@ os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
 # --- Dataset ---
 class ConstitutionalDataset(Dataset):
-    def __init__(self, split="train", max_samples=15000):
+    def __init__(self, split="train", max_samples=25000):
         print(f"Loading HH-RLHF dataset ({split})...")
         ds = load_dataset("Anthropic/hh-rlhf", split=split)
         ds = ds.shuffle(seed=42)
@@ -107,7 +108,7 @@ def train():
     evaluator = ConstitutionalEvaluator().to(DEVICE)
     optimizer = torch.optim.AdamW(evaluator.parameters(), lr=LEARNING_RATE)
 
-    dataset = ConstitutionalDataset(split="train", max_samples=15000)
+    dataset = ConstitutionalDataset(split="train", max_samples=25000)
     dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
 
     print("Starting training...")
