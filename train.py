@@ -19,7 +19,7 @@ os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
 # --- Dataset ---
 class ConstitutionalDataset(Dataset):
-    def __init__(self, split="train", max_samples=10000):
+    def __init__(self, split="train", max_samples=15000):
         print(f"Loading HH-RLHF dataset ({split})...")
         ds = load_dataset("Anthropic/hh-rlhf", split=split)
         ds = ds.shuffle(seed=42)
@@ -64,6 +64,22 @@ def pairwise_loss(score_chosen, score_rejected):
     l2_reg = 0.01 * (score_chosen**2 + score_rejected**2).mean()
     return ranking_loss + l2_reg
 
+def trajectory_loss(scores_chosen, scores_rejected):
+    n = len(scores_chosen)
+
+    # final step is the authoritative judgment
+    final_loss = pairwise_loss(scores_chosen[-1], scores_rejected[-1])
+
+    # earlier steps provide auxiliary signal
+    if n > 1:
+        aux_loss = sum(
+            pairwise_loss(sc, sr)
+            for sc, sr in zip(scores_chosen[:-1], scores_rejected[:-1])
+        ) / (n - 1)
+        return final_loss + 0.3 * aux_loss
+
+    return final_loss
+
 # --- Main Training ---
 def train():
     print("Loading tokenizer...")
@@ -89,7 +105,7 @@ def train():
     evaluator = ConstitutionalEvaluator().to(DEVICE)
     optimizer = torch.optim.AdamW(evaluator.parameters(), lr=LEARNING_RATE)
 
-    dataset = ConstitutionalDataset(split="train", max_samples=5000)
+    dataset = ConstitutionalDataset(split="train", max_samples=15000)
     dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
 
     print("Starting training...")
@@ -128,10 +144,7 @@ def train():
             scores_chosen, _ = evaluator.trajectory(pooled_chosen)
             scores_rejected, _ = evaluator.trajectory(pooled_rejected)
 
-            loss = sum(
-                pairwise_loss(sc, sr)
-                for sc, sr in zip(scores_chosen, scores_rejected)
-            )
+            loss = trajectory_loss(scores_chosen, scores_rejected)
 
             loss.backward()
 
