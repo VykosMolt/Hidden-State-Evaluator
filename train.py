@@ -11,7 +11,7 @@ MODEL_NAME = "ByteDance/Ouro-2.6B-Thinking"
 BATCH_SIZE = 4
 EPOCHS = 3
 LEARNING_RATE = 1e-4
-MAX_LENGTH = 512
+MAX_LENGTH = 1024
 CHECKPOINT_DIR = "checkpoints"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -19,9 +19,10 @@ os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
 # --- Dataset ---
 class ConstitutionalDataset(Dataset):
-    def __init__(self, split="train", max_samples=5000):
+    def __init__(self, split="train", max_samples=10000):
         print(f"Loading HH-RLHF dataset ({split})...")
         ds = load_dataset("Anthropic/hh-rlhf", split=split)
+        ds = ds.shuffle(seed=42)
         if max_samples:
             ds = ds.select(range(min(max_samples, len(ds))))
         self.data = ds
@@ -59,7 +60,9 @@ def get_all_hidden_states(model, tokens):
 
 # --- Pairwise Ranking Loss ---
 def pairwise_loss(score_chosen, score_rejected):
-    return -torch.log(torch.sigmoid(score_chosen - score_rejected)).mean()
+    ranking_loss = -torch.log(torch.sigmoid(score_chosen - score_rejected)).mean()
+    l2_reg = 0.01 * (score_chosen**2 + score_rejected**2).mean()
+    return ranking_loss + l2_reg
 
 # --- Main Training ---
 def train():
