@@ -117,7 +117,6 @@ def validate_hook_output(output):
         f"Expected tensor in hidden states list, got {type(first)}"
     assert first.dim() == 3, \
         f"Expected 3D tensor [batch, seq_len, hidden_dim], got {first.dim()}D"
-    # check hidden dim is consistent across loop steps
     hidden_dim = first.shape[-1]
     for i, h in enumerate(output):
         assert h.shape[-1] == hidden_dim, \
@@ -130,8 +129,12 @@ def linear_probe_test(pooled_chosen_list, pooled_rejected_list, use_final_only=T
     Run this before committing to training — if a linear probe gets ~60%,
     the representations don't carry much signal and architecture won't save you.
 
+    Uses pairwise framing: classifies direction of (chosen - rejected) margin
+    vector rather than labeling individual responses. This directly tests whether
+    relative preference is linearly encoded in the hidden state space.
+
     Args:
-        pooled_chosen_list: list of [batch, hidden_dim] tensors (one list per example)
+        pooled_chosen_list: list of lists of [batch, hidden_dim] tensors
         pooled_rejected_list: same for rejected
         use_final_only: if True, only use the last loop state
     Returns:
@@ -145,24 +148,25 @@ def linear_probe_test(pooled_chosen_list, pooled_rejected_list, use_final_only=T
 
     for chosen_states, rejected_states in zip(pooled_chosen_list, pooled_rejected_list):
         if use_final_only:
-            c = chosen_states[-1].detach().cpu().numpy()
-            r = rejected_states[-1].detach().cpu().numpy()
+            c = chosen_states[-1].detach().cpu()
+            r = rejected_states[-1].detach().cpu()
         else:
-            c = torch.cat(chosen_states, dim=-1).detach().cpu().numpy()
-            r = torch.cat(rejected_states, dim=-1).detach().cpu().numpy()
+            c = torch.cat(chosen_states, dim=-1).detach().cpu()
+            r = torch.cat(rejected_states, dim=-1).detach().cpu()
 
-        # each is [batch, dim] — flatten batch
-        for row in c:
+        # pairwise: classify direction of (chosen - rejected) margin vector
+        # this directly tests whether relative preference is linearly encoded
+        diff = c - r
+        for row in diff.numpy():
             features.append(row)
             labels.append(1)
-        for row in r:
+        for row in (-diff).numpy():
             features.append(row)
             labels.append(0)
 
     X = np.array(features)
     y = np.array(labels)
 
-    # train/test split
     n = len(y)
     split = int(0.8 * n)
     idx = np.random.RandomState(42).permutation(n)
@@ -200,14 +204,12 @@ def test_evaluator_v2():
         "Trajectory scores should differ across steps"
     print("Trajectory dynamics: OK")
 
-    # variable loop counts
     for n_steps in [1, 2, 6, 8]:
         states = [torch.randn(2, 2048) for _ in range(n_steps)]
         s = evaluator(states)
         assert s.shape == (2, 1), f"Failed for {n_steps} steps"
     print("Variable loop counts (1, 2, 6, 8): OK")
 
-    # validate_hook_output
     fake_hook = [torch.randn(2, 128, 2048) for _ in range(4)]
     validate_hook_output(fake_hook)
     print("Hook validation: OK")

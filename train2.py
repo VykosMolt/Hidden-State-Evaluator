@@ -71,8 +71,7 @@ def get_all_hidden_states(model, tokens):
 
 # --- Loss ---
 def pairwise_loss(score_chosen, score_rejected):
-    ranking_loss = -torch.log(torch.sigmoid(score_chosen - score_rejected) + 1e-8).mean()
-    # minimal L2 — just prevent score explosion, not active regularization
+    ranking_loss = -F.logsigmoid(score_chosen - score_rejected).mean()
     l2_reg = 1e-5 * (score_chosen ** 2 + score_rejected ** 2).mean()
     return ranking_loss + l2_reg
 
