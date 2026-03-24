@@ -372,14 +372,40 @@ This is a major finding. A linear classifier on frozen representations nearly sa
 
 **Note on probe framing:** The initial probe implementation labeled individual responses as chosen (1) or rejected (0). This is the wrong task — preference is inherently pairwise. The corrected probe classifies `(chosen - rejected)` direction vectors, directly testing whether relative preference is linearly encoded. This is the correct framing and produced the 93.75% result.
 
+### Training Run 4 Results (V2, trajectory supervision, 25k samples)
+
+| Epoch | Loss | Training Accuracy |
+|---|---|---|
+| 1 | 0.6798 | 59.5% |
+| 2 | 0.6424 | 65.0% |
+| 3 | 0.6117 | **67.8%** |
+
+**67.8% training accuracy** vs V1's best of 62.4% — a 5+ point improvement at the same dataset size. Loss still falling cleanly into epoch 3, suggesting the model had not saturated. The GRU is capturing trajectory dynamics that the sliding window concatenation could not.
+
+Epoch 2 jump from 59.5% to 65.0% is particularly notable — same pattern as V1 but landing significantly higher. The cosine LR schedule with warmup produced stable convergence throughout.
+
+Checkpoints saved to `checkpoints_v2/`. Evaluation on full test set pending via `evaluate2.py`.
+
+### Training Run 5 — Ablation: Forward-only (no trajectory supervision)
+
+A rewritten `train2.py` was prepared that removes trajectory supervision entirely. Instead of calling `evaluator.trajectory()` and supervising at every loop step, it calls `evaluator.forward()` directly — a single score from the full sequence, one loss signal per example.
+
+**Changes from run 4:**
+- `evaluator.trajectory()` → `evaluator(pooled_list)` — single forward pass, no per-step supervision
+- LR raised back to 1e-4 from 5e-5
+- Trajectory loss function removed entirely — pure pairwise loss on final score
+
+**Tradeoff analysis:** Trajectory supervision gives the GRU gradient signal about how intermediate states should behave, potentially teaching it to use early loop states more effectively. Removing it simplifies training but the GRU only receives gradient from the final output. The 67.8% training accuracy of run 4 was achieved *with* trajectory supervision, so removing it is a meaningful ablation — not obviously better or worse a priori. Results pending.
+
 ### Status
-`evaluator2.py` and `train2.py` implemented and committed. Training run 4 (V2, 25k samples) in progress.
+`evaluator2.py`, `train2.py` (trajectory version), `train2.py` (forward-only version), and `evaluate2.py` implemented and committed. Run 4 complete. Run 5 (ablation) pending. Full test set evaluation pending.
 
 ---
 
 ## 5. Open Questions and Future Work
 
-- **V2 evaluation:** Run evaluate.py (updated for V2) after training completes, compare against V1 61.9% baseline
+- **V2 test set evaluation:** Run evaluate2.py on run 4 checkpoint, compare against V1 61.9% baseline
+- **Run 5 ablation:** Train forward-only version (no trajectory supervision), compare against run 4 67.8%
 - **Progressive scaling:** 25k → 50k → 100k → 160k full dataset
 - **Active inference integration:** Use constitutional score to gate generation in real time
 - **Joint training:** Train evaluator alongside Ouro from scratch — would dramatically strengthen signal given 93% linear separability already exists in frozen representations
@@ -400,6 +426,6 @@ This is a major finding. A linear classifier on frozen representations nearly sa
 - The gap between 93% linear probe and 62% trained evaluator is explained by: small training set, frozen representations, V1 architecture limitations. Each of these is addressable.
 - Acknowledge limitation: current evaluator is passive observer, not active intervention
 - Acknowledge limitation: trained on frozen representations — joint training is the full proposal
-- Report V1 run 3 (61.9%) as primary baseline result; V2 results pending
+- Report V1 run 3 (61.9% test) and V2 run 4 (67.8% training) as primary results; V2 test set evaluation pending
 - Cite: Universal Transformers, ACT (Graves 2016), Constitutional AI (Anthropic), Ouro (ByteDance), HH-RLHF dataset
 - Target venue: arXiv first, potentially workshop track at NeurIPS or ICLR
