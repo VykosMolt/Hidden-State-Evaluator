@@ -316,6 +316,44 @@ All scores shifted negative relative to run 2 — mean score is now around -2 to
 
 ---
 
+## 4.7 Evaluator V2 — GRU-based Temporal Model
+
+### Architecture
+Replaces the sliding window concatenation of V1 with a GRU that processes the sequence of loop hidden states in order.
+
+```
+Input: list of [batch, hidden_dim] pooled tensors (one per loop step)
+
+Per step: LayerNorm(hidden_dim)          ← instance normalization (option 4)
+GRU(input=2048, hidden=512, layers=1)    ← temporal dynamics
+LayerNorm(512)
+Linear(512 → 256) + GELU + Dropout(0.1)
+Linear(256 → 1)
+Output: unbounded scalar
+```
+
+### Key design decisions
+
+**GRU hidden size = 512:** Intentional compression from 2048. With only 4 loop steps the sequence is extremely short — a wider GRU would add parameters without meaningful benefit at this scale. If performance plateaus after dataset scaling, bumping to 1024 is a one-line change.
+
+**No GRU dropout:** With 4 timesteps the GRU has very little room to overfit sequence structure. Dropout in the scorer head is the more meaningful regularization. Two-layer GRU with dropout=0.1 is a lever to pull if training accuracy diverges significantly from eval accuracy on larger runs.
+
+**LayerNorm per step before GRU:** Each loop hidden state normalized to zero mean and unit variance before entering the GRU. Removes absolute scale differences between examples — directly addresses the score drift observed in run 3 where some examples produced hidden states in the -5 range and others in the +2 range.
+
+**`trajectory()` runs GRU incrementally:** Hidden state carries forward step by step. Each step's score reflects everything the GRU has seen up to that point, not just a window. Architecturally correct for monitoring alignment evolution during inference.
+
+**Interface change from V1:** `forward()` takes a list of `[batch, hidden_dim]` tensors directly. V1 required pre-concatenation via `concat_loop_states`. V2 handles the sequence internally.
+
+**`trajectory_loss` is unchanged:** V2's `trajectory()` returns the same `(scores, trajectory)` interface as V1, so the training loss function requires no modification.
+
+### Why GRU over concatenation
+The sliding window in V1 treats the trajectory as a static feature vector — it sees the same 4 states regardless of order or direction of change. A GRU captures directionality: a trajectory that goes [-3, -2, -1, 0] (improving) produces a different GRU hidden state than [0, -1, -2, -3] (degrading), even though both contain the same four values. This directly addresses the CLT insight that reasoning dynamics matter, not just the endpoint.
+
+### Status
+Implemented in `evaluator2.py`. `train2.py` pending.
+
+---
+
 ## 5. Open Questions and Future Work
 
 - **L2 fix (immediate):** Retrain with L2=0.001, expect accuracy improvement
