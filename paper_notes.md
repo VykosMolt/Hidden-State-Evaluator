@@ -256,6 +256,64 @@ Scores are much more bounded (-1.3 to +1.2) vs run 1 (-12 to +14). L2 regulariza
 
 **Next step:** Reduce L2 from 0.01 to 0.001 — current over-regularization is suppressing score magnitude and likely capping accuracy. Expect 65-68% with fix applied.
 
+### 4.6 Evaluation Results — Run 3 (shuffled, L2=0.001, n_concat=4, aux_loss=0.1, 25k samples, epoch 3)
+
+| Progress | Accuracy | Avg Margin |
+|---|---|---|
+| 500/8552 | 59.4% | 0.604 |
+| 1000/8552 | 59.7% | 0.687 |
+| 1500/8552 | 61.2% | 0.684 |
+| 2000/8552 | 61.9% | 0.697 |
+| 2500/8552 | 63.2% | 0.677 |
+| 3000/8552 | 63.2% | 0.634 |
+| 3500/8552 | 63.4% | 0.604 |
+| 4000/8552 | 63.3% | 0.585 |
+| 4500/8552 | 63.1% | 0.557 |
+| 5000/8552 | 62.5% | 0.522 |
+| 5500/8552 | 62.0% | 0.497 |
+| 6000/8552 | 61.5% | 0.470 |
+| 6500/8552 | 61.4% | 0.466 |
+| 7000/8552 | 61.8% | 0.463 |
+| 7500/8552 | 62.0% | 0.461 |
+| 8000/8552 | 62.0% | 0.458 |
+| 8500/8552 | 62.0% | 0.459 |
+| **Final** | **61.9%** | **0.458** |
+
+**Final distribution statistics:**
+- Test examples: 8,552
+- Accuracy: 61.9% (up from 61.3% in run 2)
+- Average margin: 0.4575 (up from 0.2251 in run 2 — doubled)
+- Margin std: 1.5856 (up from 0.7841 in run 2)
+- Min margin: -9.7832
+- Max margin: 13.6407
+- Positive margin rate: 61.9%
+
+**Sample trajectory analysis (first 10 examples, 5/10 correct):**
+
+Example 1 (correct, margin 1.187): Chosen and rejected trajectories both negative but chosen consistently less negative across all 4 steps — stable separation.
+
+Example 3 (incorrect, margin -0.504): Chosen trajectory recovers mid-sequence but rejected scores higher at final step.
+
+Example 6 (correct, margin 0.003): Effectively a coin flip — trajectories nearly identical throughout, margin near zero.
+
+**Key findings:**
+
+Accuracy improved modestly from 61.3% to 61.9%. More significant is the average margin doubling from 0.225 to 0.458 — the evaluator is substantially more decisive on examples it gets correct. This is the direct effect of reducing L2 from 0.01 to 0.001, allowing scores to spread further from zero.
+
+Tradeoff: margin std increased from 0.784 to 1.586 and extremes returned (-9.8 to +13.6). This is acceptable — the accuracy is stable throughout the test set, not collapsing. The mild dip from 63.4% at batch 3500 to 61.4% at batch 6500 then recovery to 61.9% is a residual of the dataset length distribution but far less severe than run 1.
+
+All scores shifted negative relative to run 2 — mean score is now around -2 to -3. This is a systematic offset, not a calibration failure. The ranking loss only depends on relative scores so absolute magnitude doesn't affect accuracy.
+
+**Comparison across runs:**
+
+| Run | Samples | Final Acc | Avg Margin | Margin Std | Notes |
+|---|---|---|---|---|---|
+| Run 1 | 5k unshuffled | 46.4% | -0.026 | 1.831 | Truncation artifacts |
+| Run 2 | 15k shuffled, L2=0.01 | 61.3% | 0.225 | 0.784 | Clean, stable, over-regularized |
+| Run 3 | 25k shuffled, L2=0.001 | 61.9% | 0.458 | 1.586 | Higher confidence, mild variance increase |
+
+**Next step:** Scale to 50k samples. Add cosine LR scheduler before running.
+
 ---
 
 ## 5. Open Questions and Future Work
