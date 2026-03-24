@@ -6,90 +6,92 @@ class ConstitutionalEvaluatorV2(nn.Module):
     """
     Constitutional Evaluator V2 — GRU-based temporal model over loop states.
 
-    Instead of concatenating a sliding window of hidden states, this version
-    processes the sequence of loop hidden states through a GRU, capturing how
-    the representation evolves across iterations rather than just its endpoint.
-
-    The GRU hidden state after processing all loop steps encodes the full
-    trajectory dynamics — early uncertainty, mid-loop refinement, and final
-    convergence — as a single fixed-size vector fed into the scoring head.
+    Processes the sequence of loop hidden states through a 2-layer GRU,
+    then concatenates the final GRU hidden state with the final loop state
+    (skip connection) so the scorer sees both trajectory dynamics and
+    endpoint representation.
 
     Input: list of [batch, hidden_dim] pooled tensors (one per loop step)
-    Output: scalar alignment score (unbounded, use with pairwise ranking loss)
+    Output: scalar alignment score (unbounded, pairwise ranking loss)
     """
 
-    def __init__(self, hidden_dim=2048, gru_hidden=512, intermediate_size=256):
+    def __init__(self, hidden_dim=2048, gru_hidden=512, gru_layers=2,
+                 intermediate_size=256, dropout=0.1):
         super().__init__()
 
         self.hidden_dim = hidden_dim
         self.gru_hidden = gru_hidden
 
-        # instance norm applied per hidden state before GRU
-        # removes absolute scale differences between examples
         self.input_norm = nn.LayerNorm(hidden_dim)
 
-        # GRU processes the sequence of loop hidden states
-        # input: [seq_len, batch, hidden_dim]
-        # output hidden: [batch, gru_hidden]
+        # project input down before GRU to reduce parameter count
+        self.input_proj = nn.Linear(hidden_dim, gru_hidden)
+
         self.gru = nn.GRU(
-            input_size=hidden_dim,
+            input_size=gru_hidden,
             hidden_size=gru_hidden,
-            num_layers=1,
+            num_layers=gru_layers,
             batch_first=False,
+            dropout=dropout if gru_layers > 1 else 0.0,
             bidirectional=False
         )
 
-        # scoring head takes final GRU hidden state
+        # scorer sees GRU final hidden + projected final loop state (skip)
+        scorer_input_dim = gru_hidden * 2
+
         self.scorer = nn.Sequential(
-            nn.LayerNorm(gru_hidden),
-            nn.Linear(gru_hidden, intermediate_size),
+            nn.LayerNorm(scorer_input_dim),
+            nn.Linear(scorer_input_dim, intermediate_size),
             nn.GELU(),
-            nn.Dropout(0.1),
+            nn.Dropout(dropout),
             nn.Linear(intermediate_size, 1)
-            # no sigmoid — pairwise ranking loss handles magnitude
         )
+
+    def _prepare_sequence(self, hidden_states_list):
+        """Normalize, project, and stack loop states."""
+        normed = [self.input_norm(h) for h in hidden_states_list]
+        projected = [self.input_proj(h) for h in normed]
+        return torch.stack(projected, dim=0), projected[-1]
 
     def forward(self, hidden_states_list):
         """
-        Full trajectory mode — GRU over all loop steps.
+        Full trajectory forward pass.
         Args:
             hidden_states_list: list of [batch, hidden_dim] pooled tensors
         Returns:
-            score: [batch, 1] final alignment score
+            score: [batch, 1]
         """
-        # normalize each step independently
-        normed = [self.input_norm(h) for h in hidden_states_list]
+        seq, final_proj = self._prepare_sequence(hidden_states_list)
 
-        # stack to [seq_len, batch, hidden_dim]
-        seq = torch.stack(normed, dim=0)
+        _, final_hidden = self.gru(seq)
+        # final_hidden: [num_layers, batch, gru_hidden] — take last layer
+        gru_out = final_hidden[-1]  # [batch, gru_hidden]
 
-        # run GRU — we only need the final hidden state
-        _, final_hidden = self.gru(seq)  # final_hidden: [1, batch, gru_hidden]
-        final_hidden = final_hidden.squeeze(0)  # [batch, gru_hidden]
-
-        return self.scorer(final_hidden)
+        # skip connection: concat GRU dynamics with endpoint representation
+        combined = torch.cat([gru_out, final_proj], dim=-1)
+        return self.scorer(combined)
 
     def trajectory(self, hidden_states_list):
         """
-        Trajectory mode — score at each loop step by running GRU up to that point.
-        Useful for monitoring how the alignment score evolves during inference.
+        Score at each loop step by running GRU incrementally.
         Args:
             hidden_states_list: list of [batch, hidden_dim] pooled tensors
         Returns:
-            scores: list of [batch, 1] tensors, one per loop step
-            trajectory: list of scalar floats for monitoring
+            scores: list of [batch, 1] tensors
+            trajectory: list of scalar floats
         """
         normed = [self.input_norm(h) for h in hidden_states_list]
+        projected = [self.input_proj(h) for h in normed]
 
         scores = []
-        hidden = None  # GRU hidden state carries forward
+        hidden = None
 
-        for step_input in normed:
-            # step_input: [batch, hidden_dim] → unsqueeze to [1, batch, hidden_dim]
-            out, hidden = self.gru(step_input.unsqueeze(0), hidden)
-            # hidden: [1, batch, gru_hidden]
-            step_score = self.scorer(hidden.squeeze(0))  # [batch, 1]
-            scores.append(step_score)
+        for step_proj in projected:
+            out, hidden = self.gru(step_proj.unsqueeze(0), hidden)
+            # hidden: [num_layers, batch, gru_hidden]
+            gru_out = hidden[-1]  # [batch, gru_hidden]
+            combined = torch.cat([gru_out, step_proj], dim=-1)
+            scores.append(self.scorer(combined))
 
         trajectory = [s.mean().item() for s in scores]
         return scores, trajectory
@@ -99,6 +101,81 @@ def mean_pool(hidden, attention_mask):
     """Mask-weighted mean pooling over token dimension."""
     mask = attention_mask.unsqueeze(-1).float()
     return (hidden * mask).sum(dim=1) / mask.sum(dim=1)
+
+
+def validate_hook_output(output):
+    """
+    Validates that the hook captured the expected structure from Ouro.
+    Call this on the raw hook output before using hidden states.
+    Raises AssertionError with a diagnostic message if the format changed.
+    """
+    assert isinstance(output, (list, tuple)), \
+        f"Expected list/tuple of hidden states, got {type(output)}"
+    assert len(output) > 0, "Hook captured empty hidden states list"
+    first = output[0]
+    assert isinstance(first, torch.Tensor), \
+        f"Expected tensor in hidden states list, got {type(first)}"
+    assert first.dim() == 3, \
+        f"Expected 3D tensor [batch, seq_len, hidden_dim], got {first.dim()}D"
+    # check hidden dim is consistent across loop steps
+    hidden_dim = first.shape[-1]
+    for i, h in enumerate(output):
+        assert h.shape[-1] == hidden_dim, \
+            f"Hidden dim mismatch at step {i}: {h.shape[-1]} vs {hidden_dim}"
+
+
+def linear_probe_test(pooled_chosen_list, pooled_rejected_list, use_final_only=True):
+    """
+    Quick linear probe to check if loop hidden states carry preference signal.
+    Run this before committing to training — if a linear probe gets ~60%,
+    the representations don't carry much signal and architecture won't save you.
+
+    Args:
+        pooled_chosen_list: list of [batch, hidden_dim] tensors (one list per example)
+        pooled_rejected_list: same for rejected
+        use_final_only: if True, only use the last loop state
+    Returns:
+        accuracy: float
+    """
+    from sklearn.linear_model import LogisticRegression
+    import numpy as np
+
+    features = []
+    labels = []
+
+    for chosen_states, rejected_states in zip(pooled_chosen_list, pooled_rejected_list):
+        if use_final_only:
+            c = chosen_states[-1].detach().cpu().numpy()
+            r = rejected_states[-1].detach().cpu().numpy()
+        else:
+            c = torch.cat(chosen_states, dim=-1).detach().cpu().numpy()
+            r = torch.cat(rejected_states, dim=-1).detach().cpu().numpy()
+
+        # each is [batch, dim] — flatten batch
+        for row in c:
+            features.append(row)
+            labels.append(1)
+        for row in r:
+            features.append(row)
+            labels.append(0)
+
+    X = np.array(features)
+    y = np.array(labels)
+
+    # train/test split
+    n = len(y)
+    split = int(0.8 * n)
+    idx = np.random.RandomState(42).permutation(n)
+    X_train, X_test = X[idx[:split]], X[idx[split:]]
+    y_train, y_test = y[idx[:split]], y[idx[split:]]
+
+    clf = LogisticRegression(max_iter=1000, C=1.0)
+    clf.fit(X_train, y_train)
+    acc = clf.score(X_test, y_test)
+
+    print(f"Linear probe accuracy: {acc:.4f} (final_only={use_final_only})")
+    print(f"  Train samples: {len(y_train)}, Test samples: {len(y_test)}")
+    return acc
 
 
 def test_evaluator_v2():
@@ -119,15 +196,21 @@ def test_evaluator_v2():
     assert len(scores) == 4
     print("Trajectory mode: OK")
 
-    # verify trajectory scores differ across steps (GRU sees different context)
-    assert not torch.allclose(scores[0], scores[-1]), "Trajectory scores should differ across steps"
+    assert not torch.allclose(scores[0], scores[-1]), \
+        "Trajectory scores should differ across steps"
     print("Trajectory dynamics: OK")
 
-    # verify variable loop counts work
-    short_loop = [torch.randn(2, 2048) for _ in range(2)]
-    score_short = evaluator(short_loop)
-    assert score_short.shape == (2, 1)
-    print("Variable loop count: OK")
+    # variable loop counts
+    for n_steps in [1, 2, 6, 8]:
+        states = [torch.randn(2, 2048) for _ in range(n_steps)]
+        s = evaluator(states)
+        assert s.shape == (2, 1), f"Failed for {n_steps} steps"
+    print("Variable loop counts (1, 2, 6, 8): OK")
+
+    # validate_hook_output
+    fake_hook = [torch.randn(2, 128, 2048) for _ in range(4)]
+    validate_hook_output(fake_hook)
+    print("Hook validation: OK")
 
     print("\nAll checks passed.")
 
