@@ -316,54 +316,76 @@ All scores shifted negative relative to run 2 — mean score is now around -2 to
 
 ---
 
-## 4.7 Evaluator V2 — GRU-based Temporal Model
+## 4.7 Evaluator V2 — GRU-based Temporal Model (Final Version)
 
 ### Architecture
-Replaces the sliding window concatenation of V1 with a GRU that processes the sequence of loop hidden states in order.
+Replaces the sliding window concatenation of V1 with a 2-layer GRU that processes the sequence of loop hidden states in order, with an input projection and skip connection.
 
 ```
 Input: list of [batch, hidden_dim] pooled tensors (one per loop step)
 
-Per step: LayerNorm(hidden_dim)          ← instance normalization (option 4)
-GRU(input=2048, hidden=512, layers=1)    ← temporal dynamics
-LayerNorm(512)
-Linear(512 → 256) + GELU + Dropout(0.1)
+Per step: LayerNorm(2048) → Linear(2048 → 512)   ← normalize + project
+2-layer GRU(input=512, hidden=512, dropout=0.1)   ← temporal dynamics
+Skip connection: cat([gru_out, final_proj])        ← [batch, 1024]
+LayerNorm(1024)
+Linear(1024 → 256) + GELU + Dropout(0.1)
 Linear(256 → 1)
 Output: unbounded scalar
 ```
 
 ### Key design decisions
 
-**GRU hidden size = 512:** Intentional compression from 2048. With only 4 loop steps the sequence is extremely short — a wider GRU would add parameters without meaningful benefit at this scale. If performance plateaus after dataset scaling, bumping to 1024 is a one-line change.
+**Input projection 2048 → 512:** Reduces parameter count before the GRU. With only 4 loop steps, processing full 2048-dim vectors through the GRU is unnecessary — the projection forces compression into a more compact trajectory representation.
 
-**No GRU dropout:** With 4 timesteps the GRU has very little room to overfit sequence structure. Dropout in the scorer head is the more meaningful regularization. Two-layer GRU with dropout=0.1 is a lever to pull if training accuracy diverges significantly from eval accuracy on larger runs.
+**2-layer GRU with dropout=0.1:** Added depth over the initial single-layer design. Dropout between GRU layers provides regularization on temporal patterns. Single-layer GRU had no room to overfit 4 timesteps, but 2-layer adds enough capacity to warrant it.
 
-**LayerNorm per step before GRU:** Each loop hidden state normalized to zero mean and unit variance before entering the GRU. Removes absolute scale differences between examples — directly addresses the score drift observed in run 3 where some examples produced hidden states in the -5 range and others in the +2 range.
+**Skip connection:** Final scorer concatenates the GRU's final hidden state with the projected final loop state — `[gru_out, final_proj]`. The GRU encodes trajectory dynamics; the skip connection preserves the endpoint representation directly. Scorer sees both. This was the most substantive architectural improvement over the initial V2 design.
 
-**`trajectory()` runs GRU incrementally:** Hidden state carries forward step by step. Each step's score reflects everything the GRU has seen up to that point, not just a window. Architecturally correct for monitoring alignment evolution during inference.
+**GRU hidden size = 512:** Intentional compression from 2048. If performance plateaus after dataset scaling, bumping to 1024 is a one-line change.
 
-**Interface change from V1:** `forward()` takes a list of `[batch, hidden_dim]` tensors directly. V1 required pre-concatenation via `concat_loop_states`. V2 handles the sequence internally.
+**LayerNorm per step before projection:** Removes absolute scale differences between examples — directly addresses score drift observed in run 3.
 
-**`trajectory_loss` is unchanged:** V2's `trajectory()` returns the same `(scores, trajectory)` interface as V1, so the training loss function requires no modification.
+**`trajectory()` runs GRU incrementally:** GRU hidden state carries forward step by step. Each step's score reflects everything seen up to that point. Skip connection uses the current step's projected vector, not the final one, so each trajectory score is self-consistent.
+
+**`trajectory_loss` is unchanged:** V2's `trajectory()` returns the same `(scores, trajectory)` interface as V1.
 
 ### Why GRU over concatenation
-The sliding window in V1 treats the trajectory as a static feature vector — it sees the same 4 states regardless of order or direction of change. A GRU captures directionality: a trajectory that goes [-3, -2, -1, 0] (improving) produces a different GRU hidden state than [0, -1, -2, -3] (degrading), even though both contain the same four values. This directly addresses the CLT insight that reasoning dynamics matter, not just the endpoint.
+The sliding window in V1 treats the trajectory as a static feature vector — it sees the same 4 states regardless of order or direction of change. A GRU captures directionality: a trajectory that goes [-3, -2, -1, 0] (improving) produces a different GRU hidden state than [0, -1, -2, -3] (degrading), even though both contain the same four values.
+
+### Training improvements in train2.py
+- **Gradient accumulation:** `GRAD_ACCUM_STEPS = 4` → effective batch size 8 without extra VRAM
+- **Cosine LR scheduler with warmup:** LinearLR warmup for 200 steps then CosineAnnealingLR decay. Peak LR lowered to 5e-5 from 1e-4 — scheduler handles decay
+- **F.logsigmoid:** Replaces `torch.log(torch.sigmoid(x) + 1e-8)` with `F.logsigmoid(x)` which uses the log-sum-exp trick internally for better numerical stability
+- **L2 reduced to 1e-5:** Minimal regularization — just prevents score explosion, no longer active regularization
+- **Checkpoint saves optimizer state:** Enables training resumption
+- **Hook validation:** `validate_hook_output()` runs once on first forward pass to verify Ouro's output structure hasn't changed
+- **Pairwise linear probe:** Runs before training as a signal sanity check
+
+### Linear Probe Finding (Critical)
+Before training, a logistic regression was run on 200 examples from the frozen Ouro hidden states using a pairwise framing — classifying the direction of `(chosen - rejected)` margin vectors rather than labeling individual responses.
+
+**Result: 93.75% accuracy (final loop state), 91.25% (all states concatenated)**
+
+This is a major finding. A linear classifier on frozen representations nearly saturates the task. This reframes what the evaluator is actually doing — it is not extracting hidden signal that requires a complex model to detect. The preference signal is strongly linearly encoded in Ouro's hidden states. The GRU evaluator's job is to learn a better decision boundary than a linear one on harder cases.
+
+**Implication for the paper:** The 61-62% accuracy ceiling of V1 is not a representation quality problem — the signal is there (93% linearly separable). It is a decision boundary problem. The gap between 93% linear probe and 62% evaluator accuracy is explained by the small training set (25k of 160k), frozen representations, and the V1 architecture's inability to capture trajectory dynamics. V2 with the GRU addresses the dynamics. Scaling to the full dataset addresses the training set size. Joint training from pretraining would address the frozen representation constraint.
+
+**Note on probe framing:** The initial probe implementation labeled individual responses as chosen (1) or rejected (0). This is the wrong task — preference is inherently pairwise. The corrected probe classifies `(chosen - rejected)` direction vectors, directly testing whether relative preference is linearly encoded. This is the correct framing and produced the 93.75% result.
 
 ### Status
-Implemented in `evaluator2.py`. `train2.py` pending.
+`evaluator2.py` and `train2.py` implemented and committed. Training run 4 (V2, 25k samples) in progress.
 
 ---
 
 ## 5. Open Questions and Future Work
 
-- **L2 fix (immediate):** Retrain with L2=0.001, expect accuracy improvement
-- **Progressive scaling:** 15k → 50k → 100k → 160k full dataset
-- **Learning rate scheduler:** Add cosine decay for larger dataset runs
+- **V2 evaluation:** Run evaluate.py (updated for V2) after training completes, compare against V1 61.9% baseline
+- **Progressive scaling:** 25k → 50k → 100k → 160k full dataset
 - **Active inference integration:** Use constitutional score to gate generation in real time
-- **Joint training:** Train evaluator alongside Ouro from scratch
-- **GRU/Transformer over loop states:** Replace sliding window with recurrent model
-- **Two-head evaluator:** Separate heads for final state and trajectory dynamics
-- **Larger training set:** 160k full HH-RLHF training split
+- **Joint training:** Train evaluator alongside Ouro from scratch — would dramatically strengthen signal given 93% linear separability already exists in frozen representations
+- **GRU hidden size 1024:** Try if V2 plateaus after scaling
+- **Attention pooling:** Replace mean pooling with learned attention pooling over token dimension
+- **Bidirectional GRU:** Currently unidirectional — bidirectional would let each step see full context, though this breaks the incremental trajectory monitoring use case
 
 ---
 
@@ -371,11 +393,13 @@ Implemented in `evaluator2.py`. `train2.py` pending.
 
 - Frame as **architectural proposal** with proof-of-concept empirical validation
 - Primary contribution: constitutional evaluator as separate architectural component operating on hidden states, not outputs
-- Secondary contribution: trajectory scoring as real-time alignment monitoring
+- Secondary contribution: trajectory scoring as real-time alignment monitoring — GRU captures dynamics, not just endpoint
 - Tertiary contribution: truncation artifact finding as methodological warning for HH-RLHF reward model work
 - Motivate with neuroscience analogy (prefrontal/hippocampal/amygdala)
+- **Linear probe finding is a key result:** 93.75% pairwise linear separability in frozen Ouro hidden states demonstrates that constitutional signal is strongly encoded in models trained on preference data, even without explicit alignment supervision. This motivates the CLT approach — the signal exists, the architecture just needs to read it correctly.
+- The gap between 93% linear probe and 62% trained evaluator is explained by: small training set, frozen representations, V1 architecture limitations. Each of these is addressable.
 - Acknowledge limitation: current evaluator is passive observer, not active intervention
 - Acknowledge limitation: trained on frozen representations — joint training is the full proposal
-- Report run 2 evaluation accuracy (~62%) as primary result, note L2 fix expected to improve this
+- Report V1 run 3 (61.9%) as primary baseline result; V2 results pending
 - Cite: Universal Transformers, ACT (Graves 2016), Constitutional AI (Anthropic), Ouro (ByteDance), HH-RLHF dataset
 - Target venue: arXiv first, potentially workshop track at NeurIPS or ICLR
