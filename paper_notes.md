@@ -386,19 +386,69 @@ Epoch 2 jump from 59.5% to 65.0% is particularly notable — same pattern as V1 
 
 Checkpoints saved to `checkpoints_v2/`. Evaluation on full test set pending via `evaluate2.py`.
 
+### Evaluation Results — Run 4 (V2, trajectory supervision, 25k samples, epoch 3)
+
+| Progress | Accuracy | Avg Margin |
+|---|---|---|
+| 500/8552 | 59.0% | 0.391 |
+| 1000/8552 | 61.6% | 0.497 |
+| 1500/8552 | 63.1% | 0.494 |
+| 2000/8552 | 63.4% | 0.498 |
+| 2500/8552 | 64.4% | 0.512 |
+| 3000/8552 | 65.1% | 0.524 |
+| 3500/8552 | 65.5% | 0.535 |
+| 4000/8552 | 65.4% | 0.536 |
+| 4500/8552 | 65.2% | 0.526 |
+| 5000/8552 | 64.7% | 0.504 |
+| 5500/8552 | 64.1% | 0.484 |
+| 6000/8552 | 63.3% | 0.463 |
+| 6500/8552 | 63.2% | 0.466 |
+| 7000/8552 | 63.4% | 0.472 |
+| 7500/8552 | 63.5% | 0.470 |
+| 8000/8552 | 63.5% | 0.468 |
+| 8500/8552 | 63.3% | 0.472 |
+| **Final** | **63.2%** | **0.470** |
+
+**Final distribution statistics:**
+- Test examples: 8,552
+- Accuracy: 63.2% (up from 61.9% V1)
+- Average margin: 0.4699
+- Margin std: 1.4923 (down from 1.586 in V1 run 3)
+- Min margin: -6.1179 (improved from -9.78)
+- Max margin: 10.2145 (improved from 13.64)
+- Positive margin rate: 63.2%
+
+**Trajectory analysis (first 10 examples, 4/10 correct):**
+
+All scores strongly negative and monotonically decreasing across loop steps. Example 1 chosen: [-3.3, -5.5, -6.0, -6.3] — the GRU has learned that later loop states carry stronger signal. Correct cases show chosen consistently less negative than rejected at every step.
+
+**Key findings:**
+
+Accuracy improved from V1's 61.9% to 63.2% — a real gain. Margin calibration also improved — extremes more bounded (-6.1 to +10.2 vs -9.8 to +13.6). The accuracy dip pattern reappears — peaks at 65.5% around batch 3500 then falls to 63.2%. Same shape as V1, shifted up by ~1.5 points. Suggests dataset length ordering effect persists at 25k scale.
+
+**Training vs test gap:** 67.8% training accuracy → 63.2% test accuracy. 4.6 point gap suggests mild overfitting to 25k examples. Scaling to 50k+ should close this.
+
+**Comparison across all runs:**
+
+| Run | Architecture | Samples | Test Acc | Avg Margin | Notes |
+|---|---|---|---|---|---|
+| Run 1 | V1 MLP | 5k unshuffled | 46.4% | -0.026 | Truncation artifacts |
+| Run 2 | V1 MLP | 15k shuffled | 61.3% | 0.225 | Clean baseline |
+| Run 3 | V1 MLP | 25k shuffled | 61.9% | 0.458 | Best V1 |
+| Run 4 | V2 GRU | 25k shuffled | **63.2%** | 0.470 | Best overall |
+
 ### Training Run 5 — Ablation: Forward-only (no trajectory supervision)
 
-A rewritten `train2.py` was prepared that removes trajectory supervision entirely. Instead of calling `evaluator.trajectory()` and supervising at every loop step, it calls `evaluator.forward()` directly — a single score from the full sequence, one loss signal per example.
+**Hypothesis:** Trajectory supervision may be limiting the GRU. During trajectory training, the GRU is forced to produce meaningful scores at every intermediate loop step, including the very early ones where it has only seen 1-2 hidden states. This constrains the GRU's internal representations — it cannot freely use its hidden state as working memory for the final decision because that hidden state must also produce a good score at every intermediate step.
+
+The `forward()` path passes all 4 hidden states through the GRU in one shot and supervises only the final output. The GRU is free to use intermediate hidden states purely as memory — it never needs to commit to a score until the end. This could allow the GRU to develop richer internal representations.
 
 **Changes from run 4:**
 - `evaluator.trajectory()` → `evaluator(pooled_list)` — single forward pass, no per-step supervision
 - LR raised back to 1e-4 from 5e-5
-- Trajectory loss function removed entirely — pure pairwise loss on final score
+- Trajectory loss function removed — pure pairwise loss on final score only
 
-**Tradeoff analysis:** Trajectory supervision gives the GRU gradient signal about how intermediate states should behave, potentially teaching it to use early loop states more effectively. Removing it simplifies training but the GRU only receives gradient from the final output. The 67.8% training accuracy of run 4 was achieved *with* trajectory supervision, so removing it is a meaningful ablation — not obviously better or worse a priori. Results pending.
-
-### Status
-`evaluator2.py`, `train2.py` (trajectory version), `train2.py` (forward-only version), and `evaluate2.py` implemented and committed. Run 4 complete. Run 5 (ablation) pending. Full test set evaluation pending.
+**Status:** Training run 5 in progress.
 
 ---
 
