@@ -437,31 +437,65 @@ Accuracy improved from V1's 61.9% to 63.2% — a real gain. Margin calibration a
 | Run 3 | V1 MLP | 25k shuffled | 61.9% | 0.458 | Best V1 |
 | Run 4 | V2 GRU | 25k shuffled | **63.2%** | 0.470 | Best overall |
 
-### Training Run 5 — Ablation: Forward-only (no trajectory supervision)
+### Training Run 5 Results (V2, forward-only, 25k samples)
 
-**Hypothesis:** Trajectory supervision may be limiting the GRU. During trajectory training, the GRU is forced to produce meaningful scores at every intermediate loop step, including the very early ones where it has only seen 1-2 hidden states. This constrains the GRU's internal representations — it cannot freely use its hidden state as working memory for the final decision because that hidden state must also produce a good score at every intermediate step.
+| Epoch | Loss | Training Accuracy |
+|---|---|---|
+| 1 | 0.6587 | 60.1% |
+| 2 | 0.6207 | 64.6% |
+| 3 | 0.5893 | **67.97%** |
 
-The `forward()` path passes all 4 hidden states through the GRU in one shot and supervises only the final output. The GRU is free to use intermediate hidden states purely as memory — it never needs to commit to a score until the end. This could allow the GRU to develop richer internal representations.
+**Trajectory supervision is NOT the bottleneck.** Run 5 (forward-only) achieved 67.97% training accuracy vs run 4's (trajectory) 67.82% — a difference of 0.15 points. Effectively identical. Removing trajectory supervision neither helped nor hurt meaningfully.
 
-**Changes from run 4:**
-- `evaluator.trajectory()` → `evaluator(pooled_list)` — single forward pass, no per-step supervision
-- LR raised back to 1e-4 from 5e-5
-- Trajectory loss function removed — pure pairwise loss on final score only
+**Comparison:**
 
-**Status:** Training run 5 in progress.
+| Run | Architecture | Supervision | Train Acc | Test Acc |
+|---|---|---|---|---|
+| Run 4 | V2 GRU | Trajectory | 67.8% | 63.2% |
+| Run 5 | V2 GRU | Forward-only | 68.0% | pending |
+
+Loss also fell further in run 5 (0.5893 vs 0.6117) suggesting marginally better convergence, but the accuracy difference is negligible.
+
+### Bottleneck Analysis — Mean Pooling
+
+With trajectory supervision ruled out as the bottleneck, the most likely remaining candidate is **mean pooling**.
+
+Mean pooling collapses the entire token sequence into a single vector by averaging. This loses:
+- Token-level alignment signals — a single harmful token buried in an otherwise fine response gets averaged out
+- Localized spans — refusal phrases, harmful instructions, or critical transitions that occupy a small fraction of the sequence get diluted proportionally to sequence length
+- Positional structure — the model cannot distinguish where in the sequence a signal appears
+
+At MAX_LENGTH=1024, longer conversations dilute local signals even further. The constitutional signal that exists (93.75% linearly separable) is presumably carried in aggregate distributional patterns that survive averaging. The signal that doesn't survive — localized, token-level alignment features — is exactly what a more sophisticated pooling strategy would capture.
+
+**Next architectural step: Attention pooling.** Replace mean pooling with a learned attention mechanism that weights tokens differentially:
+
+```python
+self.attn_pool = nn.Linear(hidden_dim, 1)
+
+def attention_pool(hidden, attention_mask):
+    # hidden: [batch, seq_len, hidden_dim]
+    scores = self.attn_pool(hidden).squeeze(-1)  # [batch, seq_len]
+    scores = scores.masked_fill(attention_mask == 0, float('-inf'))
+    weights = torch.softmax(scores, dim=-1)      # [batch, seq_len]
+    return (hidden * weights.unsqueeze(-1)).sum(dim=1)  # [batch, hidden_dim]
+```
+
+This allows the model to learn to focus on the tokens most relevant to alignment — refusals, harmful content markers, hedging language — rather than treating all tokens equally.
+
+**Why this is the right next step:** The 93.75% linear probe used mean-pooled representations and still achieved near-ceiling performance, so mean pooling is sufficient for a linear classifier. But the GRU evaluator is not a linear classifier — it needs to learn a more complex decision boundary, and the quality of its input representation directly constrains what it can learn. Attention pooling gives it richer input without changing anything else about the architecture.
 
 ---
 
 ## 5. Open Questions and Future Work
 
-- **V2 test set evaluation:** Run evaluate2.py on run 4 checkpoint, compare against V1 61.9% baseline
-- **Run 5 ablation:** Train forward-only version (no trajectory supervision), compare against run 4 67.8%
+- **Attention pooling (immediate):** Replace mean pooling with learned attention pooling — most likely current bottleneck given trajectory ablation ruling out supervision as the issue
+- **Run 5 test set evaluation:** Run evaluate2.py on run 5 checkpoint to confirm parity with run 4
 - **Progressive scaling:** 25k → 50k → 100k → 160k full dataset
 - **Active inference integration:** Use constitutional score to gate generation in real time
 - **Joint training:** Train evaluator alongside Ouro from scratch — would dramatically strengthen signal given 93% linear separability already exists in frozen representations
-- **GRU hidden size 1024:** Try if V2 plateaus after scaling
-- **Attention pooling:** Replace mean pooling with learned attention pooling over token dimension
+- **GRU hidden size 1024:** Try if V2 + attention pooling plateaus after scaling
 - **Bidirectional GRU:** Currently unidirectional — bidirectional would let each step see full context, though this breaks the incremental trajectory monitoring use case
+- **Basal ganglia component:** Active gating mechanism integrating constitutional score and entropy into the early exit decision — next architectural milestone after CLT paper
 
 ---
 
