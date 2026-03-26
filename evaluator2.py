@@ -1,17 +1,50 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+
+
+class AttentionPool(nn.Module):
+    """
+    Learned attention pooling over the token dimension.
+    A single-head attention mechanism that learns a query vector to weight
+    token positions, replacing uniform mean pooling. This lets the evaluator
+    focus on response tokens, EOS positions, or wherever preference signal lives.
+
+    Input: [batch, seq_len, hidden_dim], attention_mask [batch, seq_len]
+    Output: [batch, hidden_dim]
+    """
+
+    def __init__(self, hidden_dim):
+        super().__init__()
+        self.query = nn.Parameter(torch.randn(hidden_dim) * 0.01)
+        self.key_proj = nn.Linear(hidden_dim, hidden_dim, bias=False)
+
+    def forward(self, hidden, attention_mask):
+        # hidden: [batch, seq_len, hidden_dim]
+        # attention_mask: [batch, seq_len]
+
+        keys = self.key_proj(hidden)  # [batch, seq_len, hidden_dim]
+        scores = torch.einsum("bsd,d->bs", keys, self.query)  # [batch, seq_len]
+
+        # mask out padding positions
+        scores = scores.masked_fill(attention_mask == 0, float("-inf"))
+        weights = F.softmax(scores, dim=-1)  # [batch, seq_len]
+
+        # weighted sum over token dimension
+        pooled = torch.einsum("bs,bsd->bd", weights, hidden)  # [batch, hidden_dim]
+        return pooled
 
 
 class ConstitutionalEvaluatorV2(nn.Module):
     """
-    Constitutional Evaluator V2 — GRU-based temporal model over loop states.
+    Constitutional Evaluator V2 — GRU-based temporal model over loop states
+    with learned attention pooling.
 
-    Processes the sequence of loop hidden states through a 2-layer GRU,
-    then concatenates the final GRU hidden state with the final loop state
-    (skip connection) so the scorer sees both trajectory dynamics and
-    endpoint representation.
+    Now receives raw hidden states [batch, seq_len, hidden_dim] per loop step
+    and learns which token positions carry preference signal, rather than
+    relying on uniform mean pooling.
 
-    Input: list of [batch, hidden_dim] pooled tensors (one per loop step)
+    Input: list of [batch, seq_len, hidden_dim] tensors + attention_mask
     Output: scalar alignment score (unbounded, pairwise ranking loss)
     """
 
@@ -22,9 +55,10 @@ class ConstitutionalEvaluatorV2(nn.Module):
         self.hidden_dim = hidden_dim
         self.gru_hidden = gru_hidden
 
-        self.input_norm = nn.LayerNorm(hidden_dim)
+        # learned pooling replaces mean_pool
+        self.attention_pool = AttentionPool(hidden_dim)
 
-        # project input down before GRU to reduce parameter count
+        self.input_norm = nn.LayerNorm(hidden_dim)
         self.input_proj = nn.Linear(hidden_dim, gru_hidden)
 
         self.gru = nn.GRU(
@@ -36,7 +70,6 @@ class ConstitutionalEvaluatorV2(nn.Module):
             bidirectional=False
         )
 
-        # scorer sees GRU final hidden + projected final loop state (skip)
         scorer_input_dim = gru_hidden * 2
 
         self.scorer = nn.Sequential(
@@ -47,49 +80,54 @@ class ConstitutionalEvaluatorV2(nn.Module):
             nn.Linear(intermediate_size, 1)
         )
 
-    def _prepare_sequence(self, hidden_states_list):
-        """Normalize, project, and stack loop states."""
-        normed = [self.input_norm(h) for h in hidden_states_list]
-        projected = [self.input_proj(h) for h in normed]
+    def _pool_and_prepare(self, hidden_states_list, attention_mask):
+        """Pool raw hidden states, normalize, project, and stack."""
+        pooled = []
+        for h in hidden_states_list:
+            p = self.attention_pool(h, attention_mask)  # [batch, hidden_dim]
+            pooled.append(p)
+
+        normed = [self.input_norm(p) for p in pooled]
+        projected = [self.input_proj(n) for n in normed]
         return torch.stack(projected, dim=0), projected[-1]
 
-    def forward(self, hidden_states_list):
+    def forward(self, hidden_states_list, attention_mask):
         """
         Full trajectory forward pass.
         Args:
-            hidden_states_list: list of [batch, hidden_dim] pooled tensors
+            hidden_states_list: list of [batch, seq_len, hidden_dim] tensors
+            attention_mask: [batch, seq_len]
         Returns:
             score: [batch, 1]
         """
-        seq, final_proj = self._prepare_sequence(hidden_states_list)
+        seq, final_proj = self._pool_and_prepare(hidden_states_list, attention_mask)
 
         _, final_hidden = self.gru(seq)
-        # final_hidden: [num_layers, batch, gru_hidden] — take last layer
         gru_out = final_hidden[-1]  # [batch, gru_hidden]
 
-        # skip connection: concat GRU dynamics with endpoint representation
         combined = torch.cat([gru_out, final_proj], dim=-1)
         return self.scorer(combined)
 
-    def trajectory(self, hidden_states_list):
+    def trajectory(self, hidden_states_list, attention_mask):
         """
         Score at each loop step by running GRU incrementally.
         Args:
-            hidden_states_list: list of [batch, hidden_dim] pooled tensors
+            hidden_states_list: list of [batch, seq_len, hidden_dim] tensors
+            attention_mask: [batch, seq_len]
         Returns:
             scores: list of [batch, 1] tensors
             trajectory: list of scalar floats
         """
-        normed = [self.input_norm(h) for h in hidden_states_list]
-        projected = [self.input_proj(h) for h in normed]
+        pooled = [self.attention_pool(h, attention_mask) for h in hidden_states_list]
+        normed = [self.input_norm(p) for p in pooled]
+        projected = [self.input_proj(n) for n in normed]
 
         scores = []
         hidden = None
 
         for step_proj in projected:
             out, hidden = self.gru(step_proj.unsqueeze(0), hidden)
-            # hidden: [num_layers, batch, gru_hidden]
-            gru_out = hidden[-1]  # [batch, gru_hidden]
+            gru_out = hidden[-1]
             combined = torch.cat([gru_out, step_proj], dim=-1)
             scores.append(self.scorer(combined))
 
@@ -98,7 +136,7 @@ class ConstitutionalEvaluatorV2(nn.Module):
 
 
 def mean_pool(hidden, attention_mask):
-    """Mask-weighted mean pooling over token dimension."""
+    """Mask-weighted mean pooling over token dimension. Kept for linear probe."""
     mask = attention_mask.unsqueeze(-1).float()
     return (hidden * mask).sum(dim=1) / mask.sum(dim=1)
 
@@ -106,7 +144,6 @@ def mean_pool(hidden, attention_mask):
 def validate_hook_output(output):
     """
     Validates that the hook captured the expected structure from Ouro.
-    Call this on the raw hook output before using hidden states.
     Raises AssertionError with a diagnostic message if the format changed.
     """
     assert isinstance(output, (list, tuple)), \
@@ -125,20 +162,8 @@ def validate_hook_output(output):
 
 def linear_probe_test(pooled_chosen_list, pooled_rejected_list, use_final_only=True):
     """
-    Quick linear probe to check if loop hidden states carry preference signal.
-    Run this before committing to training — if a linear probe gets ~60%,
-    the representations don't carry much signal and architecture won't save you.
-
-    Uses pairwise framing: classifies direction of (chosen - rejected) margin
-    vector rather than labeling individual responses. This directly tests whether
-    relative preference is linearly encoded in the hidden state space.
-
-    Args:
-        pooled_chosen_list: list of lists of [batch, hidden_dim] tensors
-        pooled_rejected_list: same for rejected
-        use_final_only: if True, only use the last loop state
-    Returns:
-        accuracy: float
+    Pairwise linear probe using mean-pooled states.
+    Still uses mean pooling since this is a diagnostic, not the trained model.
     """
     from sklearn.linear_model import LogisticRegression
     import numpy as np
@@ -154,8 +179,6 @@ def linear_probe_test(pooled_chosen_list, pooled_rejected_list, use_final_only=T
             c = torch.cat(chosen_states, dim=-1).detach().cpu()
             r = torch.cat(rejected_states, dim=-1).detach().cpu()
 
-        # pairwise: classify direction of (chosen - rejected) margin vector
-        # this directly tests whether relative preference is linearly encoded
         diff = c - r
         for row in diff.numpy():
             features.append(row)
@@ -186,16 +209,19 @@ def test_evaluator_v2():
     """Sanity checks for ConstitutionalEvaluatorV2."""
     evaluator = ConstitutionalEvaluatorV2()
 
-    # full trajectory forward pass
-    dummy_loop_states = [torch.randn(2, 2048) for _ in range(4)]
-    score = evaluator(dummy_loop_states)
+    batch, seq_len, hidden_dim = 2, 128, 2048
+    mask = torch.ones(batch, seq_len)
+
+    # forward pass
+    dummy_states = [torch.randn(batch, seq_len, hidden_dim) for _ in range(4)]
+    score = evaluator(dummy_states, mask)
     print(f"Forward pass — Output: {score.shape}")
-    assert score.shape == (2, 1)
+    assert score.shape == (batch, 1)
     print("Forward pass: OK")
 
     # trajectory mode
-    scores, trajectory = evaluator.trajectory(dummy_loop_states)
-    print(f"Trajectory — {len(scores)} scores across {len(dummy_loop_states)} loop steps")
+    scores, trajectory = evaluator.trajectory(dummy_states, mask)
+    print(f"Trajectory — {len(scores)} scores across 4 loop steps")
     print(f"Trajectory values: {[f'{t:.4f}' for t in trajectory]}")
     assert len(scores) == 4
     print("Trajectory mode: OK")
@@ -204,14 +230,22 @@ def test_evaluator_v2():
         "Trajectory scores should differ across steps"
     print("Trajectory dynamics: OK")
 
+    # variable loop counts
     for n_steps in [1, 2, 6, 8]:
-        states = [torch.randn(2, 2048) for _ in range(n_steps)]
-        s = evaluator(states)
-        assert s.shape == (2, 1), f"Failed for {n_steps} steps"
+        states = [torch.randn(batch, seq_len, hidden_dim) for _ in range(n_steps)]
+        s = evaluator(states, mask)
+        assert s.shape == (batch, 1), f"Failed for {n_steps} steps"
     print("Variable loop counts (1, 2, 6, 8): OK")
 
-    fake_hook = [torch.randn(2, 128, 2048) for _ in range(4)]
-    validate_hook_output(fake_hook)
+    # attention pooling with actual padding
+    mask_padded = torch.ones(batch, seq_len)
+    mask_padded[:, 64:] = 0  # half padded
+    score_padded = evaluator(dummy_states, mask_padded)
+    assert score_padded.shape == (batch, 1)
+    print("Padded attention pooling: OK")
+
+    # validate hook output
+    validate_hook_output(dummy_states)
     print("Hook validation: OK")
 
     print("\nAll checks passed.")

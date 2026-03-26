@@ -2,24 +2,23 @@ import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from datasets import load_dataset
-from evaluator2 import ConstitutionalEvaluatorV2, mean_pool, validate_hook_output, linear_probe_test
+from evaluator2 import ConstitutionalEvaluatorV2, validate_hook_output
 
 # --- Configuration ---
 MODEL_NAME = "ByteDance/Ouro-2.6B-Thinking"
 BATCH_SIZE = 2
 GRAD_ACCUM_STEPS = 4          # effective batch size = 2 * 4 = 8
 EPOCHS = 3
-LEARNING_RATE = 5e-5           # lower peak LR — cosine schedule handles decay
+LEARNING_RATE = 1e-4
 WARMUP_STEPS = 200
 MAX_LENGTH = 1024
 CHECKPOINT_DIR = "checkpoints_v2"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-RUN_LINEAR_PROBE = True        # run linear probe before training as sanity check
-LINEAR_PROBE_SAMPLES = 200     # how many examples to probe
 
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
@@ -56,6 +55,10 @@ def hook_fn(module, input, output):
     captured["hidden_states_list"] = [h.detach() for h in hidden_states]
 
 def get_all_hidden_states(model, tokens):
+    """
+    Returns raw hidden states (no pooling) and attention mask.
+    Pooling is now handled inside the evaluator via AttentionPool.
+    """
     captured.clear()
     with torch.no_grad():
         model(**tokens)
@@ -63,79 +66,19 @@ def get_all_hidden_states(model, tokens):
     hidden_states_list = captured["hidden_states_list"]
     device = tokens["input_ids"].device
 
-    pooled_list = [
-        mean_pool(h.to(device=device, dtype=torch.float32), tokens["attention_mask"])
+    # cast to float32 on correct device, but do NOT pool
+    raw_list = [
+        h.to(device=device, dtype=torch.float32)
         for h in hidden_states_list
     ]
-    return pooled_list
+    attention_mask = tokens["attention_mask"]
+    return raw_list, attention_mask
 
 # --- Loss ---
 def pairwise_loss(score_chosen, score_rejected):
     ranking_loss = -F.logsigmoid(score_chosen - score_rejected).mean()
     l2_reg = 1e-5 * (score_chosen ** 2 + score_rejected ** 2).mean()
     return ranking_loss + l2_reg
-
-def trajectory_loss(scores_chosen, scores_rejected):
-    n = len(scores_chosen)
-    final_loss = pairwise_loss(scores_chosen[-1], scores_rejected[-1])
-
-    if n > 1:
-        weights = torch.linspace(0.5, 1.0, steps=n - 1).to(scores_chosen[0].device)
-        weights = weights / weights.sum()
-
-        aux_loss = sum(
-            w * pairwise_loss(sc, sr)
-            for w, sc, sr in zip(weights, scores_chosen[:-1], scores_rejected[:-1])
-        )
-        # normalize: divide by n so more loops = smaller per-step contribution
-        aux_loss = aux_loss / max(n - 1, 1)
-        return final_loss + 0.1 * aux_loss
-
-    return final_loss
-
-# --- Linear Probe ---
-def run_linear_probe(model, tokenizer, dataset, n_samples):
-    """Quick sanity check: can a linear model separate chosen/rejected from hidden states?"""
-    print(f"\n--- Linear Probe ({n_samples} examples) ---")
-
-    all_chosen_states = []
-    all_rejected_states = []
-
-    for idx in range(min(n_samples, len(dataset))):
-        item = dataset[idx]
-
-        tokens_c = tokenizer(
-            item["chosen"], return_tensors="pt",
-            truncation=True, max_length=MAX_LENGTH
-        ).to(DEVICE)
-        tokens_r = tokenizer(
-            item["rejected"], return_tensors="pt",
-            truncation=True, max_length=MAX_LENGTH
-        ).to(DEVICE)
-
-        pooled_c = get_all_hidden_states(model, tokens_c)
-        pooled_r = get_all_hidden_states(model, tokens_r)
-
-        all_chosen_states.append(pooled_c)
-        all_rejected_states.append(pooled_r)
-
-        if (idx + 1) % 50 == 0:
-            print(f"  Probed {idx + 1}/{n_samples}...")
-
-    acc_final = linear_probe_test(all_chosen_states, all_rejected_states, use_final_only=True)
-    acc_all = linear_probe_test(all_chosen_states, all_rejected_states, use_final_only=False)
-
-    print(f"Linear probe (final state): {acc_final:.4f}")
-    print(f"Linear probe (all states):  {acc_all:.4f}")
-
-    if acc_final < 0.58:
-        print("WARNING: Linear probe near chance — representations may not carry "
-              "enough preference signal. Consider a different hook point or layer.")
-    elif acc_final > 0.70:
-        print("Good signal — the GRU evaluator should be able to improve on this.")
-
-    print("---\n")
-    return acc_final
 
 # --- Main Training ---
 def train():
@@ -161,18 +104,12 @@ def train():
 
     dataset = ConstitutionalDataset(split="train", max_samples=25000)
 
-    # --- Optional linear probe ---
-    if RUN_LINEAR_PROBE:
-        run_linear_probe(model, tokenizer, dataset, LINEAR_PROBE_SAMPLES)
-
-    # --- Evaluator setup ---
     evaluator = ConstitutionalEvaluatorV2().to(DEVICE)
     optimizer = torch.optim.AdamW(evaluator.parameters(), lr=LEARNING_RATE, weight_decay=0.01)
 
     dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
     total_steps = len(dataloader) * EPOCHS // GRAD_ACCUM_STEPS
 
-    # warmup then cosine decay
     warmup_scheduler = LinearLR(optimizer, start_factor=0.1, total_iters=WARMUP_STEPS)
     cosine_scheduler = CosineAnnealingLR(optimizer, T_max=total_steps - WARMUP_STEPS)
     scheduler = SequentialLR(
@@ -182,7 +119,7 @@ def train():
     )
 
     print(f"Total steps: {total_steps} (warmup: {WARMUP_STEPS})")
-    print(f"Effective batch size: {BATCH_SIZE * GRAD_ACCUM_STEPS}")
+    print(f"LR: {LEARNING_RATE}, effective batch size: {BATCH_SIZE * GRAD_ACCUM_STEPS}, attention pooling")
     print("Starting training...")
 
     global_step = 0
@@ -210,17 +147,16 @@ def train():
                 max_length=MAX_LENGTH
             ).to(DEVICE)
 
-            pooled_chosen = get_all_hidden_states(model, tokens_chosen)
-            pooled_rejected = get_all_hidden_states(model, tokens_rejected)
+            hidden_chosen, mask_chosen = get_all_hidden_states(model, tokens_chosen)
+            hidden_rejected, mask_rejected = get_all_hidden_states(model, tokens_rejected)
 
             if batch_idx == 0 and epoch == 0:
-                print(f"Num loop states: {len(pooled_chosen)}, shape: {pooled_chosen[0].shape}")
+                print(f"Num loop states: {len(hidden_chosen)}, shape: {hidden_chosen[0].shape}")
 
-            scores_chosen, _ = evaluator.trajectory(pooled_chosen)
-            scores_rejected, _ = evaluator.trajectory(pooled_rejected)
+            score_chosen = evaluator(hidden_chosen, mask_chosen)
+            score_rejected = evaluator(hidden_rejected, mask_rejected)
 
-            loss = trajectory_loss(scores_chosen, scores_rejected)
-            # scale loss for gradient accumulation
+            loss = pairwise_loss(score_chosen, score_rejected)
             loss = loss / GRAD_ACCUM_STEPS
             loss.backward()
 
@@ -231,15 +167,15 @@ def train():
                 optimizer.zero_grad()
                 global_step += 1
 
-            total_loss += loss.item() * GRAD_ACCUM_STEPS  # unscale for logging
+            total_loss += loss.item() * GRAD_ACCUM_STEPS
 
-            batch_size_actual = scores_chosen[0].shape[0]
-            correct += (scores_chosen[-1] > scores_rejected[-1]).sum().item()
+            batch_size_actual = score_chosen.shape[0]
+            correct += (score_chosen > score_rejected).sum().item()
             total += batch_size_actual
 
             if batch_idx % 50 == 0:
                 acc = correct / total if total > 0 else 0
-                margin = (scores_chosen[-1] - scores_rejected[-1]).mean().item()
+                margin = (score_chosen - score_rejected).mean().item()
                 lr = optimizer.param_groups[0]["lr"]
                 print(
                     f"Epoch {epoch + 1} | Batch {batch_idx}/{len(dataloader)} | "
@@ -247,8 +183,8 @@ def train():
                     f"Acc: {acc:.4f} | "
                     f"Margin: {margin:.4f} | "
                     f"LR: {lr:.2e} | "
-                    f"Chosen: {scores_chosen[-1].mean().item():.4f} | "
-                    f"Rejected: {scores_rejected[-1].mean().item():.4f}"
+                    f"Chosen: {score_chosen.mean().item():.4f} | "
+                    f"Rejected: {score_rejected.mean().item():.4f}"
                 )
 
         # flush remaining gradients
