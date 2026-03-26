@@ -6,31 +6,29 @@ import torch.nn.functional as F
 class AttentionPool(nn.Module):
     """
     Learned attention pooling over the token dimension.
-    A single-head attention mechanism that learns a query vector to weight
-    token positions, replacing uniform mean pooling. This lets the evaluator
-    focus on response tokens, EOS positions, or wherever preference signal lives.
+    Low-rank bottleneck: projects to a small attn_dim for scoring,
+    preventing the pooling layer from memorizing token-specific features.
+    Forces it to learn simple positional/structural weighting instead.
 
     Input: [batch, seq_len, hidden_dim], attention_mask [batch, seq_len]
     Output: [batch, hidden_dim]
     """
 
-    def __init__(self, hidden_dim):
+    def __init__(self, hidden_dim, attn_dim=128):
         super().__init__()
-        self.query = nn.Parameter(torch.randn(hidden_dim) * 0.01)
-        self.key_proj = nn.Linear(hidden_dim, hidden_dim, bias=False)
+        self.proj = nn.Linear(hidden_dim, attn_dim, bias=False)
+        self.query = nn.Parameter(torch.randn(attn_dim) * 0.01)
 
     def forward(self, hidden, attention_mask):
         # hidden: [batch, seq_len, hidden_dim]
         # attention_mask: [batch, seq_len]
 
-        keys = self.key_proj(hidden)  # [batch, seq_len, hidden_dim]
-        scores = torch.einsum("bsd,d->bs", keys, self.query)  # [batch, seq_len]
+        keys = self.proj(hidden)  # [batch, seq_len, attn_dim]
+        scores = keys @ self.query  # [batch, seq_len]
 
-        # mask out padding positions
         scores = scores.masked_fill(attention_mask == 0, float("-inf"))
         weights = F.softmax(scores, dim=-1)  # [batch, seq_len]
 
-        # weighted sum over token dimension
         pooled = torch.einsum("bs,bsd->bd", weights, hidden)  # [batch, hidden_dim]
         return pooled
 
