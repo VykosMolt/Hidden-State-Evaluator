@@ -514,25 +514,9 @@ The epoch 3 progression is notably different from previous runs. Early epoch 3 a
 
 **Plateau at ~70%:** Accuracy stabilized around 70-70.2% in the second half of epoch 3 and did not continue rising. The plateau is real — the final 4000 batches of epoch 3 oscillate between 70.1% and 70.3% without improvement. This is not noise. Possible explanations: (1) the 25k training set is genuinely insufficient to push further — the evaluator has learned everything it can from this data, (2) the frozen Ouro representations impose a ceiling that attention pooling alone cannot overcome, (3) the architecture itself (GRU hidden=512, attn_dim=128) lacks the capacity to model the remaining hard examples.
 
-Test set evaluation complete.
+Test set evaluation pending via evaluate2.py on epoch 3 checkpoint.
 
-**Final test results — Run 7:**
-- Test accuracy: **65.0%** (up from 63.2% in run 4)
-- Average margin: ~0.65-0.76 (highest yet, declining through evaluation)
-- Same dip pattern observed: peaks ~66% around batch 3500, slides to ~64% by batch 6500, recovers slightly to ~65% final
-
-**Generalization gap analysis:**
-
-| Run | Train Acc | Test Acc | Gap |
-|---|---|---|---|
-| Run 4 | 67.8% | 63.2% | 4.6 pts |
-| Run 7 | 70.2% | 65.0% | 5.2 pts |
-
-Attention pooling improved both training and test accuracy, but the generalization gap widened slightly. The model learned more from the training distribution but also overfit more.
-
-**On the dip pattern:** The dataset is shuffled (seed=42), so the accuracy dip that peaks mid-evaluation and recovers is not a dataset ordering artifact. More likely explanations: (1) statistical noise in the cumulative accuracy metric — early batches have higher variance, (2) the test set itself has a non-uniform distribution of difficulty with harder examples concentrated in certain regions, (3) the LR schedule during training left the model better calibrated on certain regions of the preference space.
-
-**Comparison across all runs updated:**
+**Comparison across all runs:**
 
 | Run | Architecture | Pooling | Samples | Train Acc | Test Acc |
 |---|---|---|---|---|---|
@@ -542,7 +526,7 @@ Attention pooling improved both training and test accuracy, but the generalizati
 | Run 4 | V2 GRU | Mean | 25k | 67.8% | 63.2% |
 | Run 5 | V2 GRU | Mean | 25k | 68.0% | pending |
 | Run 6 | V2 GRU | Full-rank attn | 15k | collapsed | — |
-| Run 7 | V2 GRU | Low-rank attn (128) | 25k | **70.2%** | **65.0%** |
+| Run 7 | V2 GRU | Low-rank attn (128) | 25k | **70.2%** | pending |
 | Run 8 | V3 MLP (no GRU) | Low-rank attn (256) | 25k | pending | — |
 
 ---
