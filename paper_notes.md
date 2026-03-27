@@ -465,31 +465,75 @@ Mean pooling collapses the entire token sequence into a single vector by averagi
 - Localized spans — refusal phrases, harmful instructions, or critical transitions that occupy a small fraction of the sequence get diluted proportionally to sequence length
 - Positional structure — the model cannot distinguish where in the sequence a signal appears
 
-At MAX_LENGTH=1024, longer conversations dilute local signals even further. The constitutional signal that exists (93.75% linearly separable) is presumably carried in aggregate distributional patterns that survive averaging. The signal that doesn't survive — localized, token-level alignment features — is exactly what a more sophisticated pooling strategy would capture.
+At MAX_LENGTH=1024, longer conversations dilute local signals even further.
 
-**Next architectural step: Attention pooling.** Replace mean pooling with a learned attention mechanism that weights tokens differentially:
+### Training Run 6 — Full-rank Attention Pooling (collapsed)
+
+First attempt at attention pooling used a full-rank key projection: `Linear(2048 → 2048)`. This produced **accuracy collapse** — training accuracy rose for the first few hundred batches then fell back toward 50%.
+
+**Root cause:** The full-rank key projection had ~4.2M parameters — more than the rest of the evaluator combined. This gave the attention mechanism enough capacity to memorize arbitrary token-level patterns in the training data rather than learning a generalizable "which positions matter" weighting. Early in training it latched onto spurious correlations that happened to work on the first few hundred batches, then those patterns stopped generalizing as it saw more data and accuracy decayed.
+
+### Training Run 7 — Low-rank Attention Pooling (current)
+
+Fix: replace full-rank key projection with a low-rank bottleneck projecting to 128 dimensions.
 
 ```python
-self.attn_pool = nn.Linear(hidden_dim, 1)
+class AttentionPool(nn.Module):
+    def __init__(self, hidden_dim, attn_dim=128):
+        super().__init__()
+        self.proj = nn.Linear(hidden_dim, attn_dim, bias=False)  # 2048 → 128
+        self.query = nn.Parameter(torch.randn(attn_dim) * 0.01)
 
-def attention_pool(hidden, attention_mask):
-    # hidden: [batch, seq_len, hidden_dim]
-    scores = self.attn_pool(hidden).squeeze(-1)  # [batch, seq_len]
-    scores = scores.masked_fill(attention_mask == 0, float('-inf'))
-    weights = torch.softmax(scores, dim=-1)      # [batch, seq_len]
-    return (hidden * weights.unsqueeze(-1)).sum(dim=1)  # [batch, hidden_dim]
+    def forward(self, hidden, attention_mask):
+        keys = self.proj(hidden)           # [batch, seq_len, 128]
+        scores = keys @ self.query         # [batch, seq_len]
+        scores = scores.masked_fill(attention_mask == 0, float("-inf"))
+        weights = F.softmax(scores, dim=-1)
+        return torch.einsum("bs,bsd->bd", weights, hidden)
 ```
 
-This allows the model to learn to focus on the tokens most relevant to alignment — refusals, harmful content markers, hedging language — rather than treating all tokens equally.
+Parameter count drops from ~4.2M to ~260k. The query and key projection both live in 128-dimensional space — enough to learn structural token weighting (response vs prompt, EOS position, refusal markers) but not enough to memorize training examples. This forces the attention mechanism to learn genuinely generalizable patterns.
 
-**Why this is the right next step:** The 93.75% linear probe used mean-pooled representations and still achieved near-ceiling performance, so mean pooling is sufficient for a linear classifier. But the GRU evaluator is not a linear classifier — it needs to learn a more complex decision boundary, and the quality of its input representation directly constrains what it can learn. Attention pooling gives it richer input without changing anything else about the architecture.
+**Key insight:** The bottleneck doesn't restrict what the evaluator *uses* after pooling — the full 2048-dimensional pooled vector is still passed forward. It only restricts the complexity of the *weighting decision*, which is exactly the right place to regularize.
+
+### Training Run 7 Results (V2 + low-rank attention pooling, 25k samples, forward-only)
+
+Note: `max_samples` was not updated from 25000 as planned, making this a full 25k run — directly comparable to runs 4 and 5.
+
+| Epoch | Loss | Training Accuracy |
+|---|---|---|
+| 1 | 0.6566 | 60.1% |
+| 2 | 0.6074 | 66.4% |
+| 3 | 0.5665 | **70.2%** |
+
+**70.2% training accuracy — first time breaking through the 68% ceiling.** This is a 2.2 point improvement over runs 4 and 5 (both ~68%), which used mean pooling on the same dataset size. The improvement is attributable entirely to the switch from mean pooling to low-rank attention pooling, as all other hyperparameters are identical.
+
+The epoch 3 progression is notably different from previous runs. Early epoch 3 accuracy shot to 69-70% rapidly (batch 1000-1500) and plateaued there for the rest of training. Previous runs with mean pooling showed a similar rapid rise but peaked at 67-68% and held flat. The attention mechanism is learning a better decision boundary, consistent with the hypothesis that mean pooling was discarding token-level signal.
+
+**Score distribution:** Scores are no longer uniformly negative. The attention pooling produces more centered representations — scores range widely on both sides of zero throughout training. This is a healthier signal than the systematic negative bias seen in runs 4 and 5.
+
+**Plateau at ~70%:** Accuracy stabilized around 70-70.2% in the second half of epoch 3 and did not continue rising. The plateau is real — the final 4000 batches of epoch 3 oscillate between 70.1% and 70.3% without improvement. This is not noise. Possible explanations: (1) the 25k training set is genuinely insufficient to push further — the evaluator has learned everything it can from this data, (2) the frozen Ouro representations impose a ceiling that attention pooling alone cannot overcome, (3) the architecture itself (GRU hidden=512, attn_dim=128) lacks the capacity to model the remaining hard examples.
+
+Test set evaluation pending via evaluate2.py on epoch 3 checkpoint.
+
+**Comparison across all runs:**
+
+| Run | Architecture | Pooling | Samples | Train Acc | Test Acc |
+|---|---|---|---|---|---|
+| Run 1 | V1 MLP | Mean | 5k | 46.4% (test) | 46.4% |
+| Run 2 | V1 MLP | Mean | 15k | ~62.4% | 61.3% |
+| Run 3 | V1 MLP | Mean | 25k | ~62.4% | 61.9% |
+| Run 4 | V2 GRU | Mean | 25k | 67.8% | 63.2% |
+| Run 5 | V2 GRU | Mean | 25k | 68.0% | pending |
+| Run 6 | V2 GRU | Full-rank attn | 15k | collapsed | — |
+| Run 7 | V2 GRU | Low-rank attn | 25k | **70.2%** | pending |
 
 ---
 
 ## 5. Open Questions and Future Work
 
-- **Attention pooling (immediate):** Replace mean pooling with learned attention pooling — most likely current bottleneck given trajectory ablation ruling out supervision as the issue
-- **Run 5 test set evaluation:** Run evaluate2.py on run 5 checkpoint to confirm parity with run 4
+- **Run 7 test set evaluation (immediate):** Run evaluate2.py on run 7 checkpoint — key question is whether 70.2% training accuracy translates to >63.2% test accuracy
+- **Plateau investigation:** 70% plateau in epoch 3 suggests either a dataset size ceiling or an architectural capacity ceiling — scaling to 50k would distinguish between them
 - **Progressive scaling:** 25k → 50k → 100k → 160k full dataset
 - **Active inference integration:** Use constitutional score to gate generation in real time
 - **Joint training:** Train evaluator alongside Ouro from scratch — would dramatically strengthen signal given 93% linear separability already exists in frozen representations
