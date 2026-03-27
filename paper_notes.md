@@ -526,19 +526,61 @@ Test set evaluation pending via evaluate2.py on epoch 3 checkpoint.
 | Run 4 | V2 GRU | Mean | 25k | 67.8% | 63.2% |
 | Run 5 | V2 GRU | Mean | 25k | 68.0% | pending |
 | Run 6 | V2 GRU | Full-rank attn | 15k | collapsed | — |
-| Run 7 | V2 GRU | Low-rank attn | 25k | **70.2%** | pending |
+| Run 7 | V2 GRU | Low-rank attn (128) | 25k | **70.2%** | pending |
+| Run 8 | V3 MLP (no GRU) | Low-rank attn (256) | 25k | pending | — |
+
+---
+
+## 4.8 GRU Bottleneck Hypothesis and Architecture V3 (Final Loop State MLP)
+
+### Hypothesis
+
+After the 70% plateau in run 7, the GRU was identified as a potential bottleneck. The reasoning:
+
+The GRU processes 4 loop states sequentially, building a hidden state that encodes trajectory dynamics. But with only 4 timesteps, the GRU may not be adding meaningful temporal signal — it may instead be introducing sequential information loss. Each GRU step applies a learned gating mechanism that selectively forgets and updates, meaning signal from early loop states could be partially discarded by the time the final state is scored. For a sequence of 4 items, this is likely hurting more than helping.
+
+Additionally, the linear probe achieved 93.75% on the **final loop state alone** using simple mean pooling. The GRU's job was supposed to be extracting temporal dynamics from the trajectory, but if the final state already contains the bulk of the constitutional signal, the GRU is mostly adding noise and capacity for overfitting.
+
+**Conclusion:** Remove the GRU entirely. Score directly from the final loop state via attention pooling → MLP. This is the closest learned architecture to the linear probe that got 93.75%.
+
+### Architecture V3 — ConstitutionalEvaluatorTest
+
+```
+Input: final hidden state only [batch, seq_len, 2048]
+
+AttentionPool (attn_dim=256):
+  Linear(2048→256, no bias) → dot with query[256] → softmax → weighted sum → [batch, 2048]
+
+LayerNorm(2048)
+Linear(2048→512) + GELU + Dropout(0.1)
+Linear(512→256) + GELU + Dropout(0.1)
+Linear(256→1)
+Output: unbounded scalar
+```
+
+Key decisions vs V2:
+- **No GRU** — eliminates temporal bottleneck, scores final loop state directly
+- **attn_dim=256** — up from 128, more pooling capacity. Still far below full-rank (2048) so overfitting risk remains low (~525k params vs 4.2M full-rank)
+- **Wider MLP** — 2048→512→256→1 with two GELU layers. Since the MLP is now the only nonlinear transform, it needs more capacity than before
+- **`eta_min=1e-5`** on cosine scheduler — LR floors at 1e-5 instead of 0, prevents over-decay in final batches
+- **`CHECKPOINT_DIR = "checkpoints_test"`** — isolated from V2 checkpoints
+- **Files:** `evaluator_test.py`, `train_test.py`
+
+### Theoretical expectation
+
+If the GRU was the bottleneck: this architecture should exceed 70% training accuracy, potentially approaching the linear probe ceiling more closely. If dataset size is the bottleneck: this architecture will plateau at the same ~70% level. If the frozen representations are the ceiling: we will not exceed ~70% regardless of architecture changes.
+
+Training run 8 in progress (3 epochs, 25k samples, forward-only, LR=1e-4).
 
 ---
 
 ## 5. Open Questions and Future Work
 
-- **Run 7 test set evaluation (immediate):** Run evaluate2.py on run 7 checkpoint — key question is whether 70.2% training accuracy translates to >63.2% test accuracy
-- **Plateau investigation:** 70% plateau in epoch 3 suggests either a dataset size ceiling or an architectural capacity ceiling — scaling to 50k would distinguish between them
-- **Progressive scaling:** 25k → 50k → 100k → 160k full dataset
+- **Run 8 results (pending):** No-GRU architecture — key test of whether GRU was the bottleneck or whether 70% is a dataset/representation ceiling
+- **Run 7 test set evaluation:** Run evaluate2.py on run 7 checkpoint
+- **Progressive scaling:** 25k → 50k → 100k once architecture is settled
 - **Active inference integration:** Use constitutional score to gate generation in real time
 - **Joint training:** Train evaluator alongside Ouro from scratch — would dramatically strengthen signal given 93% linear separability already exists in frozen representations
-- **GRU hidden size 1024:** Try if V2 + attention pooling plateaus after scaling
-- **Bidirectional GRU:** Currently unidirectional — bidirectional would let each step see full context, though this breaks the incremental trajectory monitoring use case
 - **Basal ganglia component:** Active gating mechanism integrating constitutional score and entropy into the early exit decision — next architectural milestone after CLT paper
 
 ---
