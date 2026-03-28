@@ -91,9 +91,13 @@ def test_evaluator():
     batch, seq_len, hidden_dim = 2, 128, 2048
     mask = torch.ones(batch, seq_len)
 
+    # switch to eval mode for deterministic tests (disables dropout)
+    evaluator.eval()
+
     # forward pass with 4 loop states (only last used)
     dummy_states = [torch.randn(batch, seq_len, hidden_dim) for _ in range(4)]
-    score = evaluator(dummy_states, mask)
+    with torch.no_grad():
+        score = evaluator(dummy_states, mask)
     print(f"Forward pass — Output: {score.shape}")
     assert score.shape == (batch, 1)
     print("Forward pass: OK")
@@ -101,21 +105,24 @@ def test_evaluator():
     # verify only final state matters
     dummy_states_2 = [torch.randn(batch, seq_len, hidden_dim) for _ in range(3)]
     dummy_states_2.append(dummy_states[-1])  # same final state
-    score_2 = evaluator(dummy_states_2, mask)
+    with torch.no_grad():
+        score_2 = evaluator(dummy_states_2, mask)
     assert torch.allclose(score, score_2), "Scores should match when final state matches"
     print("Final-state-only: OK")
 
     # variable loop counts
     for n_steps in [1, 2, 6, 8]:
         states = [torch.randn(batch, seq_len, hidden_dim) for _ in range(n_steps)]
-        s = evaluator(states, mask)
+        with torch.no_grad():
+            s = evaluator(states, mask)
         assert s.shape == (batch, 1), f"Failed for {n_steps} steps"
     print("Variable loop counts: OK")
 
     # padded input
     mask_padded = torch.ones(batch, seq_len)
     mask_padded[:, 64:] = 0
-    score_padded = evaluator(dummy_states, mask_padded)
+    with torch.no_grad():
+        score_padded = evaluator(dummy_states, mask_padded)
     assert score_padded.shape == (batch, 1)
     print("Padded attention pooling: OK")
 

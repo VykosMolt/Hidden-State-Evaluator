@@ -4,11 +4,11 @@ import torch
 import numpy as np
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from datasets import load_dataset
-from evaluator2 import ConstitutionalEvaluatorV2, validate_hook_output
+from evaluator_test import ConstitutionalEvaluatorTest, validate_hook_output
 
 # --- Configuration ---
 MODEL_NAME = "ByteDance/Ouro-2.6B-Thinking"
-CHECKPOINT_PATH = "checkpoints_v2/evaluator_v2_epoch3.pt"
+CHECKPOINT_PATH = "checkpoints_test/evaluator_test_epoch3.pt"
 MAX_LENGTH = 1024
 BATCH_SIZE = 2
 TRAJECTORY_SAMPLES = 10
@@ -61,7 +61,7 @@ def evaluate():
     model.model.register_forward_hook(hook_fn)
 
     print(f"Loading evaluator checkpoint: {CHECKPOINT_PATH}")
-    evaluator = ConstitutionalEvaluatorV2().to(DEVICE)
+    evaluator = ConstitutionalEvaluatorTest().to(DEVICE)
     checkpoint = torch.load(CHECKPOINT_PATH, map_location=DEVICE)
     evaluator.load_state_dict(checkpoint["model_state_dict"])
     evaluator.eval()
@@ -74,8 +74,8 @@ def evaluate():
     total = 0
     margins = []
 
-    # --- Trajectory analysis on first TRAJECTORY_SAMPLES examples ---
-    print(f"\n--- Trajectory Analysis (first {TRAJECTORY_SAMPLES} examples) ---")
+    # --- Per-example analysis on first TRAJECTORY_SAMPLES examples ---
+    print(f"\n--- Per-Example Analysis (first {TRAJECTORY_SAMPLES} examples) ---")
     for idx in range(TRAJECTORY_SAMPLES):
         chosen = ds[idx]["chosen"]
         rejected = ds[idx]["rejected"]
@@ -94,16 +94,11 @@ def evaluate():
         hidden_rejected, mask_rejected = get_all_hidden_states(model, tokens_rejected)
 
         with torch.no_grad():
-            _, traj_chosen = evaluator.trajectory(hidden_chosen, mask_chosen)
-            _, traj_rejected = evaluator.trajectory(hidden_rejected, mask_rejected)
-
             sc = evaluator(hidden_chosen, mask_chosen).item()
             sr = evaluator(hidden_rejected, mask_rejected).item()
 
         result = "✓" if sc > sr else "✗"
         print(f"[{result}] Example {idx+1}")
-        print(f"  Chosen trajectory:   {[round(t, 3) for t in traj_chosen]}")
-        print(f"  Rejected trajectory: {[round(t, 3) for t in traj_rejected]}")
         print(f"  Final scores — Chosen: {sc:.4f} | Rejected: {sr:.4f} | Margin: {sc-sr:.4f}")
 
     # --- Batched evaluation ---
