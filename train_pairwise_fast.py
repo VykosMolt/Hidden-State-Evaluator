@@ -2,24 +2,23 @@ import os
 import torch
 import torch.nn.functional as F
 import numpy as np
-from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR, ConstantLR
+from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from evaluator_pairwise import PairwiseEvaluator
 
 # --- Configuration ---
-BATCH_SIZE = 8
+BATCH_SIZE = 32
 GRAD_ACCUM_STEPS = 1
-EPOCHS = 3
+EPOCHS = 5
 LEARNING_RATE = 1e-4
 WARMUP_STEPS = 200
 CHECKPOINT_DIR = "checkpoints_pairwise"
-FEATURE_DIR = "/mnt/sandisk/ouro_features"
+FEATURE_DIR = "features"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
 # --- Batching ---
 def make_batch(examples):
-    """Collate examples into a batch with padding for variable seq lengths."""
     n_loops = len(examples[0]["chosen_states"])
 
     def pad_and_stack(states_list, masks_list):
@@ -81,23 +80,18 @@ def train():
     batches_per_epoch = total_examples // BATCH_SIZE
     total_steps = batches_per_epoch * EPOCHS // GRAD_ACCUM_STEPS
 
-    # --- UPDATED SCHEDULER BLOCK ---
-    decay_steps = int(0.2 * total_steps)
-
     warmup_scheduler = LinearLR(optimizer, start_factor=0.1, total_iters=WARMUP_STEPS)
-    constant_scheduler = ConstantLR(optimizer, factor=1.0, total_iters=total_steps - WARMUP_STEPS - decay_steps)
-    decay_scheduler = CosineAnnealingLR(optimizer, T_max=decay_steps)
-
+    cosine_scheduler = CosineAnnealingLR(optimizer, T_max=total_steps - WARMUP_STEPS, eta_min=1e-6)
     scheduler = SequentialLR(
         optimizer,
-        schedulers=[warmup_scheduler, constant_scheduler, decay_scheduler],
-        milestones=[WARMUP_STEPS, total_steps - decay_steps]
+        schedulers=[warmup_scheduler, cosine_scheduler],
+        milestones=[WARMUP_STEPS]
     )
 
-    print(f"Total steps: {total_steps} (warmup: {WARMUP_STEPS}, constant: {total_steps - WARMUP_STEPS - decay_steps}, decay: {decay_steps})")
+    print(f"Total steps: {total_steps} (warmup: {WARMUP_STEPS}, cosine: {total_steps - WARMUP_STEPS})")
     print(f"LR: {LEARNING_RATE}, effective batch size: {BATCH_SIZE * GRAD_ACCUM_STEPS}")
-    print(f"Architecture: PAIRWISE (difference trajectory through GRU)")
-    print(f"Training with 50% random swap to force directional learning")
+    print(f"Epochs: {EPOCHS}")
+    print(f"Architecture: PAIRWISE v1 (original 70% architecture)")
     print("Starting training...")
 
     global_step = 0
@@ -133,17 +127,20 @@ def train():
                 flip = np.random.random() < 0.5
 
                 if flip:
-                    score = evaluator(rejected_states, rejected_mask, chosen_states, chosen_mask)
+                    states_a, mask_a = rejected_states, rejected_mask
+                    states_b, mask_b = chosen_states, chosen_mask
                     target = -1.0
                     n_flipped += 1
                 else:
-                    score = evaluator(chosen_states, chosen_mask, rejected_states, rejected_mask)
+                    states_a, mask_a = chosen_states, chosen_mask
+                    states_b, mask_b = rejected_states, rejected_mask
                     target = 1.0
                     n_normal += 1
 
                 if batch_count == 0 and epoch == 0:
                     print(f"Num loop states: {len(chosen_states)}, shape: {chosen_states[0].shape}")
 
+                score = evaluator(states_a, mask_a, states_b, mask_b)
                 loss = pairwise_preference_loss(score, target)
                 loss = loss / GRAD_ACCUM_STEPS
                 loss.backward()
@@ -158,10 +155,11 @@ def train():
                 total_loss += loss.item() * GRAD_ACCUM_STEPS
 
                 batch_size_actual = score.shape[0]
-                if target > 0:
-                    correct += (score > 0).sum().item()
-                else:
-                    correct += (score < 0).sum().item()
+                with torch.no_grad():
+                    if target > 0:
+                        correct += (score > 0).sum().item()
+                    else:
+                        correct += (score < 0).sum().item()
                 total += batch_size_actual
                 batch_count += 1
 
