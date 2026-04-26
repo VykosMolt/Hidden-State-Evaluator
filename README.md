@@ -17,6 +17,7 @@ On HH-RLHF preference pairs:
 | Linear probe | Linear independent classification | 21.75% accuracy, below chance / inverted polarity |
 
 The main result is therefore not simply "a preference classifier works." The stronger interpretation is that Ouro's loop-state trajectories expose a relational evaluative structure: the model's internal trajectory is much easier to judge comparatively than absolutely.
+(The best checkpoint was the epoch-2 pairwise evaluator, which reached 95.2% test accuracy. Earlier commits and intermediate runs reported lower epoch-1 numbers.)
 
 ## Related papers
 
