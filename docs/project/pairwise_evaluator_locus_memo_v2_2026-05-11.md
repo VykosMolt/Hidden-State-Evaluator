@@ -1729,3 +1729,63 @@ This is a spec change, not a stop. Experiment 2 should run the fused arm
 and the L4-only arm side by side and keep whichever has the higher
 *centered* accuracy under the debiased objective.
 
+### L1↔L4 weighted-mean α sweep (2026-05-14)
+
+**Script:** `utilities/tests/manual/probe_l1_alpha_sweep.py`
+**Raw output:** `artifacts/reports/probes/probe_l1_alpha_sweep.json`
+
+Derisks the Experiment-2 arm design. Question: is the mean(L1,L4) fusion
+gain about *mixing weight* (a 2048-dim weighted mean captures it → the
+learned-α arm is high-prior) or about the head seeing L1 and L4 as
+*separate slots* (only a 4096-dim concat/diff arm captures it → those arms
+are high-prior)? Sweep of `fusion = α·L1 + (1−α)·L4`, frozen head,
+swap-balanced, zero-shot, 200 saved Thinking pairs. α=0 ⇒ L4-only,
+α=1 ⇒ L1-only, α=0.5 ⇒ mean (consistency check against the 0.620 above).
+
+| α | canonical | centered | bias/sig |
+|---:|---:|---:|---:|
+| 0.00 (L4) | 0.950 | 0.595 | 1.416 |
+| 0.10 | 0.950 | 0.595 | 1.436 |
+| 0.20 | 0.945 | 0.595 | 1.456 |
+| 0.30 | 0.945 | 0.595 | 1.468 |
+| 0.35 | 0.950 | 0.615 | 1.472 |
+| 0.40 | 0.950 | 0.610 | 1.474 |
+| **0.45** | 0.945 | **0.620** | 1.474 |
+| **0.50 (mean)** | 0.940 | **0.620** | 1.472 |
+| 0.55 | 0.930 | 0.610 | 1.468 |
+| 0.60 | 0.930 | 0.610 | 1.464 |
+| 0.70 | 0.930 | 0.605 | 1.451 |
+| 0.80 | 0.925 | 0.595 | 1.436 |
+| 0.90 | 0.930 | 0.590 | 1.420 |
+| 1.00 (L1) | 0.915 | 0.575 | 1.404 |
+
+α=0.50 reproduces centered 0.620 **exactly** — internal consistency with
+the L1-ablation `mean(L1,L4)` row holds. The curve is a step from an
+L4-dominated regime (α ≤ 0.30 ≈ 0.595) up to a broad plateau (α 0.35–0.50
+≈ 0.615–0.620), then a monotone decline toward L1. **No α beats the
+unweighted mean's 0.620** — peak gain over mean is 0.00 pp, below the
+0.5 pp "meaningful" bar.
+
+`bias_to_signal` is essentially flat across the whole sweep (1.40–1.47)
+and α=0.50 is the lowest among the two near-optimal αs (1.472) — i.e.
+weighting does not help the symmetric-offset problem either, so the
+debiased objective's λ_sym penalty is doing work orthogonal to L1 fusion.
+
+**Verdict (matches the pre-registered "flat ≈ 0.620" case): the fusion
+gain is NOT about mixing weight.** A 2048-dim weighted mean cannot exceed
+the simple average, so the +2.5 pp the L1-ablation found has to come from
+the head seeing L1 and L4 as *separate* signals. Concat/diff do
+structurally different work than any 2048-dim mixer can.
+
+**Decided Experiment-2 arm priority for tonight:**
+
+> **concat [L1;L4] > diff [L4; L4−L1] > weighted-mean (seed α=0.50) > L4-only control**
+
+per λ_sym ∈ {0.1, 0.3, 1.0}, checkpoint by centered_acc, Thinking backbone
+(W1), 4 arms × 3 λ = 12 runs. (Recall the concat≈diff equivalence caveat:
+linearly the same function class; any divergence between them is a
+LayerNorm-induced conditioning effect, not extra capacity.) The
+weighted-mean arm is kept but demoted — it is cheap and a useful negative
+control; if it matches concat/diff under the debiased objective, that
+*reopens* the "it was just averaging" hypothesis under retraining.
+
