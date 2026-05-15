@@ -1,0 +1,109 @@
+{
+  "source_states": "artifacts/reports/probes/hh_loop_states_200_thinking.pt",
+  "head_checkpoint": "artifacts/checkpoints/pairwise/pairwise_epoch2.pt",
+  "n_pairs": 200,
+  "protocol": "swap-balanced, zero-shot, fp32, no model forward",
+  "variant_definition": "named loop state replicated into all 4 head input slots; natural_seq = [L1,L2,L3,L4] reference only",
+  "bias_to_signal_formula": "abs(mean(s_cr + s_rc)) / std(s_cr - s_rc)",
+  "thresholds": {
+    "noise_within_pp_of_chance": 0.02,
+    "signal_centered_min": 0.55,
+    "signal_fusion_gain_pp": 0.01,
+    "degeneracy": {
+      "strict_sign_reversal_max": 0.05,
+      "pos_rate_min": 0.95
+    }
+  },
+  "metrics": {
+    "L4_only": {
+      "n_valid": 200,
+      "canonical_acc": 0.95,
+      "centered_acc": 0.595,
+      "bias_to_signal": 1.4157971267008351,
+      "s_cr_mean": 1.6067220286652446,
+      "s_cr_std": 0.9572427016569042,
+      "s_rc_mean": 0.9943719655321911,
+      "s_rc_std": 0.9273555362607581,
+      "pos_rate_cr": 0.95,
+      "strict_sign_reversal_rate": 0.175,
+      "centered_mean": 0.6123500631330535,
+      "centered_std": 1.8371940055130933,
+      "summed_mean": 2.6010939941974356
+    },
+    "L1_only": {
+      "n_valid": 200,
+      "canonical_acc": 0.915,
+      "centered_acc": 0.575,
+      "bias_to_signal": 1.4039245087177736,
+      "s_cr_mean": 1.4965452222712339,
+      "s_cr_std": 0.9786831960702682,
+      "s_rc_mean": 1.0611691121663898,
+      "s_rc_std": 0.8964208725254411,
+      "pos_rate_cr": 0.915,
+      "strict_sign_reversal_rate": 0.18,
+      "centered_mean": 0.43537611010484395,
+      "centered_std": 1.8218318140008998,
+      "summed_mean": 2.5577143344376236
+    },
+    "L2_only": {
+      "n_valid": 200,
+      "canonical_acc": 0.95,
+      "centered_acc": 0.6,
+      "bias_to_signal": 1.5063100184872058,
+      "s_cr_mean": 1.5570225392282009,
+      "s_cr_std": 0.9090533972759293,
+      "s_rc_mean": 1.0342002085410058,
+      "s_rc_std": 0.8616474174419435,
+      "pos_rate_cr": 0.95,
+      "strict_sign_reversal_rate": 0.155,
+      "centered_mean": 0.5228223306871951,
+      "centered_std": 1.7202453120318377,
+      "summed_mean": 2.5912227477692067
+    },
+    "mean_L1_L4": {
+      "n_valid": 200,
+      "canonical_acc": 0.94,
+      "centered_acc": 0.62,
+      "bias_to_signal": 1.4716175898881787,
+      "s_cr_mean": 1.5658574042655529,
+      "s_cr_std": 0.9482638341481139,
+      "s_rc_mean": 1.039741782778874,
+      "s_rc_std": 0.8737232687727714,
+      "pos_rate_cr": 0.94,
+      "strict_sign_reversal_rate": 0.15,
+      "centered_mean": 0.5261156214866787,
+      "centered_std": 1.7705681183400466,
+      "summed_mean": 2.605599187044427
+    },
+    "natural_seq": {
+      "n_valid": 200,
+      "canonical_acc": 0.95,
+      "centered_acc": 0.595,
+      "bias_to_signal": 1.3983364455440455,
+      "s_cr_mean": 1.6016440350236372,
+      "s_cr_std": 0.9640029885105972,
+      "s_rc_mean": 0.9847491109231487,
+      "s_rc_std": 0.9337597227172824,
+      "pos_rate_cr": 0.95,
+      "strict_sign_reversal_rate": 0.18,
+      "centered_mean": 0.6168949241004884,
+      "centered_std": 1.8496214943039033,
+      "summed_mean": 2.586393145946786
+    }
+  },
+  "verdict": {
+    "verdict": "L1 carries readable relational signal \u2014 Experiment 2 should add an early_tap=True option that ingests L1 alongside L4.",
+    "rationale": "L1-only centered_acc 0.5750 >= 0.55; mean(L1,L4) centered 0.6200 beats L4 0.5950 by 2.50 pp >= 1 pp",
+    "recommended_action": "Experiment 2 spec: add early_tap=True ingesting L1 alongside L4.",
+    "borderline": false,
+    "key_numbers": {
+      "L1_only_centered_acc": 0.575,
+      "L4_only_centered_acc": 0.595,
+      "L2_only_centered_acc": 0.6,
+      "mean_L1_L4_centered_acc": 0.62,
+      "fusion_gain_pp_over_L4": 2.500000000000002,
+      "degeneracy_flags": []
+    }
+  },
+  "wall_seconds": 8.93
+}
