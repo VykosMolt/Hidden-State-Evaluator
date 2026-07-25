@@ -4,6 +4,31 @@ This repository contains the evaluator code from my work on **Ouro-2.6B-Thinking
 
 The project began as an alignment / preference-readout experiment. I wanted to test whether human preference could be read from the hidden states produced by Ouro's internal loop iterations, without fine-tuning the base model. The surprising result was not just that preference was readable, but that it was readable mainly **relationally**: comparing two loop-state trajectories worked far better than trying to score each response independently.
 
+
+> ## ⚠️ Correction notice (2026-07-25)
+>
+> **The headline figures below have been corrected and are retained only as a record of
+> what was originally reported.** A project-wide evaluation audit found two independent
+> defects — source-item leakage across a row-level train/test split, and a
+> presentation-order prior in the fixed-order pairwise evaluator. The correction of record
+> is the **erratum to [arXiv:2604.09870](https://arxiv.org/abs/2604.09870) (v2)**.
+>
+> | Result | Reported here | Corrected |
+> |---|---:|---:|
+> | Pairwise nonlinear evaluator | 95.2% | **0.6392** (strict antisymmetrized) |
+> | Linear relational probe | 84.5% | **0.5653** |
+> | Independent / pointwise linear probe | 21.75% ("inverted polarity") | **0.5418** — *above* chance |
+>
+> The direction of the original finding survives: preference **is** decoded more accurately
+> relationally than pointwise. Its magnitude does not, and the claim that preference is
+> *unavailable* pointwise is **withdrawn** — the clean pointwise probe reads 0.5418,
+> significantly above chance. The 95.2% figure was substantially a first-position ordering
+> prior and is reportable only as fixed-order, discovery-stage accuracy.
+>
+> Full protocol, both failure mechanisms, and every corrected value are in
+> [`papers/kirin2026_paper1_v1.pdf`](papers/) §3.7 and
+> [`papers/kirin2026_paper2.pdf`](papers/).
+
 ## Main result
 
 Using frozen hidden states extracted from Ouro loop iterations, I trained lightweight evaluator heads of roughly 5M parameters.
@@ -19,13 +44,18 @@ On HH-RLHF preference pairs:
 The main result is therefore not simply "a preference classifier works." The stronger interpretation is that Ouro's loop-state trajectories expose a relational evaluative structure: the model's internal trajectory is much easier to judge comparatively than absolutely.
 (The best checkpoint was the epoch-2 pairwise evaluator, which reached 95.2% test accuracy. Earlier commits and intermediate runs reported lower epoch-1 numbers.)
 
-## Related papers
+## Papers
 
-**Relational Preference Encoding in Looped Transformer Internal States**  
-https://arxiv.org/abs/2604.09870
+`papers/` contains the manuscripts covering this work and its corrections:
 
-**Scaling Latent Reasoning via Looped Language Models**  
-https://arxiv.org/abs/2510.25741
+| File | Pages | Contents |
+|---|---:|---|
+| `kirin2026_paper1_v1.pdf` | 49 | *Operational Proto-Introspection in Looped Language Models* — the successor project: process-quality taps, an executable branching substrate, and the readout–control boundary. |
+| `kirin2026_paper2.pdf` | 13 | *Two Evaluation Traps in Constructed-Row Pipelines* — the audit that produced the corrections in the notice above, with the protocol and reference checks. |
+
+Active development moved to
+[Branching-Looped-Transformer](https://github.com/VykosMolt/Branching-Looped-Transformer).
+This repository remains the snapshot of the original pairwise-evaluator work.
 
 ## What this repository is
 
