@@ -10,7 +10,8 @@
     "calibration_precommit_sha256": "910176b666a47da75273b72bf5bfef8484faeb223ddab823ab02ccd35f47def2",
     "calibration_records_exist": false,
     "calibration_seed_matrix_sha256": "693b788e2098e6975e2364b23832f18b8686e60abe32af1a02f5acbddc5d5e49",
-    "external_commit": "PENDING_AT_ARTIFACT_CREATION",
+    "external_commit": "70651d529ad4ecf204c81dc88854f6f376c420c6",
+    "external_ref_status": "EXTERNALLY_COMMITTED_AND_LS_REMOTE_VERIFIED",
     "freeze_manifest_precalibration_sha256": "4b83da9f2b2516c0e4c45dc86778dd3f93e88a3c2a07c7f923731e716f4055c3"
   },
   "checkpoint": {

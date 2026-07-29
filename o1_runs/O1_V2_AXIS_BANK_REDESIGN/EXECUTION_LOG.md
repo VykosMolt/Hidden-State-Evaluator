@@ -61,3 +61,17 @@ stop before calibration.
 - Verified the precommit against all 61 bound calibration configuration paths.
 - External Git commitment is the remaining chronology gate. No calibration
   command has been launched.
+
+## 2026-07-29 — external chronology commitment verified
+
+- Committed the calibration precommit in Git commit
+  `70651d529ad4ecf204c81dc88854f6f376c420c6`.
+- Pushed branch `o1-v2-axis-bank-redesign` to the authenticated `origin`
+  remote. The server reports that the repository moved to
+  `VykosMolt/Hidden-State-Evaluator` and accepted the branch there.
+- Independently queried `refs/heads/o1-v2-axis-bank-redesign` with
+  `git ls-remote`; it advertised the exact commit above.
+- Local upstream-tracking metadata could not be written because the shared
+  main repository `.git` directory is read-only; this did not affect the
+  successful remote push or remote-ref verification.
+- Stopped before calibration. `calibration_records.jsonl` remains absent.
