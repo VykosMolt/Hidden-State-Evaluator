@@ -48,3 +48,16 @@ commit the complete design, create the calibration precommit against that
 commit and exact runtime artifacts, externally push the precommit commit, and
 stop before calibration.
 
+## 2026-07-29 — calibration precommit created
+
+- Package/design commit:
+  `47e7ed5b5d4d07235522e714c3970db6ec0887cb`.
+- Frozen precommit-input commit:
+  `945095843290ff0039bfd0986861c970516f8e75`.
+- Created `CALIBRATION_PRECOMMIT.json` while the worktree was clean and while
+  `calibration_records.jsonl` did not exist.
+- Precommit SHA-256:
+  `910176b666a47da75273b72bf5bfef8484faeb223ddab823ab02ccd35f47def2`.
+- Verified the precommit against all 61 bound calibration configuration paths.
+- External Git commitment is the remaining chronology gate. No calibration
+  command has been launched.
