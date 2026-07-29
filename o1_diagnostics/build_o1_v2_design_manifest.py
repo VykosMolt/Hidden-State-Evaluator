@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 
 
@@ -22,7 +23,36 @@ def canonical_json_hash(value) -> str:
     ).encode()).hexdigest()
 
 
-def build(root: Path, commit: str, output: Path) -> dict:
+def tree_hash(path: Path) -> str:
+    if path.is_file():
+        return file_hash(path)
+    h = hashlib.sha256()
+    for current, dirs, files in os.walk(path):
+        dirs.sort()
+        for name in sorted(files):
+            full = Path(current) / name
+            relative = full.relative_to(path).as_posix()
+            h.update(relative.encode())
+            h.update(b"\0")
+            h.update(bytes.fromhex(file_hash(full)))
+            h.update(b"\n")
+    return h.hexdigest()
+
+
+def stream_seed(master: int, task_id: str, index: int) -> int:
+    task = task_id.encode()
+    payload = (
+        b"O1_STREAM_SEED_V1\0"
+        + int(master).to_bytes(8, "big")
+        + len(task).to_bytes(4, "big")
+        + task
+        + int(index).to_bytes(1, "big")
+    )
+    return int.from_bytes(hashlib.sha256(payload).digest()[:8], "big")
+
+
+def build(root: Path, commit: str, output: Path, seed_output: Path,
+          artifacts_output: Path) -> dict:
     package = root / "o1_packages/O1_oracle_reachability_v2.0.0_source/o1_v200"
     run = root / "o1_runs/O1_V2_AXIS_BANK_REDESIGN"
     axis = run / "AXIS_PACKAGE_V2"
@@ -96,8 +126,10 @@ def build(root: Path, commit: str, output: Path) -> dict:
         "reference_set_sha256": diag["reference"]["file_sha256"],
     })
     structured = template["action_space"]["structured_axes"]
-    structured["gram_matrix"] = gram["structured_gram"]
-    structured["pairwise_cosines"] = gram["structured_cosine"]
+    structured["gram_matrix"] = gram["gram"]
+    structured["pairwise_cosines"] = [
+        [float(value) / 2048.0 for value in row] for row in gram["gram"]
+    ]
     structured["norms_before_after"] = {
         "unit_rms_after": [1.0, 1.0, 1.0, 1.0],
         "A3_raw_mean_l2": diag["A3_CAUSAL_MEAN"]["raw_mean_l2_norm"],
@@ -110,7 +142,25 @@ def build(root: Path, commit: str, output: Path) -> dict:
         "PENDING_POSTCALIBRATION_MECHANICAL_SELECTION_FROM_"
         + file_hash(run / "COHORTS/confirmatory_candidate_pool.jsonl")
     )
-    template["cohorts"]["seed_matrix_sha256"] = "PENDING_SEED_MATRIX_BUILD"
+    calibration_rows = [
+        json.loads(line)
+        for line in (run / "COHORTS/calibration_tasks.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    seed_matrix = {
+        row["task_id"]: {
+            str(index): stream_seed(
+                template["cohorts"]["master_seed"], row["task_id"], index,
+            )
+            for index in range(8)
+        }
+        for row in calibration_rows
+    }
+    seed_output.write_text(
+        json.dumps(seed_matrix, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    template["cohorts"]["seed_matrix_sha256"] = file_hash(seed_output)
     template["artifact_hashes"].update({
         "tokenizer": file_hash(run / "TOKENIZER_BINDING.json"),
         "prompt_template": file_hash(package / "o1_prompt_template_v2.py"),
@@ -119,13 +169,32 @@ def build(root: Path, commit: str, output: Path) -> dict:
         "structured_axis_tensor": file_hash(axis / "axes_l3_24.npy"),
         "random_axis_tensor": file_hash(axis / "random_axes_l3_24.npy"),
     })
-    # sha256_tree values are filled by the caller after using the package's
-    # canonical tree hasher, so this script never risks an incompatible rule.
-    template["axis_artifact"]["package_sha256"] = "PENDING_CANONICAL_TREE_HASH"
+    template["axis_artifact"]["package_sha256"] = tree_hash(axis)
     output.write_text(json.dumps(template, indent=2, sort_keys=True) + "\n")
+    artifact_paths = {
+        "code.generation_module_sha256": str(
+            (package / "run_o1_v2_generation.py").resolve()
+        ),
+        "model.checkpoint_sha256": "/home/moloch/ouro_project/models/ouro_rltt_local",
+        "artifact_hashes.tokenizer": str((run / "TOKENIZER_BINDING.json").resolve()),
+        "artifact_hashes.prompt_template": str((package / "o1_prompt_template_v2.py").resolve()),
+        "artifact_hashes.parser": str((package / "o1_answer_parser_v2.py").resolve()),
+        "artifact_hashes.verifier_implementation": str(
+            (package / "o1_truth_table_verifier_v2.py").resolve()
+        ),
+        "artifact_hashes.structured_axis_tensor": str((axis / "axes_l3_24.npy").resolve()),
+        "artifact_hashes.random_axis_tensor": str((axis / "random_axes_l3_24.npy").resolve()),
+    }
+    artifacts_output.write_text(
+        json.dumps(artifact_paths, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     return {
         "output": str(output),
         "sha256": file_hash(output),
+        "seed_matrix_sha256": file_hash(seed_output),
+        "axis_package_tree_sha256": tree_hash(axis),
+        "runtime_artifact_paths": str(artifacts_output),
         "generator_source_sha256": generator_hash,
         "unresolved_calibration_outputs": True,
     }
@@ -136,9 +205,12 @@ def main() -> int:
     p.add_argument("--root", required=True)
     p.add_argument("--commit", required=True)
     p.add_argument("--output", required=True)
+    p.add_argument("--seed-output", required=True)
+    p.add_argument("--artifacts-output", required=True)
     a = p.parse_args()
     print(json.dumps(build(
-        Path(a.root), a.commit, Path(a.output),
+        Path(a.root), a.commit, Path(a.output), Path(a.seed_output),
+        Path(a.artifacts_output),
     ), indent=2, sort_keys=True))
     return 0
 

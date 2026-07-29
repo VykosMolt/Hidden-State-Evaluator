@@ -1,0 +1,464 @@
+{
+  "_comment": "O1 oracle-reachability gate v2.0. The primary bank is A1_READABLE/A2_WRITABLE/A3_CAUSAL_MEAN/A4_SEQUENCE_MEAN. Fill every remaining FREEZE_SLOT, create and externally commit CALIBRATION_PRECOMMIT.json before calibration generation, run executable calibration, build deterministic seed matrix and RUN_PROVENANCE.json, then create PREGENERATION_SEAL.json before the confirmatory records file exists.",
+  "_manifest_hash_note": "The manifest cannot carry its own hash. After every slot is filled, hash this file and record the digest in an external SEAL.json / SHA256SUMS. Gate G0 rejects a manifest containing a manifest_sha256 key.",
+  "action_space": {
+    "alpha_calibration": {
+      "failing_alphas": "FREEZE_SLOT",
+      "failure_reasons": "FREEZE_SLOT",
+      "note": "G15 enforces alpha_star == max(passing_alphas) under rule 'largest_passing', and alpha_secondary == max{a in passing : a < alpha_star}. Without this object the gate can only check adjacency.",
+      "partition_rule": "passing and failing alphas must be disjoint and together equal the swept grid; every failing alpha needs a reason; no passing alpha may carry one; alpha_secondary must be in passing_alphas and is null when only one magnitude passes",
+      "passing_alphas": "FREEZE_SLOT"
+    },
+    "alpha_secondary": "FREEZE_SLOT",
+    "alpha_selection_rule": "largest_passing",
+    "alpha_selection_rule_note": "alpha_star = largest magnitude satisfying the frozen coherence criterion; alpha_secondary = immediately smaller passing grid value; if only one passes, it becomes alpha_star and the secondary arm is omitted. Enforced by gate G15.",
+    "alpha_star": "FREEZE_SLOT",
+    "alpha_swept_in_calibration": [
+      0.005,
+      0.01,
+      0.02,
+      0.04,
+      0.08
+    ],
+    "boundary_validated_by": [
+      "V4 loop-targeted current-token perturbation validated at physical layers 24/36/47",
+      "accepted real capture parity maps paper physical layer 24 to model.model.layers[23]",
+      "suffix-recompute cache rule applied at zero-based loop 2: a post-module-23 edit first affects cache layer index 24",
+      "first affected cache slot empirically established as (u, L+1)",
+      "K=8 splice measured at 55% fewer layer passes than eight full perturbed prefills"
+    ],
+    "normalization": "per-position residual RMS at the writable boundary",
+    "random_axes_gram_match": "random control is regenerated non-discretionarily from fixed domain + SHA256(structured tensor), then Gram-matched exactly",
+    "structured_axes": {
+      "axes": {
+        "A1_READABLE": {
+          "construction": "existing accepted leakage-clean locus-native L3_24 readable process-quality direction, carried byte-for-byte and unit RMS",
+          "fit_code_sha256": "214ab1bc5e00ff7afb0396f7abd7e0e097d9eaadd54452feac5f3e70800610dc",
+          "sha256": "ce9b8feacd654df8d38c5fa72d48e0fe31714b680d5c4d135f061592cc9d7370",
+          "training_task_manifest_sha256": "NOT_SEPARATELY_MATERIALIZED; source split_integrity.json sha256 74c146e78e68daa20e2e6d129e57635141c71f19660ffc02d85ffd3123742c7d"
+        },
+        "A2_WRITABLE": {
+          "construction": "existing accepted leading direction of the centered exact-protocol S1/S3 L3_24 injection-delta bundle; reconstruction explicitly distinguished from the missing historical tensor",
+          "historical_tensor_status": "MISSING; reconstructed from hash-verified exact-protocol bundle",
+          "sha256": "0845b0926abecd83acb8239e4d7d15941cfb139ce1b816894dd19956ff92260e",
+          "source_run": "s1_s3_exact_injection_orthogonality_null_audit_2026-06-17; bundle sha256 ebb47fb80efacdf60e91f70a49d11e4229c15189bcfe74e199de6529cdad2a38"
+        },
+        "A3_CAUSAL_MEAN": {
+          "centered": false,
+          "construction": "unitRMS(raw arithmetic mean of the exact [8,2048] causal-adapter-induced L3_24 update matrix in the frozen reference order)",
+          "pc_extraction": false,
+          "reference_conditioned": true,
+          "reference_set_sha256": "d145955fdd15a7c413fae26276d4a61a0d4eab05f5241b73365982e4ed49c75b",
+          "sha256": "284c4f43243295e4123e1e8885eda5ca9014e5cf374652b7032f1d2362d7fc74",
+          "source_matrix_sha256": "6388d7fc1477311ab6f75c02736451e60be1a925f5f4a46c0edba2eb23adfc92"
+        },
+        "A4_SEQUENCE_MEAN": {
+          "centered": false,
+          "construction": "unitRMS(raw arithmetic mean of the exact [8,2048] sequence-adapter-induced L3_24 update matrix in the frozen reference order)",
+          "pc_extraction": false,
+          "reference_conditioned": true,
+          "reference_set_sha256": "d145955fdd15a7c413fae26276d4a61a0d4eab05f5241b73365982e4ed49c75b",
+          "sha256": "2926c83868d5827a7e19495401a7b7241d897044f7ee1fca94d787c02f6c1f9c",
+          "source_matrix_sha256": "484cfd9adf8b4c6bb11a80fa6aab149711c52af7ce9bc25a06a7fb0979c87775"
+        }
+      },
+      "duplicate_rule": "|cos(A_i,A_j)| < 0.98. The Gram-matched random bank controls for the preregistered A3/A4 correlation.",
+      "explicit_exclusions": [
+        "the inadequate original d2 is not in the primary bank",
+        "the rejected shared-PC d4 is not in the primary bank",
+        "neither unstable centered adapter PC1 is used",
+        "A3 and A4 are not averaged into one shared direction",
+        "D2_OUTCOME_AXIS_V2 is diagnostic only and cannot modify this bank"
+      ],
+      "gram_matrix": [
+        [
+          2048.0000000000005,
+          -76.48505523935897,
+          -38.46011762841218,
+          12.168999456567901
+        ],
+        [
+          -76.48505523935897,
+          2047.9999999999998,
+          -88.08704683692255,
+          -52.17538214547308
+        ],
+        [
+          -38.46011762841218,
+          -88.08704683692255,
+          2047.9999999999993,
+          1171.5760225700133
+        ],
+        [
+          12.168999456567901,
+          -52.17538214547308,
+          1171.5760225700133,
+          2047.9999999999998
+        ]
+      ],
+      "mean_update_gate": "A3/A4 must exactly equal unitRMS(float64 mean over the embedded exact float32 source matrix); no centering or PC; source-matrix file identity and ordered eight-task reference identity must verify",
+      "no_cross_locus_transport": "every axis must exist or be reconstructed at exactly L3_24 in raw 2048-d residual coordinates. No L4 vector reused at L3, no layer-36 proxy, no unstable PC, no inadequate outcome axis, and no silent substitution.",
+      "norms_before_after": {
+        "A3_raw_mean_l2": 0.04112786989365476,
+        "A4_raw_mean_l2": 0.05264098849247025,
+        "unit_rms_after": [
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ]
+      },
+      "pairwise_cosines": [
+        [
+          1.0000000000000002,
+          -0.03734621837859325,
+          -0.018779354310748134,
+          0.0059418942659022955
+        ],
+        [
+          -0.03734621837859325,
+          0.9999999999999999,
+          -0.04301125333834109,
+          -0.025476260813219277
+        ],
+        [
+          -0.018779354310748134,
+          -0.04301125333834109,
+          0.9999999999999997,
+          0.5720586047705143
+        ],
+        [
+          0.0059418942659022955,
+          -0.025476260813219277,
+          0.5720586047705143,
+          0.9999999999999999
+        ]
+      ],
+      "selection": "new v2 preregistered bank; four fixed source-derived geometries, not selected using O1 outcomes"
+    },
+    "writable_boundary": {
+      "application_frequency": "one_shot_during_prefill",
+      "boundary_semantics": "post-layer residual output",
+      "delta_broadcast_rule": "Per branch, add delta only at the final non-padding prompt position at the L3_24 post-layer residual boundary. d has unit RMS over the hidden dimension; r is the pre-intervention per-position residual RMS; delta = sign * alpha * r * d. All other positions receive zero. Not repeated on generated tokens or at later loop/layer visits.",
+      "first_affected_cache_slot": [
+        2,
+        24
+      ],
+      "loop_index_zero_based": 2,
+      "module_index_zero_based": 23,
+      "paper_loop_label": "L3",
+      "physical_layer_one_based": 24,
+      "position_scope": "final_nonpadding_prompt_position_only",
+      "status": "INSTRUMENT CHOICE, not a claim that L3_24 is the optimal control locus. A negative result is scoped to this boundary and action family."
+    }
+  },
+  "artifact_hashes": {
+    "parser": "b55ce8a5be56990c12656fdafb5360cced94a4003c120780192a3122162d3733",
+    "prompt_template": "18132c41a0fd2d118f5f1913822ec60fdb8abad657072e77a347381d68cd0a90",
+    "random_axis_tensor": "1ff455edd3f2982ea45b6c11085887e46ece392e4e5eafab7916262f6fd7660b",
+    "structured_axis_tensor": "72107b8eec817930652016c768fa90529a5989d82129b3d4a44f8d0b593946db",
+    "tokenizer": "b1a1d6fd755ce2536bf073eedc4e5badd7ff1c00c0927f1329baa98d058f6f57",
+    "verifier_implementation": "d97497c64dd182e9b87b24dc47dcd9ec28b9d98d2ecd8ddf7bb48b2297cd2e68"
+  },
+  "axis_artifact": {
+    "package": [
+      "axes_l3_24.npy",
+      "random_axes_l3_24.npy",
+      "a1_readable_source_l3_24.npy",
+      "a2_writable_source_l3_24.npy",
+      "causal_induced_updates_l3_24.npy",
+      "sequence_induced_updates_l3_24.npy",
+      "actuator_reference_tasks.jsonl",
+      "AXIS_MANIFEST.json",
+      "GRAM_MATRIX.json",
+      "RECONSTRUCTION_ATTESTATION.json",
+      "axis_reconstruction.py",
+      "verify_axis_artifact.py",
+      "SHA256SUMS"
+    ],
+    "package_sha256": "8c3b34a3574fbca9e63de23a88831e076e317fec33236405fb3af72f0ff96fdd",
+    "per_axis_provenance_required": [
+      "source_loop",
+      "source_layer",
+      "source_token_position",
+      "source_pooling_rule",
+      "source_phase",
+      "target_injection_loop",
+      "target_injection_layer",
+      "target_token_position",
+      "coefficient_mapping"
+    ],
+    "provenance_note": "'same locus' does not describe provenance. A direction learned from pooled completed-candidate states and injected at the final prompt position is a deliberate cross-phase transfer; it may be worthwhile but must not be described as though trained at that prompt-state distribution.",
+    "random_bank_construction": "s_random = SHA256('O1-v2.0-fixed-random-domain' || SHA256(D)); canonical QR; C=D D^T=L L^T; R=L U^T. No master seed is accepted or attested.",
+    "row_order": [
+      "A1_READABLE",
+      "A2_WRITABLE",
+      "A3_CAUSAL_MEAN",
+      "A4_SEQUENCE_MEAN"
+    ],
+    "tensor_shape": [
+      4,
+      2048
+    ],
+    "verified_by": "verify_axis_artifact.py (A0-A21); assurance reported as structurally verified vs attested/hash-bound only"
+  },
+  "bank": {
+    "arms_conditional_on_budget": [
+      "random",
+      "structured_secondary"
+    ],
+    "arms_confirmatory": "FREEZE_SLOT",
+    "arms_required": [
+      "baseline",
+      "structured",
+      "zero_alpha"
+    ],
+    "geometry": "4 axes x 2 signs",
+    "seed_matrix_scheme": "seed = uint64_be(SHA256(\"O1_STREAM_SEED_V1\\0\" || uint64_be(master_seed) || uint32_be(len(UTF8(task_id))) || UTF8(task_id) || uint8(stream_index))[0:8]); identical across arms at each stream index; implemented by build_seed_matrix.py and enforced by G16",
+    "size": 8,
+    "stream_assignment": "cyclic_latin_square",
+    "stream_assignment_rule": "stream(a,g) = (a + r_g) mod 8; a = 2*(direction_id-1) + (0 if sign=+1 else 1); r_g = task rank within its stratum in sealed manifest order, mod 8. Same schedule for the random bank. Enforced by gate G13."
+  },
+  "budget": {
+    "calibration_inside_budget": false,
+    "drop_order_if_over_budget": [
+      "random",
+      "structured_secondary"
+    ],
+    "max_wall_clock_days": 7,
+    "measured_candidates_per_hour": "FREEZE_SLOT",
+    "min_completed_task_fraction": 1.0,
+    "never_dropped": [
+      "zero_alpha"
+    ],
+    "on_hardware_interruption": "resume only the missing sealed task shards with the same hashes and streams; no replacement tasks; analyze only at 100% completion",
+    "rerun_reserve_fraction": 0.15
+  },
+  "calibration": {
+    "analysis": "calibration_analysis.py recomputes difficulty settings, coherence, alpha selection, discordance bound, throughput, arm drop plan, G_power/G_max/G_confirm; run_primary recomputes and compares byte-for-byte",
+    "bootstrap_draws": 20000,
+    "bootstrap_seed": 20260728,
+    "metadata_sha256": "FREEZE_SLOT",
+    "precommit_file": "CALIBRATION_PRECOMMIT.json",
+    "precommit_note": "Created before any calibration continuation exists; binds the calibration task manifest, exact calibration-generation design, real runtime artifact hashes, generation-module hash, and repository diff.",
+    "precommit_sha256": "FREEZE_SLOT",
+    "raw_records_sha256": "FREEZE_SLOT",
+    "results_sha256": "FREEZE_SLOT"
+  },
+  "code": {
+    "analysis_module_sha256": "fc91e897124af831499d20e618e36ec68306d8ed11e26b095da4be3a126fb48f",
+    "axis_verifier_sha256": "ce6e79c6c39847144955b0ff4a725ddb4006d5ffb893644eb7b34861441107ac",
+    "calibration_module_sha256": "9ec8a1638bbce07535d701fb4c55bca2d65b1da87844d5e1b557ec1b14726f6c",
+    "commit": "47e7ed5b5d4d07235522e714c3970db6ec0887cb",
+    "fixture_suite_result": "53/53 core; 17/17 calibration; 15/15 v2.0 integration; 7/7 CLI workflow; axis verifier 15/15",
+    "fixture_suite_sha256": "11dd37fdb68abcc05f5e583aa81b16a10e8326d9546963f5e6d03154a524ce55",
+    "generation_module_sha256": "8888921f08a71d3cd438d531128e12a33698b1ff56e6ed8382d4028bd511c6f2",
+    "numpy": "2.4.4",
+    "python": "3.14.6",
+    "repo": "https://github.com/VykosMolt/ouro_project.git",
+    "repository_clean_required": true,
+    "repository_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "torch": "2.12.0.dev20260407+cu128",
+    "transformers": "4.54.1"
+  },
+  "coherence_gate": {
+    "criteria": [
+      "valid final-answer syntax reachable",
+      "no NaN or Inf in logits",
+      "non-empty continuation",
+      "no catastrophic repetition loop",
+      "well-formed rate within margin of matched baseline"
+    ],
+    "explicitly_not_gated_on": [
+      "correctness",
+      "model log-probability"
+    ],
+    "well_formed_criterion": "see difficulty_strata: absolute floor 0.85 per stratum AND noninferiority margin -0.05 on the lower one-sided 95% bound. One margin, not two."
+  },
+  "cohorts": {
+    "calibration_task_manifest_sha256": "fb45e6b931edfaeabeea3723e0fe0ac040a22e2966564cff7ad7485f1e5fed0c",
+    "confirmatory_task_manifest_format": "JSONL per line: task_id, stratum, generator_setting_id, sealed_rank_within_stratum, task_content_sha256. Ranks must be a permutation of 0..n_s-1 within each stratum; task IDs and content hashes unique within a cohort; content hashes disjoint ACROSS cohorts.",
+    "confirmatory_task_manifest_sha256": "PENDING_POSTCALIBRATION_MECHANICAL_SELECTION_FROM_35687e26ced13bdd60afa9a501b3e37a5a668e65956517c32ce7a03b98f700aa",
+    "master_seed": 20260728,
+    "record_content_binding": "every record carries task_content_sha256 and must match the sealed value for its task_id",
+    "seed_derivation_scheme": "sha256_domain_uint64_be_v1",
+    "seed_hash_function": "sha256",
+    "seed_matrix_format": "{\"<task_id>\": {\"<stream_index>\": <seed>}} with explicit per-stream seeds; empty placeholders are rejected by G16",
+    "seed_matrix_sha256": "693b788e2098e6975e2364b23832f18b8686e60abe32af1a02f5acbddc5d5e49"
+  },
+  "decoding": {
+    "answer_marker": "FINAL ANSWER:",
+    "max_new_tokens": 448,
+    "stopping_rule": "stop after the first parseable FINAL ANSWER commitment or at max_new_tokens; parser hash sealed",
+    "temperature": 0.7,
+    "top_p": 0.95,
+    "verifier": "deterministic truth-table"
+  },
+  "difficulty_strata": {
+    "endpoint_used_for_banding": "baseline any-correct-of-8",
+    "expected_counts": "FREEZE_SLOT",
+    "generator_settings_per_stratum": "FREEZE_SLOT",
+    "hard_medium": [
+      0.4,
+      0.55
+    ],
+    "medium": [
+      0.55,
+      0.7
+    ],
+    "min_well_formed_commitment_rate": 0.85,
+    "noninferiority_basis": "lower one-sided 95% confidence bound, not the point estimate",
+    "selection_rule": "generator-level estimates from the calibration cohort only; never realized confirmatory outcomes",
+    "well_formed_noninferiority_margin": -0.05
+  },
+  "endpoints": {
+    "multiplicity": "no secondary cell may replace a null primary as a headline",
+    "one_sided_bound_method": "exact Clopper-Pearson on the discordant cell (bootstrap is degenerate at n_disc = 0)",
+    "primary": "H_reach = mean_g[ max_i R(structured, alpha_star)_gi - max_i R(baseline)_gi ], both strata pooled, malformed = 0",
+    "primary_inference": "exact two-sided McNemar with directional sign for POSITIVE_HEADROOM/HARMFUL; paired task bootstrap 10000 draws is descriptive; one-sided exact Clopper-Pearson bound carries practical-equivalence verdict",
+    "secondary_opening_order": [
+      "secondary_magnitude",
+      "stratum_hard_medium",
+      "stratum_medium",
+      "random_basis",
+      "selection_headroom",
+      "well_formedness",
+      "wellformed_only_descriptive",
+      "per_direction"
+    ],
+    "verdict_states": [
+      "POSITIVE_HEADROOM",
+      "HARMFUL",
+      "PRACTICALLY_NULL_AT_<delta>",
+      "INCONCLUSIVE"
+    ]
+  },
+  "generator": {
+    "family": "Horizon Logic",
+    "hash_ordered_pool_offsets_calibration": "namespace=calibration; settings rules_2/rules_3/rules_4; first 32 accepted tasks per setting in deterministic nonce order",
+    "hash_ordered_pool_offsets_confirmatory": "namespace=confirmatory_candidate; first 800 accepted tasks per setting; final band-filtered prefix selected mechanically after calibration",
+    "revision": "O1_HORIZON_LOGIC_V2_PROPOSITIONAL_20260729@sha256:7fbfbdf79309f79855e7631e4b9923a6eae607741a1aed0cd96904b6651dfb4d",
+    "structural_knobs": [
+      "proof_depth",
+      "rule_count"
+    ],
+    "task_id_hash_scheme": "sha256(canonical UTF-8 JSON task specification, sorted keys, no whitespace)"
+  },
+  "malformed_convention": {
+    "deliberate_reversal_of": "the pre-answer AUROC convention, which excludes malformed from the label set",
+    "rationale": "O1 asks whether the intervention produces a usable correct answer; a continuation that never commits is a failure of the intervention, not an unlabelable case",
+    "rule": "R = well_formed AND verifier_correct; malformed scores 0 inside max_i"
+  },
+  "model": {
+    "checkpoint": "/home/moloch/ouro_project/models/ouro_rltt_local",
+    "checkpoint_hash_domain_note": "checkpoint_sha256 uses o1_analysis.sha256_tree relative to the checkpoint directory for runtime artifact verification; checkpoint_project_relative_tree_sha256 preserves the accepted historical hash whose relative paths begin models/ouro_rltt_local/",
+    "checkpoint_project_relative_tree_sha256": "7dbbe4ef91de369bd712bad587c1af4f7c5dc42deff5377d4d70086c4c08a802",
+    "checkpoint_sha256": "a701f7a75300ddf57098572fef3894bef59d5179580ec7eae7cd561a36056889",
+    "deterministic_flags": {
+      "cublas_workspace_config": ":4096:8",
+      "cudnn_benchmark": false,
+      "cudnn_deterministic": true,
+      "dropout_disabled": true,
+      "model_eval": true,
+      "torch_use_deterministic_algorithms": true
+    },
+    "dtype": "bfloat16",
+    "loops": 4
+  },
+  "power": {
+    "G_confirm": "FREEZE_SLOT",
+    "G_confirm_note": "numeric freeze slot; G17 additionally recomputes min(G_power, G_max) and rejects disagreement",
+    "G_max": "FREEZE_SLOT",
+    "G_power": "FREEZE_SLOT",
+    "alpha_level": 0.05,
+    "budget_mde_if_constrained": "FREEZE_SLOT",
+    "calibration_verdict": "FREEZE_SLOT",
+    "cross_check": "G17 asserts G_power == required_G(q_disc_upper, delta_target) and G_confirm == min(G_power, G_max)",
+    "delta_target": 0.05,
+    "method": "exact finite sum over N_disc ~ Bin(G,q), N10|n ~ Bin(n,pi); no simulation",
+    "q_disc_calibrated": "FREEZE_SLOT",
+    "q_disc_measured_under": "CRN-paired eight-stream bank geometry; BANK-level, not row-level",
+    "q_disc_upper_confidence_bound": "FREEZE_SLOT",
+    "target_power": 0.8,
+    "test": "two-sided exact McNemar, directional rejection counted; this is exactly the POSITIVE_HEADROOM rejection criterion"
+  },
+  "pregeneration_seal": {
+    "binds": [
+      "FREEZE_MANIFEST.json",
+      "RUN_PROVENANCE.json",
+      "confirmatory task manifest",
+      "calibration task manifest",
+      "CALIBRATION_PRECOMMIT.json",
+      "seed matrix",
+      "raw calibration records",
+      "calibration metadata",
+      "CALIBRATION_RESULTS.json",
+      "complete axis-package tree"
+    ],
+    "chronology_note": "A remote Git commit or timestamp strengthens chronology; the local executable minimum is that run_primary requires and verifies this independent pre-generation commitment.",
+    "consumed_by": "run_primary before provenance, calibration, record, zero-alpha, or endpoint analysis",
+    "created_by": "pregeneration_seal.py before the confirmatory records path exists or contains bytes",
+    "file": "PREGENERATION_SEAL.json"
+  },
+  "prereg_version": "2.0",
+  "prohibitions": [
+    "no change to the task slice after the first confirmatory outcome is read",
+    "no change to alpha_star, the axes, or the bank geometry after sealing",
+    "no change to G after sealing",
+    "no re-selection of strata using confirmatory outcomes",
+    "no secondary endpoint opened before the primary is opened and hashed",
+    "no subtraction of H_0 from the primary",
+    "no filtering of rows on first_divergence"
+  ],
+  "runtime_provenance": {
+    "file": "RUN_PROVENANCE.json",
+    "note": "G14 compares the complete canonical object recursively and rejects missing, changed, or extra configuration surfaces.",
+    "resolved_generation_config": "exact recursive copy of code/model/generator/difficulty_strata/decoding/action_space/bank/cohorts/artifact_hashes/transport/zero_alpha_null from the sealed manifest",
+    "runtime_attestation": {
+      "generation_module_sha256": "must equal code.generation_module_sha256",
+      "repository_clean": "must equal code.repository_clean_required",
+      "repository_diff_sha256": "must equal code.repository_diff_sha256"
+    },
+    "schema_version": "1.0",
+    "written": "before PREGENERATION_SEAL.json and before the confirmatory records file exists"
+  },
+  "schema_additions": {
+    "calibration_precommit_sha256": "REQUIRED on every calibration row and in CALIBRATION_METADATA.json; must equal CALIBRATION_PRECOMMIT.json.",
+    "downstream_delta_rms": "REQUIRED non-null on every intervention arm, null on baseline. Measured downstream residual change vs the paired baseline. Without it a null cannot be decomposed into 'the delta never propagated' vs 'it propagated and changed nothing useful'. Zero-alpha rows must be exactly 0.",
+    "generator_setting_id": "REQUIRED on every confirmatory row; must equal the sealed task-manifest setting (G11).",
+    "pregeneration_seal_sha256": "REQUIRED on every confirmatory row; must equal PREGENERATION_SEAL.json hash (G21).",
+    "run_provenance_sha256": "REQUIRED on every confirmatory row; must equal the committed RUN_PROVENANCE.json hash (G21)."
+  },
+  "sealed_at_utc": "FREEZE_SLOT",
+  "sealed_by": "Jan Kirin",
+  "transport": {
+    "dead_rms_threshold": 0.0001,
+    "dead_threshold_note": "an interpretation threshold, not a numerical tolerance: it defines when a nonzero intervention counts as having failed to propagate. Frozen here, not left as a function default.",
+    "measurement_definition": "rho = RMS(h_int[L4,47 boundary after model.norm, final non-padding prompt position] - h_base[same]) / RMS(delta_in). The state is taken from OuroModel per_loop_hidden_states[3], not from a differently numbered decoder-module hook. Scale-free ratio: does not conflate residual magnitude with alpha. Measured before any stochastic decoding.",
+    "measurement_layer": 47,
+    "measurement_loop": "L4",
+    "norm_convention": "RMS over the 2048 hidden coordinates at the frozen measurement locus",
+    "normalized_by_injected_rms": true,
+    "token_position": "final_nonpadding_prompt_position"
+  },
+  "zero_alpha_null": {
+    "full_bank": true,
+    "halt_if": [
+      "rowwise token identity < 1.0",
+      "generated-length identity < 1.0",
+      "termination-status identity < 1.0",
+      "well_formed identity < 1.0",
+      "verifier_correct identity < 1.0",
+      "derived-R identity < 1.0",
+      "zero_transport_rate < 1.0",
+      "abs(H_0) > tau",
+      "exact McNemar p < 0.05",
+      "bootstrap interval excludes zero"
+    ],
+    "min_token_identity_rate": 1.0,
+    "never_subtracted_from_primary": true,
+    "rationale": "on a documented bit-exact path, identical tokens must imply identical deterministic downstream metadata; otherwise a parser, stopping-rule or verifier defect hides behind the same final binary reward",
+    "tau": 0.01,
+    "token_identity_required": true
+  }
+}
