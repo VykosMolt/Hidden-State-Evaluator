@@ -75,3 +75,13 @@ stop before calibration.
   main repository `.git` directory is read-only; this did not affect the
   successful remote push or remote-ref verification.
 - Stopped before calibration. `calibration_records.jsonl` remains absent.
+
+## 2026-07-29 — verified package archive
+
+- Created `o1_packages/O1_oracle_reachability_v2.0.0_verified.zip` from the
+  already committed and verified `o1_v200` source tree.
+- Archive SHA-256:
+  `3efe914c41d5fe185e0a557cf2bc75b47fc41633b178599083701b661d87f6d0`.
+- Adjacent `.sha256` created; `unzip -t` reported no errors.
+- No package source, precommit field, axis tensor, cohort, or calibration state
+  changed.

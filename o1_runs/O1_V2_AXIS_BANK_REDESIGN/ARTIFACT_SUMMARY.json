@@ -6,6 +6,12 @@
     "tree_sha256": "8c3b34a3574fbca9e63de23a88831e076e317fec33236405fb3af72f0ff96fdd",
     "verdict": "SEALABLE"
   },
+  "verified_source_package_archive": {
+    "path": "o1_packages/O1_oracle_reachability_v2.0.0_verified.zip",
+    "sha256": "3efe914c41d5fe185e0a557cf2bc75b47fc41633b178599083701b661d87f6d0",
+    "size_bytes": 105766,
+    "zip_integrity": "PASS"
+  },
   "calibration_chronology": {
     "calibration_precommit_sha256": "910176b666a47da75273b72bf5bfef8484faeb223ddab823ab02ccd35f47def2",
     "calibration_records_exist": false,
