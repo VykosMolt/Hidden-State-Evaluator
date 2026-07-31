@@ -1,12 +1,12 @@
 {
   "_comment": "O1 oracle-reachability gate v2.0. The primary bank is A1_READABLE/A2_WRITABLE/A3_CAUSAL_MEAN/A4_SEQUENCE_MEAN. Fill every remaining FREEZE_SLOT, create and externally commit CALIBRATION_PRECOMMIT.json before calibration generation, run executable calibration, build deterministic seed matrix and RUN_PROVENANCE.json, then create PREGENERATION_SEAL.json before the confirmatory records file exists.",
   "prereg_version": "2.0",
-  "sealed_at_utc": "FREEZE_SLOT",
+  "sealed_at_utc": "2026-07-31T19:16:39Z",
   "sealed_by": "Jan Kirin",
   "_manifest_hash_note": "The manifest cannot carry its own hash. After every slot is filled, hash this file and record the digest in an external SEAL.json / SHA256SUMS. Gate G0 rejects a manifest containing a manifest_sha256 key.",
   "code": {
     "repo": "https://github.com/VykosMolt/ouro_project.git",
-    "commit": "FREEZE_SLOT",
+    "commit": "4a4bd3344362b92471cae97f8211e4998882addd",
     "analysis_module_sha256": "feb5334cdcbe47d334837e829d31286f2de53c01dc0023b682326efe698612f2",
     "fixture_suite_sha256": "6a0ef8f2917693cc335b29fc932c46df4fc6f099fa0f7330000f4160f53730c8",
     "fixture_suite_result": "53/53 core; 24/24 calibration; 15/15 integration; 7/7 CLI; 58/58 parser; 15/15 orchestrator; 17/17 cohort builder; axis verifier 15/15",
