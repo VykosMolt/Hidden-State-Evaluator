@@ -85,3 +85,27 @@ stop before calibration.
 - Adjacent `.sha256` created; `unzip -t` reported no errors.
 - No package source, precommit field, axis tensor, cohort, or calibration state
   changed.
+
+## 2026-07-31 — v2.0.0 calibration precommit superseded before any calibration
+
+- An independent hostile audit (GO_AFTER_MECHANICAL_FIXES) found defects in
+  sealed, precommit-bound artifacts: the lax commitment parser, the unsealed
+  generation-to-record orchestration and transport computation, the
+  unimplemented pool-capped confirmatory-cohort construction, the medium
+  band-edge inclusivity contradiction, the degenerate budget_mde return, and
+  the loss of the /tmp worktree behind RUNTIME_ARTIFACT_PATHS.json.
+- No calibration record was ever generated under the superseded precommit.
+- The v2.0.0 precommit was moved to
+  `CALIBRATION_PRECOMMIT.v2.0.0.superseded.json` and the supersession recorded
+  in `ATTEMPT_LEDGER.jsonl`.
+- Package v2.1.0 (`o1_packages/O1_oracle_reachability_v2.1.0_source/o1_v210`)
+  implements the fixes with new fixture suites (53/53 core, 22/22 calibration,
+  15/15 integration, 7/7 CLI, 58/58 parser adversarial, 11/11 orchestrator,
+  16/16 cohort builder, 15/15 axis verifier) and unchanged scientific design:
+  bank bytes, endpoint, K=8, CRN, alpha grid/rule, bands, delta target, power
+  machinery, cohorts, and drop order are identical.
+- `O1_V2_INTERPRETATION_ADDENDUM.md` binds the interpretation of A3/A4, null
+  scope, and positive-primary scope before any outcome exists.
+- `RUNTIME_ARTIFACT_PATHS.json` regenerated with durable-worktree paths; the
+  axis package, cohorts, and seed matrix are byte-identical to their sealed
+  v2 values.

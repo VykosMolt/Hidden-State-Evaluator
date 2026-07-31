@@ -1,32 +1,32 @@
 {
-  "_comment": "O1 oracle-reachability gate v2.0. The primary bank is A1_READABLE/A2_WRITABLE/A3_CAUSAL_MEAN/A4_SEQUENCE_MEAN. Fill every remaining FREEZE_SLOT, create and externally commit CALIBRATION_PRECOMMIT.json before calibration generation, run executable calibration, build deterministic seed matrix and RUN_PROVENANCE.json, then create PREGENERATION_SEAL.json before the confirmatory records file exists.",
-  "prereg_version": "2.0",
+  "_comment": "O1 oracle-reachability gate v2.1. The primary bank is A1_READABLE/A2_WRITABLE/A3_CAUSAL_MEAN/A4_SEQUENCE_MEAN. Fill every remaining FREEZE_SLOT, create and externally commit CALIBRATION_PRECOMMIT.json before calibration generation, run executable calibration, run the sealed cohort builder, build deterministic seed matrix and RUN_PROVENANCE.json, then create PREGENERATION_SEAL.json before the confirmatory records file exists.",
+  "prereg_version": "2.1",
   "sealed_at_utc": "FREEZE_SLOT",
   "sealed_by": "Jan Kirin",
   "_manifest_hash_note": "The manifest cannot carry its own hash. After every slot is filled, hash this file and record the digest in an external SEAL.json / SHA256SUMS. Gate G0 rejects a manifest containing a manifest_sha256 key.",
   "code": {
-    "repo": "https://github.com/VykosMolt/ouro_project.git",
+    "repo": "github.com/VykosMolt/Branching-Looped-Transformer",
     "commit": "FREEZE_SLOT",
-    "analysis_module_sha256": "feb5334cdcbe47d334837e829d31286f2de53c01dc0023b682326efe698612f2",
-    "fixture_suite_sha256": "6a0ef8f2917693cc335b29fc932c46df4fc6f099fa0f7330000f4160f53730c8",
-    "fixture_suite_result": "53/53 core; 24/24 calibration; 15/15 integration; 7/7 CLI; 58/58 parser; 15/15 orchestrator; 17/17 cohort builder; axis verifier 15/15",
-    "python": "3.14.6",
-    "numpy": "2.4.4",
-    "torch": "2.12.0.dev20260407+cu128",
+    "analysis_module_sha256": "FREEZE_SLOT",
+    "fixture_suite_sha256": "FREEZE_SLOT",
+    "fixture_suite_result": "FREEZE_SLOT",
+    "python": "3.14",
+    "numpy": "FREEZE_SLOT",
+    "torch": "FREEZE_SLOT",
     "transformers": "4.54.1",
     "runtime_version_note": "code.numpy / code.torch / code.transformers are precommit-bound and runtime-asserted by the sealed orchestrator before any generation (v2.1)",
-    "axis_verifier_sha256": "ce6e79c6c39847144955b0ff4a725ddb4006d5ffb893644eb7b34861441107ac",
-    "generation_module_sha256": "878dd4c465b884bf11ce10c107bd59ed44f290fa8583ee81a787b91e9f2d0097",
-    "orchestrator_module_sha256": "1bef2b9e75aa4a07a1a6d5fd976bddf7e1423f3e2906c5eda082623bf29d04ae",
-    "transport_module_sha256": "7939194b85029b76ccc6873e0ec851bc5c856c2f4fa8dd50587cfce9900f8ef8",
-    "calibration_module_sha256": "d507f719e6fe1ed485a1a7b006d8e1c9dd2106fccd8f8556121d09fde240af44",
+    "axis_verifier_sha256": "FREEZE_SLOT",
+    "generation_module_sha256": "FREEZE_SLOT",
+    "orchestrator_module_sha256": "FREEZE_SLOT",
+    "transport_module_sha256": "FREEZE_SLOT",
+    "calibration_module_sha256": "FREEZE_SLOT",
     "repository_clean_required": true,
     "repository_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   "model": {
-    "checkpoint": "/home/moloch/ouro_project/models/ouro_rltt_local",
-    "checkpoint_sha256": "a701f7a75300ddf57098572fef3894bef59d5179580ec7eae7cd561a36056889",
-    "checkpoint_project_relative_tree_sha256": "7dbbe4ef91de369bd712bad587c1af4f7c5dc42deff5377d4d70086c4c08a802",
+    "checkpoint": "ouro_rltt_local",
+    "checkpoint_sha256": "FREEZE_SLOT",
+    "checkpoint_project_relative_tree_sha256": "FREEZE_SLOT",
     "checkpoint_hash_domain_note": "checkpoint_sha256 uses o1_analysis.sha256_tree relative to the checkpoint directory for runtime artifact verification; checkpoint_project_relative_tree_sha256 preserves the accepted historical hash whose relative paths begin models/ouro_rltt_local/",
     "loops": 4,
     "dtype": "bfloat16",
@@ -41,9 +41,9 @@
   },
   "generator": {
     "family": "Horizon Logic",
-    "revision": "O1_HORIZON_LOGIC_V2_PROPOSITIONAL_20260729@sha256:7fbfbdf79309f79855e7631e4b9923a6eae607741a1aed0cd96904b6651dfb4d",
-    "hash_ordered_pool_offsets_calibration": "namespace=calibration; settings rules_2/rules_3/rules_4; first 32 accepted tasks per setting in deterministic nonce order",
-    "hash_ordered_pool_offsets_confirmatory": "namespace=confirmatory_candidate; first 800 accepted tasks per setting; final band-filtered prefix selected mechanically after calibration",
+    "revision": "FREEZE_SLOT",
+    "hash_ordered_pool_offsets_calibration": "FREEZE_SLOT",
+    "hash_ordered_pool_offsets_confirmatory": "FREEZE_SLOT",
     "structural_knobs": [
       "proof_depth",
       "rule_count"
@@ -117,30 +117,30 @@
       "axes": {
         "A1_READABLE": {
           "construction": "existing accepted leakage-clean locus-native L3_24 readable process-quality direction, carried byte-for-byte and unit RMS",
-          "sha256": "ce9b8feacd654df8d38c5fa72d48e0fe31714b680d5c4d135f061592cc9d7370",
-          "training_task_manifest_sha256": "NOT_SEPARATELY_MATERIALIZED; source split_integrity.json sha256 74c146e78e68daa20e2e6d129e57635141c71f19660ffc02d85ffd3123742c7d",
-          "fit_code_sha256": "214ab1bc5e00ff7afb0396f7abd7e0e097d9eaadd54452feac5f3e70800610dc"
+          "sha256": "FREEZE_SLOT",
+          "training_task_manifest_sha256": "FREEZE_SLOT",
+          "fit_code_sha256": "FREEZE_SLOT"
         },
         "A2_WRITABLE": {
           "construction": "existing accepted leading direction of the centered exact-protocol S1/S3 L3_24 injection-delta bundle; reconstruction explicitly distinguished from the missing historical tensor",
-          "sha256": "0845b0926abecd83acb8239e4d7d15941cfb139ce1b816894dd19956ff92260e",
-          "source_run": "s1_s3_exact_injection_orthogonality_null_audit_2026-06-17; bundle sha256 ebb47fb80efacdf60e91f70a49d11e4229c15189bcfe74e199de6529cdad2a38",
+          "sha256": "FREEZE_SLOT",
+          "source_run": "FREEZE_SLOT",
           "historical_tensor_status": "MISSING; reconstructed from hash-verified exact-protocol bundle"
         },
         "A3_CAUSAL_MEAN": {
           "construction": "unitRMS(raw arithmetic mean of the exact [8,2048] causal-adapter-induced L3_24 update matrix in the frozen reference order)",
-          "sha256": "284c4f43243295e4123e1e8885eda5ca9014e5cf374652b7032f1d2362d7fc74",
-          "source_matrix_sha256": "6388d7fc1477311ab6f75c02736451e60be1a925f5f4a46c0edba2eb23adfc92",
-          "reference_set_sha256": "d145955fdd15a7c413fae26276d4a61a0d4eab05f5241b73365982e4ed49c75b",
+          "sha256": "FREEZE_SLOT",
+          "source_matrix_sha256": "FREEZE_SLOT",
+          "reference_set_sha256": "FREEZE_SLOT",
           "centered": false,
           "pc_extraction": false,
           "reference_conditioned": true
         },
         "A4_SEQUENCE_MEAN": {
           "construction": "unitRMS(raw arithmetic mean of the exact [8,2048] sequence-adapter-induced L3_24 update matrix in the frozen reference order)",
-          "sha256": "2926c83868d5827a7e19495401a7b7241d897044f7ee1fca94d787c02f6c1f9c",
-          "source_matrix_sha256": "484cfd9adf8b4c6bb11a80fa6aab149711c52af7ce9bc25a06a7fb0979c87775",
-          "reference_set_sha256": "d145955fdd15a7c413fae26276d4a61a0d4eab05f5241b73365982e4ed49c75b",
+          "sha256": "FREEZE_SLOT",
+          "source_matrix_sha256": "FREEZE_SLOT",
+          "reference_set_sha256": "FREEZE_SLOT",
           "centered": false,
           "pc_extraction": false,
           "reference_conditioned": true
@@ -156,68 +156,9 @@
       "mean_update_gate": "A3/A4 must exactly equal unitRMS(float64 mean over the embedded exact float32 source matrix); no centering or PC; source-matrix file identity and ordered eight-task reference identity must verify",
       "duplicate_rule": "|cos(A_i,A_j)| < 0.98. The Gram-matched random bank controls for the preregistered A3/A4 correlation.",
       "no_cross_locus_transport": "every axis must exist or be reconstructed at exactly L3_24 in raw 2048-d residual coordinates. No L4 vector reused at L3, no layer-36 proxy, no unstable PC, no inadequate outcome axis, and no silent substitution.",
-      "gram_matrix": [
-        [
-          2048.0000000000005,
-          -76.48505523935897,
-          -38.46011762841218,
-          12.168999456567901
-        ],
-        [
-          -76.48505523935897,
-          2047.9999999999998,
-          -88.08704683692255,
-          -52.17538214547308
-        ],
-        [
-          -38.46011762841218,
-          -88.08704683692255,
-          2047.9999999999993,
-          1171.5760225700133
-        ],
-        [
-          12.168999456567901,
-          -52.17538214547308,
-          1171.5760225700133,
-          2047.9999999999998
-        ]
-      ],
-      "pairwise_cosines": [
-        [
-          1.0000000000000002,
-          -0.03734621837859325,
-          -0.018779354310748134,
-          0.0059418942659022955
-        ],
-        [
-          -0.03734621837859325,
-          0.9999999999999999,
-          -0.04301125333834109,
-          -0.025476260813219277
-        ],
-        [
-          -0.018779354310748134,
-          -0.04301125333834109,
-          0.9999999999999997,
-          0.5720586047705143
-        ],
-        [
-          0.0059418942659022955,
-          -0.025476260813219277,
-          0.5720586047705143,
-          0.9999999999999999
-        ]
-      ],
-      "norms_before_after": {
-        "A3_raw_mean_l2": 0.04112786989365476,
-        "A4_raw_mean_l2": 0.05264098849247025,
-        "unit_rms_after": [
-          1.0,
-          1.0,
-          1.0,
-          1.0
-        ]
-      }
+      "gram_matrix": "FREEZE_SLOT",
+      "pairwise_cosines": "FREEZE_SLOT",
+      "norms_before_after": "FREEZE_SLOT"
     },
     "alpha_calibration": {
       "passing_alphas": "FREEZE_SLOT",
@@ -274,15 +215,17 @@
     "budget_mde_note": "null with an explicit NO_DETECTABLE_EFFECT state when no delta <= q_disc reaches target power at the available G; never q_disc coerced to a sensitivity (v2.1)",
     "q_disc_upper_confidence_bound": "FREEZE_SLOT",
     "method": "exact finite sum over N_disc ~ Bin(G,q), N10|n ~ Bin(n,pi); no simulation",
-    "cross_check": "G17 asserts G_power == required_G(q_disc_upper, delta_target) and G_confirm == min(G_power, G_max)",
+    "cross_check": "G17 asserts G_power == required_G(q_disc_upper, delta_target) and G_confirm == min(G_power, G_max, G_pool)",
     "G_pool_note": "eligible banded candidate-pool capacity; derived by compute_calibration from the sealed pool and the frozen allocation rule; caps G_confirm so a cohort the pool cannot supply is impossible (v2.1)",
-    "G_confirm_note": "numeric freeze slot; G17 additionally recomputes min(G_power, G_max) and rejects disagreement",
+    "G_confirm_note": "numeric freeze slot; G17 additionally recomputes min(G_power, G_max, G_pool) and rejects disagreement",
     "calibration_verdict": "FREEZE_SLOT"
   },
   "budget": {
     "max_wall_clock_days": 7,
     "calibration_inside_budget": false,
     "rerun_reserve_fraction": 0.15,
+    "max_plausible_candidates_per_hour": 10000,
+    "max_plausible_candidates_per_hour_note": "sealed integrity ceiling, not a scientific choice: elapsed_wall_seconds has no independent attestation, and an implausibly small value would inflate G_max and could flip the powered-vs-constrained verdict; calibration rejects measured throughput above this ceiling (v2.1 red-team finding)",
     "min_completed_task_fraction": 1.0,
     "on_hardware_interruption": "resume only the missing sealed task shards with the same hashes and streams; no replacement tasks; analyze only at 100% completion",
     "measured_candidates_per_hour": "FREEZE_SLOT",
@@ -292,9 +235,7 @@
     ],
     "never_dropped": [
       "zero_alpha"
-    ],
-    "max_plausible_candidates_per_hour": 10000,
-    "max_plausible_candidates_per_hour_note": "sealed integrity ceiling, not a scientific choice: elapsed_wall_seconds has no independent attestation, and an implausibly small value would inflate G_max and could flip the powered-vs-constrained verdict; calibration rejects measured throughput above this ceiling (v2.1 red-team finding)"
+    ]
   },
   "zero_alpha_null": {
     "full_bank": true,
@@ -356,10 +297,10 @@
   "cohorts": {
     "master_seed": 20260728,
     "seed_hash_function": "sha256",
-    "seed_matrix_sha256": "693b788e2098e6975e2364b23832f18b8686e60abe32af1a02f5acbddc5d5e49",
-    "calibration_task_manifest_sha256": "fb45e6b931edfaeabeea3723e0fe0ac040a22e2966564cff7ad7485f1e5fed0c",
-    "confirmatory_candidate_pool_sha256": "35687e26ced13bdd60afa9a501b3e37a5a668e65956517c32ce7a03b98f700aa",
-    "confirmatory_task_manifest_sha256": "PENDING_POSTCALIBRATION_MECHANICAL_SELECTION_FROM_35687e26ced13bdd60afa9a501b3e37a5a668e65956517c32ce7a03b98f700aa",
+    "seed_matrix_sha256": "FREEZE_SLOT",
+    "calibration_task_manifest_sha256": "FREEZE_SLOT",
+    "confirmatory_candidate_pool_sha256": "FREEZE_SLOT",
+    "confirmatory_task_manifest_sha256": "FREEZE_SLOT",
     "confirmatory_cohort_derivation": "confirmatory_tasks.jsonl is materialized ONLY by build_confirmatory_cohort.py from the sealed pool and the calibration-derived allocation stored in CALIBRATION_RESULTS.json; gate G23 additionally requires every confirmatory task to be a byte-identical pool member (v2.1)",
     "confirmatory_task_manifest_format": "JSONL per line: task_id, stratum, generator_setting_id, sealed_rank_within_stratum, task_content_sha256. Ranks must be a permutation of 0..n_s-1 within each stratum; task IDs and content hashes unique within a cohort; content hashes disjoint ACROSS cohorts.",
     "seed_matrix_format": "{\"<task_id>\": {\"<stream_index>\": <seed>}} with explicit per-stream seeds; empty placeholders are rejected by G16",
@@ -367,15 +308,15 @@
     "seed_derivation_scheme": "sha256_domain_uint64_be_v1"
   },
   "artifact_hashes": {
-    "tokenizer": "b1a1d6fd755ce2536bf073eedc4e5badd7ff1c00c0927f1329baa98d058f6f57",
-    "prompt_template": "18132c41a0fd2d118f5f1913822ec60fdb8abad657072e77a347381d68cd0a90",
-    "parser": "9c8bac6cdfdae49138e144c64171ccdbabedbc59bf760e19290c69f549e25bfb",
-    "verifier_implementation": "d97497c64dd182e9b87b24dc47dcd9ec28b9d98d2ecd8ddf7bb48b2297cd2e68",
-    "structured_axis_tensor": "72107b8eec817930652016c768fa90529a5989d82129b3d4a44f8d0b593946db",
-    "random_axis_tensor": "1ff455edd3f2982ea45b6c11085887e46ece392e4e5eafab7916262f6fd7660b"
+    "tokenizer": "FREEZE_SLOT",
+    "prompt_template": "FREEZE_SLOT",
+    "parser": "FREEZE_SLOT",
+    "verifier_implementation": "FREEZE_SLOT",
+    "structured_axis_tensor": "FREEZE_SLOT",
+    "random_axis_tensor": "FREEZE_SLOT"
   },
   "schema_additions": {
-    "downstream_delta_rms": "REQUIRED non-null on every intervention arm, null on baseline. Measured downstream residual change vs the paired baseline. Without it a null cannot be decomposed into 'the delta never propagated' vs 'it propagated and changed nothing useful'. Zero-alpha rows must be exactly 0.",
+    "downstream_delta_rms": "REQUIRED non-null on every intervention arm, null on baseline. Measured downstream residual change vs the paired baseline, computed ONLY by the sealed o1_transport_v2 module. Without it a null cannot be decomposed into 'the delta never propagated' vs 'it propagated and changed nothing useful'. Zero-alpha rows must be exactly 0, and the transport module EARNS the zero by asserting bitwise boundary identity with baseline before returning it.",
     "run_provenance_sha256": "REQUIRED on every confirmatory row; must equal the committed RUN_PROVENANCE.json hash (G21).",
     "pregeneration_seal_sha256": "REQUIRED on every confirmatory row; must equal PREGENERATION_SEAL.json hash (G21).",
     "generator_setting_id": "REQUIRED on every confirmatory row; must equal the sealed task-manifest setting (G11).",
@@ -425,7 +366,7 @@
       "A4_SEQUENCE_MEAN"
     ],
     "verified_by": "verify_axis_artifact.py (A0-A21); assurance reported as structurally verified vs attested/hash-bound only",
-    "package_sha256": "8c3b34a3574fbca9e63de23a88831e076e317fec33236405fb3af72f0ff96fdd",
+    "package_sha256": "FREEZE_SLOT",
     "random_bank_construction": "s_random = SHA256('O1-v2.0-fixed-random-domain' || SHA256(D)); canonical QR; C=D D^T=L L^T; R=L U^T. No master seed is accepted or attested.",
     "per_axis_provenance_required": [
       "source_loop",
