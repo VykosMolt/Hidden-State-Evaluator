@@ -6,19 +6,16 @@
     "tree_sha256": "8c3b34a3574fbca9e63de23a88831e076e317fec33236405fb3af72f0ff96fdd",
     "verdict": "SEALABLE"
   },
-  "verified_source_package_archive": {
-    "path": "o1_packages/O1_oracle_reachability_v2.0.0_verified.zip",
-    "sha256": "3efe914c41d5fe185e0a557cf2bc75b47fc41633b178599083701b661d87f6d0",
-    "size_bytes": 105766,
-    "zip_integrity": "PASS"
-  },
   "calibration_chronology": {
-    "calibration_precommit_sha256": "910176b666a47da75273b72bf5bfef8484faeb223ddab823ab02ccd35f47def2",
+    "attempt_ledger_sha256": "6f9e99a12b34d806e1996dc4401efb8ed411e5572f5898a432601fdffdde26e1",
+    "calibration_precommit_sha256": "e819aeebc642fefde769f398b385f23f98dc3980412eeb67274d0f5891c5457d",
     "calibration_records_exist": false,
     "calibration_seed_matrix_sha256": "693b788e2098e6975e2364b23832f18b8686e60abe32af1a02f5acbddc5d5e49",
-    "external_commit": "70651d529ad4ecf204c81dc88854f6f376c420c6",
-    "external_ref_status": "EXTERNALLY_COMMITTED_AND_LS_REMOTE_VERIFIED",
-    "freeze_manifest_precalibration_sha256": "4b83da9f2b2516c0e4c45dc86778dd3f93e88a3c2a07c7f923731e716f4055c3"
+    "external_commit": "PENDING_AT_ARTIFACT_CREATION",
+    "external_ref_status": "PENDING",
+    "freeze_manifest_precalibration_sha256": "6e65bc707defa865a32429538001eb7e5e0a22f5ab7ccd5fe0f756c59b525817",
+    "interpretation_addendum_sha256": "f0e2279159a387e5db2ad680dc6da9fd1a41418a5feffec4942e6ea46cf239cd",
+    "superseded_precommit_sha256": "910176b666a47da75273b72bf5bfef8484faeb223ddab823ab02ccd35f47def2"
   },
   "checkpoint": {
     "historical_project_relative_tree_sha256": "7dbbe4ef91de369bd712bad587c1af4f7c5dc42deff5377d4d70086c4c08a802",
@@ -33,6 +30,7 @@
     "confirmatory_candidate_manifest_sha256": "35687e26ced13bdd60afa9a501b3e37a5a668e65956517c32ce7a03b98f700aa",
     "content_hash_disjoint": true
   },
+  "design_commit": "4a4bd3344362b92471cae97f8211e4998882addd",
   "diagnostics": {
     "actuator_mean_diagnostics_sha256": "bcc3c3f1092ca24dcfc2a6e00449b303bf4651868d557708686fb6c118e0091b",
     "d2_outcome_axis_v2_report_sha256": "39431dd48d82cc7ed205652ac3e294ef8fc0526eff0ef616210b08bfc3a5b2a4",
@@ -44,5 +42,13 @@
     "real_o1_confirmatory_evidence": false,
     "synthetic_package_validation": true
   },
-  "schema_version": "o1.v2.artifact_summary.v1"
+  "schema_version": "o1.v2.artifact_summary.v1",
+  "verified_source_package_archive": {
+    "package_version": "2.1.0",
+    "path": "o1_packages/O1_oracle_reachability_v2.1.0_verified.zip",
+    "sha256": "a8b0571cc67584b862db3e42fb015f47ae7d2887d7ce59605e3c273591fe7892",
+    "size_bytes": 150953,
+    "supersedes": "O1_oracle_reachability_v2.0.0_verified.zip (3efe914c...)",
+    "zip_integrity": "PASS"
+  }
 }

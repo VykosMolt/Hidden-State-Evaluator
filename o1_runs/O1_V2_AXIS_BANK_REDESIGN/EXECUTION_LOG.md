@@ -109,3 +109,16 @@ stop before calibration.
 - `RUNTIME_ARTIFACT_PATHS.json` regenerated with durable-worktree paths; the
   axis package, cohorts, and seed matrix are byte-identical to their sealed
   v2 values.
+
+## 2026-07-31 — replacement v2.1 calibration precommit created
+
+- Design/package commit `4a4bd3344362b92471cae97f8211e4998882addd`;
+  frozen-inputs commit `d5c8c39` (clean worktree at creation).
+- `CALIBRATION_PRECOMMIT.json` binds 68 calibration configuration paths,
+  including the new sealed orchestrator, transport module, runtime library
+  versions, candidate-pool hash, and throughput plausibility ceiling.
+- `calibration_records.jsonl` did not exist at creation.
+- Axis package, calibration cohort, candidate pool, and checkpoint all hash to
+  their unchanged v2 values.
+- External Git commitment is the remaining chronology gate; no calibration
+  command has been launched.
