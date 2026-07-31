@@ -122,3 +122,13 @@ stop before calibration.
   their unchanged v2 values.
 - External Git commitment is the remaining chronology gate; no calibration
   command has been launched.
+
+## 2026-07-31 — external chronology verified; calibration authorized
+
+- Pushed `o1-v2-axis-bank-redesign` to the authenticated remote at commit
+  `5469cab762c52eb33219565c7ec49ba02c2f22c8`.
+- `git ls-remote` advertised that exact commit, and the precommit and package
+  zip blobs were fetched back from the remote and hashed independently:
+  `e819aeeb...` and `a8b0571c...` both reproduce.
+- The chronology gate is satisfied. Real 96-task calibration generation may
+  begin through the sealed orchestrator.
