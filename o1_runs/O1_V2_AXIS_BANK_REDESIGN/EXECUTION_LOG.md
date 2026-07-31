@@ -132,3 +132,15 @@ stop before calibration.
   `e819aeeb...` and `a8b0571c...` both reproduce.
 - The chronology gate is satisfied. Real 96-task calibration generation may
   begin through the sealed orchestrator.
+
+## 2026-07-31 — real O1 calibration generation started
+
+- Launched the sealed orchestrator over the 96 frozen calibration tasks:
+  8 baseline + 8 structured per alpha across the frozen grid
+  {0.005, 0.01, 0.02, 0.04, 0.08} = 48 branches per task, 4608 rows.
+- The orchestrator verified the precommit, the runtime artifact hashes, the
+  runtime library versions, the deterministic environment, and the axis
+  package (SEALABLE) before generating.
+- Resumable: it appends only missing sealed rows and refuses to mix runs.
+  `CALIBRATION_METADATA.json` is written only at 100% completion, after a
+  token/text re-decode and re-scoring audit of every row.
