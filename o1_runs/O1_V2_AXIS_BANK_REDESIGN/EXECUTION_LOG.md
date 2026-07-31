@@ -144,3 +144,19 @@ stop before calibration.
 - Resumable: it appends only missing sealed rows and refuses to mix runs.
   `CALIBRATION_METADATA.json` is written only at 100% completion, after a
   token/text re-decode and re-scoring audit of every row.
+
+## 2026-08-01 — calibration generation paused (operator)
+
+- Stopped the sealed orchestrator with SIGTERM after 403 of 4608 rows
+  (8 of 96 tasks complete, 2.9 h of generation).
+- Integrity verified at the pause: every row is valid JSON, no duplicate row
+  keys, and zero rows fail full recomputation of scoring, text/token digests,
+  CRN seed derivation, or precommit binding. The records file is byte-identical
+  to its canonical serialization, so the next append is safe.
+- `CALIBRATION_METADATA.json` remains absent, which is correct: it is written
+  only at 100% completion after the token/text re-decode and re-scoring audit.
+- Resume with `./run_calibration.sh`. The orchestrator appends only missing
+  sealed rows, and for the partial task it replays the stream-0 baseline and
+  requires exact token reproduction and bitwise boundary agreement before
+  continuing. Nothing about the sealed design, precommit, or chronology
+  changes across a pause.
