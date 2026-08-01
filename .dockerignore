@@ -1,0 +1,4 @@
+.git
+**/__pycache__
+**/*.pyc
+o1_b200/reports/local_runs
