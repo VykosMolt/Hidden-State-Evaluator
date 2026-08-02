@@ -1,0 +1,704 @@
+{
+  "schema_version": 1,
+  "snapshot_id": "hunter_seeker_v2_bounded_snapshot_20260802",
+  "created_at_utc": "2026-08-02T01:30:04Z",
+  "repository": {
+    "branch": "main",
+    "head_before_commit": "ea40a48f7f41fdf60866eb2067033c62dd14be0f",
+    "remotes": [
+      "blt\thttps://github.com/VykosMolt/Branching-Looped-Transformer.git (fetch)",
+      "blt\thttps://github.com/VykosMolt/Branching-Looped-Transformer.git (push)",
+      "origin\thttps://github.com/VykosMolt/ouro_project.git (fetch)",
+      "origin\thttps://github.com/VykosMolt/ouro_project.git (push)"
+    ],
+    "bounded_payload_path_count": 67,
+    "provenance_files": [
+      "docs/hunter_seeker_v2/SNAPSHOT_MANIFEST.json",
+      "docs/hunter_seeker_v2/SNAPSHOT_REPORT.md"
+    ]
+  },
+  "focused_test": {
+    "command": "venv/bin/python -m pytest -q utilities/tests/unit/test_hunter_seeker_v2_*.py utilities/tests/integration/test_hunter_seeker_v2_integration.py",
+    "result": "287 passed"
+  },
+  "experiment": {
+    "runner": "utilities/tests/manual/run_hs_v2_tu93_fresh_retention_v1.py",
+    "contract": "docs/hunter_seeker_v2/FRESH_DISCOVERY_RETENTION_EXPERIMENT.md",
+    "authoritative_full_design": "not completed; blocked by runtime cost",
+    "smoke_artifact": "artifacts/reports/hunter_seeker_v2/fresh_retention_v1_smoke_final3_20260802",
+    "blocked_artifact": "artifacts/reports/hunter_seeker_v2/fresh_retention_v1_full_blocked_final3_20260802"
+  },
+  "aggregate_sha256": "4ebc35e23331ef9e843ef0b27ed0750e180ac0cbc426006feaed52452981e179",
+  "files": [
+    {
+      "path": "data/arc_agi3/environment_files/tu93/0768757b/metadata.json",
+      "file_type": "json",
+      "bytes": 359,
+      "sha256": "ad29d072e6977cb914b729c0f461157d971f4182656adb0f811c77bf14faa20f",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "source",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "data/arc_agi3/environment_files/tu93/0768757b/tu93.py",
+      "file_type": "python",
+      "bytes": 75160,
+      "sha256": "80e41888f9f7b1a0c03e02c0aff3814e0fd68eb5b35ef22bb3649c87fc60a23f",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "source",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "docs/hunter_seeker_v2/ARCHITECTURE.md",
+      "file_type": "markdown",
+      "bytes": 20404,
+      "sha256": "9e67821dbfb0504435cf36704d76622f772d8e569965a79654a4e6b6d0c2aa0d",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "documentation",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "docs/hunter_seeker_v2/CAPABILITY_PARITY.md",
+      "file_type": "markdown",
+      "bytes": 53132,
+      "sha256": "6b983e30a15b0026f71211b7ec2fe76a3746fc592d185dfa7b24195b4e7cdf2f",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "documentation",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "docs/hunter_seeker_v2/FRESH_DISCOVERY_EXPERIMENT.md",
+      "file_type": "markdown",
+      "bytes": 4246,
+      "sha256": "49e3f1a30ce9201e8900a0909f33a70b5275384d01b98e5f8c12c460138480be",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "documentation",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "docs/hunter_seeker_v2/FRESH_DISCOVERY_RETENTION_EXPERIMENT.md",
+      "file_type": "markdown",
+      "bytes": 6193,
+      "sha256": "60369f2c03799c400229d435cd0cdd6774268dde59d3d2707c75daac0f5193ea",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "documentation",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "docs/hunter_seeker_v2/RESEARCH.md",
+      "file_type": "markdown",
+      "bytes": 20560,
+      "sha256": "3f4b8b67f0aae3b6a3f101f1876c41d6a4555a44c0e0aa8eb9e1a04591e31cdf",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "documentation",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "docs/hunter_seeker_v2/SESSION_HANDOFF_2026-07-19.md",
+      "file_type": "markdown",
+      "bytes": 17325,
+      "sha256": "70d3e1b7c65fbf62498529ef322fd2cebe0048ddfa186eea971822317983e296",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "documentation",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "src/hunter_seeker_v2/README.md",
+      "file_type": "markdown",
+      "bytes": 5454,
+      "sha256": "bb77c7032a199f279bf9eed63d0a874c1b61331cc5e860e6d261f800c0ee6560",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "source",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "src/hunter_seeker_v2/__init__.py",
+      "file_type": "python",
+      "bytes": 1001,
+      "sha256": "c4579ddf465e9a67d3137d53580611d720f6056aba3d9a7239b46c15eb3d4fb0",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "source",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "src/hunter_seeker_v2/adapters.py",
+      "file_type": "python",
+      "bytes": 25589,
+      "sha256": "8c29cc0c34f7a6951ba5f859013711508faca0dca8d833518fbd0a484e83befe",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "source",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "src/hunter_seeker_v2/agent.py",
+      "file_type": "python",
+      "bytes": 66801,
+      "sha256": "951ea665c2649ddaba9e583f68f6825cb1cc8f4ce93d6fe617f7a92c7d9a5f4a",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "source",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "src/hunter_seeker_v2/contracts.py",
+      "file_type": "python",
+      "bytes": 47283,
+      "sha256": "73a756be59bbce91f4bd89ee305ff90700250dcc3d57a04075ae8fbf39274f05",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "source",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "src/hunter_seeker_v2/diagnostics.py",
+      "file_type": "python",
+      "bytes": 25299,
+      "sha256": "83fb3bdf27d80011b3de6ab56f8b1bcda1852eb6c5f99056d166c5c80989018e",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "source",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "src/hunter_seeker_v2/ego.py",
+      "file_type": "python",
+      "bytes": 25148,
+      "sha256": "e49f89a7419fa6ba994aec41379334a3ca6cfb5459911e933a8f6508f3db30ea",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "source",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "src/hunter_seeker_v2/executable.py",
+      "file_type": "python",
+      "bytes": 33004,
+      "sha256": "d0be2b86c9612ff7331d83556e1d26d1a20479cf46516fbc594211669eeb93b8",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "source",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "src/hunter_seeker_v2/exogenous.py",
+      "file_type": "python",
+      "bytes": 35430,
+      "sha256": "2c750a08a2f0379ae9f02f863a1cdb18142cb96a8b8b0e8360509f71234de084",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "source",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "src/hunter_seeker_v2/hypotheses.py",
+      "file_type": "python",
+      "bytes": 88364,
+      "sha256": "6622f4d3d69d398ba909f3b7e41a7ee3002dd1aa4d4c6454816ea90970cb6c0c",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "source",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "src/hunter_seeker_v2/learning.py",
+      "file_type": "python",
+      "bytes": 10256,
+      "sha256": "e8fd50fa50b5039f64de4f0870e799facd1a25e9c2384ec59f779e788e94faf6",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "source",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "src/hunter_seeker_v2/memory.py",
+      "file_type": "python",
+      "bytes": 49015,
+      "sha256": "8d7227595a4dcc12ee150a56d1f96c9081cb024e59ff68d308c2baf6c4f52284",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "source",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "src/hunter_seeker_v2/models.py",
+      "file_type": "python",
+      "bytes": 45069,
+      "sha256": "c244e5967390d426194f82949515d56bef072aa439a6d79d86b3df3c6d22ce50",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "source",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "src/hunter_seeker_v2/perception.py",
+      "file_type": "python",
+      "bytes": 45432,
+      "sha256": "f6b565886e181306fe8d6376bcfb5046609d899ac355f43a02cd26b9e1e9cd9f",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "source",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "src/hunter_seeker_v2/persistence.py",
+      "file_type": "python",
+      "bytes": 58044,
+      "sha256": "42c3af9c43a6d03eaf3f0359a1c2852ee82f54e21bf00fe29a13684962830090",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "source",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "src/hunter_seeker_v2/policy.py",
+      "file_type": "python",
+      "bytes": 16818,
+      "sha256": "2a7ca713971939c67b9b85b9d01b16b6ca156d40e590b0ec14b3178d0cf9e016",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "source",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "src/hunter_seeker_v2/representation.py",
+      "file_type": "python",
+      "bytes": 11064,
+      "sha256": "758030ed668dbe39d699a16c72161c3f65ac22378a19c3a3e5e34c8f5e6c3b46",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "source",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "src/hunter_seeker_v2/run_arc.py",
+      "file_type": "python",
+      "bytes": 16189,
+      "sha256": "a123375e96eb41eb67cb6fb2c26fd6c6847e5c5abeb695ade1aefc7de12e3eba",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "source",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "src/hunter_seeker_v2/search.py",
+      "file_type": "python",
+      "bytes": 45036,
+      "sha256": "93487e2ecaea6119256aa9686430a8dcee61157635f92a1614694cf005dacbea",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "source",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "src/hunter_seeker_v2/student.py",
+      "file_type": "python",
+      "bytes": 49834,
+      "sha256": "fba27902461af88e866a56da6680a22f39e54787e152b94e478b3dc92cb69ddc",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "source",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "src/hunter_seeker_v2/taps.py",
+      "file_type": "python",
+      "bytes": 25201,
+      "sha256": "d6592ffc0c4dc7c15cdeef807de5bfd1ef26ff99cb3e2aa4d145c8f42e57e59c",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "source",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "src/hunter_seeker_v2/teacher.py",
+      "file_type": "python",
+      "bytes": 31998,
+      "sha256": "77c1397680f970e7652459f1e51841df6dc37ed24caab8afc15b15b4bf74874c",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "source",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "utilities/tests/integration/test_hunter_seeker_v2_integration.py",
+      "file_type": "python",
+      "bytes": 3211,
+      "sha256": "de0ee73ed0c8ed9fcd97b13bc66c91eac99848911b69f9e10e682faac208eb3d",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "test_or_runner",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "utilities/tests/manual/hs_v2_experiment_provenance.py",
+      "file_type": "python",
+      "bytes": 9974,
+      "sha256": "084788a7271a109ab0c54e1b0fc5501c6fa453ceafe6e2cb8198d82e7970eccb",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "test_or_runner",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "utilities/tests/manual/run_hs_v2_assisted_trio_v1.py",
+      "file_type": "python",
+      "bytes": 7817,
+      "sha256": "5949eeff2f628ddf69b0a018a8476b47f4cb5e1446801403a47e28798a7e46d4",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "test_or_runner",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "utilities/tests/manual/run_hs_v2_checkpoint_carry_v1.py",
+      "file_type": "python",
+      "bytes": 15241,
+      "sha256": "1a7ea3a407e9864b27c24c0a41b54f4938da2b3c149b253056017052a08d47b0",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "test_or_runner",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "utilities/tests/manual/run_hs_v2_compound_onoff_v1.py",
+      "file_type": "python",
+      "bytes": 5388,
+      "sha256": "463d488c104e82cea693a7bf25cea74a376a585f1d9c5d659372d8af3c6591fb",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "test_or_runner",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "utilities/tests/manual/run_hs_v2_ego_onoff_trio_v1.py",
+      "file_type": "python",
+      "bytes": 5255,
+      "sha256": "7f295e63899edd1a8dc41916e5862e1abee6f08a14fef5d87ae4dad7d25dbc72",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "test_or_runner",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "utilities/tests/manual/run_hs_v2_exogenous_onoff_trio_v1.py",
+      "file_type": "python",
+      "bytes": 5228,
+      "sha256": "d4e16985af9e80ae13f87199da5ef9535e4db17599dbbd5188dc3c37504314fb",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "test_or_runner",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "utilities/tests/manual/run_hs_v2_fresh_discovery_v1.py",
+      "file_type": "python",
+      "bytes": 25594,
+      "sha256": "84fc1b4b938ff5a6c23ad878e4e524a61260b3e8f00ef0442ddb49ef8f4c0767",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "test_or_runner",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "utilities/tests/manual/run_hs_v2_hypotheses_onoff_v1.py",
+      "file_type": "python",
+      "bytes": 5066,
+      "sha256": "a190121adaa8612eda3a511073157cbc6964792379a0a8452c572937077098f4",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "test_or_runner",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "utilities/tests/manual/run_hs_v2_ls20_count_graph_goal_v1.py",
+      "file_type": "python",
+      "bytes": 17279,
+      "sha256": "4982b657ae82411ed4c17b986e24942a130f62890631c786fc1ad6432e8316ad",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "test_or_runner",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "utilities/tests/manual/run_hs_v2_student_attribution_v1.py",
+      "file_type": "python",
+      "bytes": 16785,
+      "sha256": "60e116fac744c8c1091ee88b4e33c754058fc4d551e34e768ce1a14dbb888de8",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "test_or_runner",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "utilities/tests/manual/run_hs_v2_student_repr_ablation_v1.py",
+      "file_type": "python",
+      "bytes": 12732,
+      "sha256": "01c712f37dfe4aaf07f4babccdce470f301d53ddbda8c3b89db5f19bf2ce15fc",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "test_or_runner",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "utilities/tests/manual/run_hs_v2_student_retention_v1.py",
+      "file_type": "python",
+      "bytes": 61125,
+      "sha256": "60ba8546c0229b73ebe8223f5e37634fefa60446799fe4a46ed3a803ae316194",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "test_or_runner",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "utilities/tests/manual/run_hs_v2_tu93_fresh_retention_v1.py",
+      "file_type": "python",
+      "bytes": 92137,
+      "sha256": "5836c5d15e09dae69da18d8348916aa772bc7ecf356ea50df63fc7574e9dcbd7",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "test_or_runner",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "utilities/tests/manual/run_hs_v2_tu93_graph_goal_v1.py",
+      "file_type": "python",
+      "bytes": 22863,
+      "sha256": "fffb4688b10951897bcdf713ed87ab772329428c560f33dcc3d0e4a2822dea08",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "test_or_runner",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "utilities/tests/unit/test_hs_v2_tu93_fresh_retention_v1.py",
+      "file_type": "python",
+      "bytes": 27880,
+      "sha256": "bf5f18a0318dcaa61e6a2d4a024bc4979dd6c1420dc2be1ab4157ddaea4d99ea",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "test_or_runner",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "utilities/tests/unit/test_hunter_seeker_v2_adapters.py",
+      "file_type": "python",
+      "bytes": 23170,
+      "sha256": "80083bcdc625c7e2e2243438106d48d5a4e5f52f52d106e21b409a17132c574a",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "test_or_runner",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "utilities/tests/unit/test_hunter_seeker_v2_checkpoint_strictness_regressions.py",
+      "file_type": "python",
+      "bytes": 6953,
+      "sha256": "fe5a7ca1fb97cf035cad54999b24cc27aab3cc38c7b9758b5c5a8fb91345c824",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "test_or_runner",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "utilities/tests/unit/test_hunter_seeker_v2_contract_boundaries.py",
+      "file_type": "python",
+      "bytes": 9381,
+      "sha256": "359213a7ba1d5fd2520b5f5f69e1702327e53bc32f85043f6a3ce9bb0786707f",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "test_or_runner",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "utilities/tests/unit/test_hunter_seeker_v2_core.py",
+      "file_type": "python",
+      "bytes": 30411,
+      "sha256": "a32612c439ae34c8a2c89acffdd56178b13ebcf352a55539a1677bcae9915d57",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "test_or_runner",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "utilities/tests/unit/test_hunter_seeker_v2_count_shadow_diagnostic.py",
+      "file_type": "python",
+      "bytes": 1860,
+      "sha256": "c4a5edc0dec8510af39c6e53d9d03dbe0a673bbdef9e571f6010f7ef4f76da51",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "test_or_runner",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "utilities/tests/unit/test_hunter_seeker_v2_ego.py",
+      "file_type": "python",
+      "bytes": 14367,
+      "sha256": "9805779a7ce286af385d321fd34cfcefb90a00a518c3b28102b335ec3dd417cc",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "test_or_runner",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "utilities/tests/unit/test_hunter_seeker_v2_exogenous.py",
+      "file_type": "python",
+      "bytes": 18447,
+      "sha256": "6c77085a9b3c5672f5c13eaaeac6de31cf221c454a684c7ca28816a5d3a5fb02",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "test_or_runner",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "utilities/tests/unit/test_hunter_seeker_v2_fresh_discovery.py",
+      "file_type": "python",
+      "bytes": 2349,
+      "sha256": "75d2ec06bf6dc942483bfeefe79a1f134f0d242c7ba14989345b5a52629ad64b",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "test_or_runner",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "utilities/tests/unit/test_hunter_seeker_v2_hypotheses.py",
+      "file_type": "python",
+      "bytes": 30398,
+      "sha256": "76284147b8fded1269ead3bd026871bd8e340aab4b1386c8d0d578dfb3eb7b5b",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "test_or_runner",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "utilities/tests/unit/test_hunter_seeker_v2_invariant_fuzz_regressions.py",
+      "file_type": "python",
+      "bytes": 4500,
+      "sha256": "825bb0509ca543fe8b12ac749dc6e2fdfddcce9d25a561bca7757d30e8df1752",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "test_or_runner",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "utilities/tests/unit/test_hunter_seeker_v2_perception.py",
+      "file_type": "python",
+      "bytes": 13318,
+      "sha256": "e23dffd147356f27d99b9c08f837c7f1167497528f83362ff07f7bc3b6c014c8",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "test_or_runner",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "utilities/tests/unit/test_hunter_seeker_v2_persistence_executable_regressions.py",
+      "file_type": "python",
+      "bytes": 24142,
+      "sha256": "e80985e804fdf0c2daeecd0276a4eb124809bd90d59371700c7ebd389a940d20",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "test_or_runner",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "utilities/tests/unit/test_hunter_seeker_v2_representation.py",
+      "file_type": "python",
+      "bytes": 4763,
+      "sha256": "85e50039f2f90ae35b5b0e9a1e245e3c20509d319ca77b3f28836322df587b22",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "test_or_runner",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "utilities/tests/unit/test_hunter_seeker_v2_search_security_regressions.py",
+      "file_type": "python",
+      "bytes": 26307,
+      "sha256": "e83731e6a71f6e0baef3a47087a35f674f6a092f461d1240e0a8b41e4a55660c",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "test_or_runner",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "utilities/tests/unit/test_hunter_seeker_v2_sensors.py",
+      "file_type": "python",
+      "bytes": 22739,
+      "sha256": "99a22f1cd8573bd6e12ee4f839d52afa4b1dc32071988bc92943f6b6650db06d",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "test_or_runner",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "utilities/tests/unit/test_hunter_seeker_v2_stage_bridge.py",
+      "file_type": "python",
+      "bytes": 4896,
+      "sha256": "41434a989a25a500d1f555dd9e74eb936ddd334b578033449f2e680844e35221",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "test_or_runner",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "utilities/tests/unit/test_hunter_seeker_v2_state_learning_regressions.py",
+      "file_type": "python",
+      "bytes": 20800,
+      "sha256": "53d903d2e7b2a50660a208085db3233ce6218944c5caa0da70a1f25c8a50812e",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "test_or_runner",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "utilities/tests/unit/test_hunter_seeker_v2_student.py",
+      "file_type": "python",
+      "bytes": 20544,
+      "sha256": "3f00678388bdd6b8692b86d848d58e95bc3c924522adf7695f75f0f7a7b2202c",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "test_or_runner",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "utilities/tests/unit/test_hunter_seeker_v2_student_retention_experiment.py",
+      "file_type": "python",
+      "bytes": 12921,
+      "sha256": "bab6d3d778114fdaea6be1fef64f83a75a0e0dcf0f3feb6cc6408734f27efcd5",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "test_or_runner",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "utilities/tests/unit/test_hunter_seeker_v2_teacher_index_regressions.py",
+      "file_type": "python",
+      "bytes": 12760,
+      "sha256": "f4fa3347b61841bce686d1aadbd20ff1d1889f0485f3561555192d7ec0cc7182",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "test_or_runner",
+      "required_for_minimal_reproduction": true
+    },
+    {
+      "path": "utilities/tests/unit/test_hunter_seeker_v2_transaction_regressions.py",
+      "file_type": "python",
+      "bytes": 23099,
+      "sha256": "3c91b26d71594029c26f7b71a07625c12464b7289a5114f99af8b8aa2bfa2c2c",
+      "staged_status": "added_to_bounded_snapshot",
+      "generated": false,
+      "role": "test_or_runner",
+      "required_for_minimal_reproduction": true
+    }
+  ]
+}
