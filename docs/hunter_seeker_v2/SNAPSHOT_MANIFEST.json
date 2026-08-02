@@ -14,7 +14,8 @@
     "bounded_payload_path_count": 67,
     "provenance_files": [
       "docs/hunter_seeker_v2/SNAPSHOT_MANIFEST.json",
-      "docs/hunter_seeker_v2/SNAPSHOT_REPORT.md"
+      "docs/hunter_seeker_v2/SNAPSHOT_REPORT.md",
+      "docs/hunter_seeker_v2/FINAL_REVIEW.md"
     ]
   },
   "focused_test": {
