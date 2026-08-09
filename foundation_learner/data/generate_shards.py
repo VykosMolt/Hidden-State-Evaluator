@@ -18,7 +18,9 @@ Guarantees, all enforced here with HARD FAILURE:
 * every episode renders to at most 2048 Ouro tokens, both in its canonical
   surface and with every item replaced by each of its remapped variants
   (contract §7: episodes are SIZED to fit, generation-side truncation is
-  forbidden);
+  forbidden), AND its projected ONLINE context
+  (``scripted_tokens + (n_attempt_slots + 1) * 64``) fits the frozen eval-time
+  allowance of 4096 tokens (Amendment 13);
 * ``instance_id`` never crosses a split, a family, or an episode key — the only
   permitted sharing is between the ``scripted`` and ``successful`` variants of
   ONE episode, which by construction hold the same items;
@@ -45,8 +47,10 @@ from ..episodes.assemble import assemble_episode, build_hint_variants
 from ..episodes.parse import format_answer
 from ..episodes.render import render_events
 from ..episodes.schema import EPISODE_STRUCTURE_V0, Episode, Role, TASK_ROLES
-from .pools import (DEFAULT_DIFFICULTY, FULL_POOLS, FL1_ITEMS_PER_EPISODE,
-                    MAX_SEQ_LEN, PoolSizes, REMAP_SPLITS, ROOT_SEED)
+from .pools import (DEFAULT_DIFFICULTY, EVAL_MAX_NEW_TOKENS,
+                    EVAL_ONLINE_MAX_SEQ_LEN, FULL_POOLS,
+                    FL1_ITEMS_PER_EPISODE, MAX_SEQ_LEN, PoolSizes,
+                    REMAP_SPLITS, ROOT_SEED)
 from .shards import SHARD_SUMS_NAME, ShardSums, write_json, write_shard
 
 __all__ = ["DEFAULT_TOKENIZER_PATH", "PREGEN_MANIFEST_NAME", "TRAIN_MODES",
@@ -70,13 +74,30 @@ class TokenBudget:
 
     Loading the model weights is never necessary and never done: only the
     tokenizer is read from the frozen checkpoint directory.
+
+    TWO assertions, both hard-failing (Amendment 13):
+
+    * the SCRIPTED rendering must fit the contract §7 budget (2048 tokens);
+    * the projected ONLINE context must fit the frozen eval-time allowance
+      (4096 tokens).  Online evaluation replaces every scripted attempt line
+      with up to ``EVAL_MAX_NEW_TOKENS`` real generated tokens and appends one
+      more slot's worth while the model writes, so the projection is
+      ``scripted_tokens + (n_attempt_slots + 1) * EVAL_MAX_NEW_TOKENS``.  It is
+      an over-estimate (the scripted answer lines are counted as well as the
+      generations that replace them), which is the direction a budget assertion
+      must err in.
     """
 
-    def __init__(self, tokenizer_path: str, max_tokens: int = MAX_SEQ_LEN):
+    def __init__(self, tokenizer_path: str, max_tokens: int = MAX_SEQ_LEN,
+                 online_max_tokens: int = EVAL_ONLINE_MAX_SEQ_LEN,
+                 eval_max_new_tokens: int = EVAL_MAX_NEW_TOKENS):
         self.tokenizer_path = tokenizer_path
         self.max_tokens = int(max_tokens)
+        self.online_max_tokens = int(online_max_tokens)
+        self.eval_max_new_tokens = int(eval_max_new_tokens)
         self._tokenizer = None
         self.max_seen = 0
+        self.max_online_projected = 0
         self.total = 0
         self.count = 0
 
@@ -93,19 +114,32 @@ class TokenBudget:
         self.count += 1
         return n
 
-    def check(self, label: str, text: str) -> int:
+    def check(self, label: str, text: str, *, n_attempt_slots: int) -> int:
         n = self.measure(text)
         if n > self.max_tokens:
             raise ValueError(
                 f"{label}: episode renders to {n} Ouro tokens (> "
                 f"{self.max_tokens}); instances must be sized to fit, "
                 f"truncation is forbidden")
+        projected = n + (int(n_attempt_slots) + 1) * self.eval_max_new_tokens
+        self.max_online_projected = max(self.max_online_projected, projected)
+        if projected > self.online_max_tokens:
+            raise ValueError(
+                f"{label}: projected ONLINE context is {projected} Ouro tokens "
+                f"({n} scripted + ({n_attempt_slots} + 1) x "
+                f"{self.eval_max_new_tokens} generated) and exceeds the frozen "
+                f"eval-time allowance {self.online_max_tokens}; online "
+                f"evaluation may not truncate, so such an episode would have to "
+                f"be recorded as ONLINE_BUDGET_EXCEEDED and excluded")
         return n
 
     def stats(self) -> dict:
         return {"tokenizer_path": self.tokenizer_path,
                 "max_tokens_allowed": self.max_tokens,
                 "max_tokens_seen": self.max_seen,
+                "eval_online_allowance": self.online_max_tokens,
+                "eval_max_new_tokens": self.eval_max_new_tokens,
+                "max_online_projected_seen": self.max_online_projected,
                 "mean_tokens": (self.total / self.count) if self.count else 0.0,
                 "renders_measured": self.count}
 
@@ -170,6 +204,11 @@ def _draw_unique_rule(family, ledger: _UniquenessLedger, root_seed: int,
         f"{family.family_id}: could not draw a fresh rule for episode {index} "
         f"after {RULE_DRAW_ATTEMPTS} deterministic attempts; the rule space is "
         f"too small for the requested pool")
+
+
+def _n_attempt_slots(events) -> int:
+    """How many MODEL_ATTEMPT slots the ONLINE evaluator will really generate."""
+    return sum(1 for event in events if event.role is Role.MODEL_ATTEMPT)
 
 
 def _remapped_events(episode: Episode, remapped: dict):
@@ -267,6 +306,7 @@ def generate_all(out_root: str, *, root_seed: int = ROOT_SEED,
                  difficulty: int = DEFAULT_DIFFICULTY,
                  tokenizer_path: str = DEFAULT_TOKENIZER_PATH,
                  max_tokens: int = MAX_SEQ_LEN,
+                 online_max_tokens: int = EVAL_ONLINE_MAX_SEQ_LEN,
                  log=None) -> dict:
     """Generate every artefact deterministically; returns the pregen manifest."""
     def say(message: str) -> None:
@@ -282,7 +322,9 @@ def generate_all(out_root: str, *, root_seed: int = ROOT_SEED,
         raise AssertionError("split manifest is not reproducible")
     seal_hex = split_manifest["split_manifest_sha256"]
 
-    budget = TokenBudget(tokenizer_path, max_tokens)
+    budget = TokenBudget(tokenizer_path, max_tokens,
+                         online_max_tokens=online_max_tokens,
+                         eval_max_new_tokens=EVAL_MAX_NEW_TOKENS)
     ledger = _UniquenessLedger()
     sums = ShardSums()
     files: dict[str, dict] = {}
@@ -332,7 +374,9 @@ def generate_all(out_root: str, *, root_seed: int = ROOT_SEED,
                         ledger.claim_instance(item_id, split, family_id,
                                               episode.meta["episode_key"])
                     budget.check(f"{family_id}/{split}/{mode}/{index}",
-                                 render_events(episode.events).text)
+                                 render_events(episode.events).text,
+                                 n_attempt_slots=_n_attempt_slots(
+                                     episode.events))
                     episodes[mode].append(episode)
                     built[mode] = episode
 
@@ -353,9 +397,11 @@ def generate_all(out_root: str, *, root_seed: int = ROOT_SEED,
                             instance = TaskInstance.from_dict(item_record["instance"])
                             remapped[item_id] = family.surface_remap(
                                 rule, instance, remap_id)
+                        remapped_events = _remapped_events(primary, remapped)
                         budget.check(
                             f"{family_id}/{split}/{index}/{remap_id}",
-                            render_events(_remapped_events(primary, remapped)).text)
+                            render_events(remapped_events).text,
+                            n_attempt_slots=_n_attempt_slots(remapped_events))
                         remap_records.append({
                             "episode_id": primary.episode_id,
                             "family_id": family_id,

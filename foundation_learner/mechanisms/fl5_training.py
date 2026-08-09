@@ -19,15 +19,41 @@ with gradients flowing (BPTT within the episode).  The FL3-weighted NLL is
 accumulated over ALL segments and reduced exactly as ``OBJ_EPISODE_MEAN``:
 per-episode weighted token mean, then batch mean.
 
-Why segments, and what the two arms actually contrast
------------------------------------------------------
+Why segments, and what the arms actually contrast (corrected, Amendment 13)
+--------------------------------------------------------------------------
 Because each segment attends only to its own tokens (plus the prefix), the ONLY
-channel by which information from earlier interactions can reach a later
-segment is the fast state ``s``.  FAST_STATE_OFF runs the IDENTICAL pipeline
-with the injection disabled (no prefix, no state), so the contrast between the
-arms is exactly "the state carried the learning" and nothing else — the same
-property the context-reset evaluation probes.  Data order, seeds, weights,
-segmentation and reduction are shared.
+channel by which information from an earlier interaction can reach a later
+segment is the fast state ``s``.  That is a statement about the SEGMENTED
+pipeline, and it is the only statement this design supports:
+
+    within the segmented forward, FAST_STATE_ON has a segment-to-segment
+    channel and FAST_STATE_OFF has none.
+
+The earlier claim that the ON/OFF contrast is "exactly 'the state carried the
+learning' and nothing else" OVERCLAIMED.  Three confounds sit inside that
+difference and none of them is the state carrying learning:
+
+1. **OFF is an impossible-task control.**  With the history removed by
+   segmentation and no state, the OFF arm cannot use ANY earlier interaction;
+   part of the ON-minus-OFF gap is OFF's degradation on a task it cannot do,
+   not ON's retention.
+2. **ON trains ~25M extra parameters** (``W_in``, ``GRUCell``, ``W_p``) that OFF
+   does not have, so the arms are not parameter-matched.
+3. **The ``s = 0`` prefix is a LEARNED STATIC PREFIX.**  ``prefix_embeds(0)`` is
+   a trained, episode-independent set of 8 vectors, i.e. ordinary prefix
+   tuning; any gain it produces is not persistence of within-episode learning.
+
+``FAST_STATE_ON_S0`` (``mechanisms.fast_state``) isolates confound 3 at
+evaluation time: it is the TRAINED ON module with ``s`` pinned to 0 and never
+updated, so ON minus ON_S0 is the contribution of the STATE UPDATES on top of
+the static prefix, while ON_S0 minus OFF is the static prefix plus the extra
+parameters.  Confounds 1 and 2 are recorded, not removed — FL5 is not a
+compute- or parameter-matched comparison and is never comparable to the FL3
+core arm (every FL5 record carries ``comparable_to_fl3: false`` with this
+reason).
+
+Data order, seeds, weights, segmentation and reduction ARE shared between the
+training arms.
 
 The FL3 weights are ``training.tokenization.FL3_INTERACTION_WEIGHTS`` (QUERY
 1.0, TRANSFER 1.0, revisions 0.25, everything else 0.0), applied to the same
@@ -100,6 +126,8 @@ from foundation_learner.training.trainer import (
 __all__ = [
     "ARM_FAST_STATE_ON",
     "ARM_FAST_STATE_OFF",
+    "FL5_COMPARABLE_TO_FL3",
+    "FL5_NOT_COMPARABLE_REASON",
     "FL5TrainConfig",
     "Fl5TrainingError",
     "EpisodeSegments",
@@ -114,6 +142,23 @@ __all__ = [
 ARM_FAST_STATE_ON = "FAST_STATE_ON"
 ARM_FAST_STATE_OFF = "FAST_STATE_OFF"
 FEEDBACK_ROLES = (Role.FEEDBACK, Role.HINT, Role.REVEAL)
+
+#: FL5 is NEVER comparable to the FL3 core arm, and every FL5 payload and
+#: per-arm record says so in its own body (Amendment 13).
+FL5_COMPARABLE_TO_FL3 = False
+FL5_NOT_COMPARABLE_REASON = (
+    "FL5 runs a SEGMENTED forward under the FL3 objective, so its numbers are "
+    "not on the same scale as FL3's whole-episode forward. Three confounds sit "
+    "inside the FAST_STATE_ON minus FAST_STATE_OFF difference: (1) OFF is an "
+    "impossible-task control - segmentation removes the textual history and OFF "
+    "has no state, so it cannot use any earlier interaction at all; (2) ON "
+    "trains ~25M parameters (W_in, GRUCell, W_p) that OFF does not have, so the "
+    "arms are not parameter-matched; (3) prefix_embeds(0) is a LEARNED STATIC "
+    "PREFIX, i.e. prefix tuning, whose gain is not persistence of within-episode "
+    "learning. FAST_STATE_ON_S0 (the trained ON module with s pinned to 0, "
+    "eval-only) isolates (3): ON minus ON_S0 is the contribution of the state "
+    "updates over the static prefix, and ON_S0 minus OFF is the static prefix "
+    "plus the extra parameters. (1) and (2) are recorded, not removed.")
 
 
 class Fl5TrainingError(RuntimeError):
@@ -498,6 +543,8 @@ class FL5ArmResult:
         return {
             "schema": "flb200.fl5_arm_result.v1",
             "arm_id": self.arm_id,
+            "comparable_to_fl3": FL5_COMPARABLE_TO_FL3,
+            "comparable_to_fl3_reason": FL5_NOT_COMPARABLE_REASON,
             "out_dir": self.out_dir,
             "steps": self.steps,
             "stopped_reason": self.stopped_reason,

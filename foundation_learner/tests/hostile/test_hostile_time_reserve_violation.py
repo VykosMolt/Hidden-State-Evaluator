@@ -36,7 +36,10 @@ def setup(tmp_path, available, spu=1.0):
     ctx.throughput.add(aff.BenchMeasurement(
         scope=aff.PEFT_MODE, seconds_per_update=spu, tokens_per_second=10.0,
         updates_measured=4, wall_seconds=4 * spu, forward_tokens=100,
-        max_tokens_per_batch=2048, eval_seconds_per_episode=0.0))
+        max_tokens_per_batch=2048, eval_seconds_per_episode=0.0,
+        # measured as zero so that this fixture isolates the RESERVE
+        # arithmetic; the load term itself is attacked below
+        model_load_seconds=0.0, forward_seconds_per_episode=0.0))
     s = sched.Scheduler(available_foundation_learner_seconds=available,
                         out_dir=str(tmp_path / "ladder"), guard=guard,
                         clock=sched.ManualClock())
@@ -110,3 +113,41 @@ def test_the_refusal_is_journalled_with_its_arithmetic(tmp_path):
     assert admission["safety_factor"] == 1.25
     assert admission["remaining_reserve_seconds"] == 1200.0
     assert admission["admitted"] is False
+
+
+def test_an_unmeasured_model_load_cannot_be_assumed_free(tmp_path):
+    """Attack: hide the per-arm fresh checkpoint load from the projection.
+
+    Contract §7 reloads the multi-GB frozen checkpoint for EVERY arm.  A
+    projection that silently treats that as zero seconds under-projects every
+    stage and spends the difference out of the transfer reserve, so a stage
+    whose load cost was never measured must BLOCK rather than run (Amendment
+    12 item 12).
+    """
+    s, ctx, stage = setup(tmp_path, available=1e6)
+    ctx.throughput.measurements.clear()
+    ctx.throughput.add(aff.BenchMeasurement(
+        scope=aff.PEFT_MODE, seconds_per_update=1.0, tokens_per_second=10.0,
+        updates_measured=4, wall_seconds=4.0, forward_tokens=100,
+        max_tokens_per_batch=2048, eval_seconds_per_episode=0.0))
+    outcome = s.run_stage(stage, ctx)
+    assert outcome.state == sched.STATE_BLOCKED
+    assert "model-load" in outcome.error
+    assert RAN == []
+
+
+def test_a_stage_may_not_run_past_the_reserve_once_it_has_started(tmp_path):
+    """Attack: get admitted, then run long enough to eat the reserve anyway.
+
+    Admission alone never bounded a RUNNING stage (review finding R-M8): a
+    stage admitted with a projection could overrun without limit.  The watchdog
+    aborts it the moment the remaining authorized time reaches the reserve.
+    """
+    s, ctx, stage = setup(tmp_path, available=3000.0)
+    watchdog = s.build_watchdog("GREEDY", projected_seconds=1e9,
+                                started=s.clock.monotonic())
+    watchdog.check("start")
+    s.clock.advance(1800.1)                 # 1199.9 s left, reserve is 1200 s
+    with pytest.raises(sched.StageAbortedOverrun):
+        watchdog.check("overrun")
+    assert watchdog.tripped == "RESERVE_FLOOR"

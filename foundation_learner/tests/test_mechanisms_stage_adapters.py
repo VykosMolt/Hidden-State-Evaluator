@@ -215,10 +215,32 @@ def test_fl5_stage_runs_both_arms_and_publishes_persistence(tmp_path):
 
     assert_mechanism_payload(payload, "FL5")
     assert_report_written(ctx, "FL5")
-    assert set(payload["arms"]) == {"FAST_STATE_ON", "FAST_STATE_OFF"}
+    # Amendment 13 adds the EVAL-ONLY control arm; there is still no third
+    # training run (its arm_result is None and it reuses ON's trained module).
+    assert set(payload["arms"]) == {"FAST_STATE_ON", "FAST_STATE_OFF",
+                                    "FAST_STATE_ON_S0"}
 
     on = payload["arms"]["FAST_STATE_ON"]
     off = payload["arms"]["FAST_STATE_OFF"]
+    s0 = payload["arms"]["FAST_STATE_ON_S0"]
+    assert s0["eval_only"] is True and s0["arm_result"] is None
+    assert s0["control_of"] == "FAST_STATE_ON"
+    assert s0["state_pinned_to_zero"] is True
+    assert s0["fast_state_config_hash"] == on["fast_state_config_hash"]
+    # the control still injects a prefix (the LEARNED STATIC one)
+    for mode in ("history", "context_reset"):
+        assert all(s0["prefix_used"][mode]), mode
+    assert payload["control_arm"] == "FAST_STATE_ON_S0"
+    for key in ("state_update_contribution", "static_prefix_contribution"):
+        assert set(payload[key]) >= {"point", "ci"}
+
+    # every FL5 payload and per-arm record disclaims FL3 comparability
+    assert payload["comparable_to_fl3"] is False
+    assert "impossible-task control" in payload["comparable_to_fl3_reason"]
+    for arm in payload["arms"].values():
+        assert arm["comparable_to_fl3"] is False
+        assert arm["comparable_to_fl3_reason"]
+    assert on["arm_result"]["comparable_to_fl3"] is False
     assert on["arm_result"]["steps"] == 1
     assert on["fast_state_config"]["state_dim"] == 1024
     # the arms differ in exactly one thing: the injected prefix

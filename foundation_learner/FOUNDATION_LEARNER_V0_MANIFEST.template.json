@@ -72,7 +72,8 @@
     "training_scope_selected": "UNRESOLVED_B200_AFFORDABILITY (PEFT_MODE|FULL_MODEL_MODE)",
     "available_foundation_learner_seconds": "UNRESOLVED_SESSION_TIME_AFTER_O1_CLOSE",
     "eval_batch_size_post_equivalence_gate": "UNRESOLVED_B200_GATE",
-    "o1_entry_command": "UNRESOLVED_OPERATOR_BOUND"
+    "o1_entry_command": "UNRESOLVED_OPERATOR_BOUND",
+    "container_registry_digest_ref": "UNRESOLVED_OPERATOR_BOUND_REGISTRY_PUSH"
   },
   "package": {
     "zip_name": "FOUNDATION_LEARNER_B200_V0.1.0.zip",

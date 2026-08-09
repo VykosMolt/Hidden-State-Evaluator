@@ -614,3 +614,804 @@ sealed-test policy.
    All imports are made INSIDE the adapter functions, so importing
    `mechanisms` never pulls in the campaign package and the lazy stage table
    stays lazy.
+
+## Amendment 12 — campaign-runtime and release repairs after adversarial review (2026-08-09, W6)
+
+Recorded by W6 after an adversarial review (verdict REJECT) and an independent
+verification (verdict FAILED on packaging) of the complete package. Every item
+below repairs an implementation defect or records a decision the contract left
+open; NONE of them changes an objective, a loss weight, a metric definition, a
+promotion threshold, the split, a pool size, the safety factor, the transfer
+reserve, or the sealed-test policy. Everything here is frozen BEFORE any
+accelerator use, before any training run, with the sealed set unopened.
+
+1. **The campaign has a production entry (`campaign/entry.py`).**
+   `session_supervisor.main()` previously built a supervisor whose
+   `context_factory` and `ladder_runner` were `None`, so the pod entry reached
+   `RUN_FL_LADDER` and refused: only the dress rehearsal and the tests ever
+   built a `StageContext`. `campaign/entry.py` is now the single place a stage
+   context is built, from the session configuration:
+   `bundle_factory = load_frozen_backbone(checkpoint_dir, device,
+   verify_tree_hash=True)` (§13's PRISTINE reload), the pre-generation root,
+   the isolation guard, the scope, the root seed and the token budget. The
+   REHEARSAL path is the SAME code with ONE difference — `fl_tiny_model: true`
+   substitutes the tiny NONSCIENTIFIC bundle, which is refused outside a
+   session explicitly marked `rehearsal`, and evaluation caps
+   (`fl_eval_episode_cap`, `fl_train_example_cap`) are likewise rehearsal-only,
+   because they shorten the frozen per-stage evaluation maxima.
+
+2. **§22 determinism is applied and RECORDED at campaign start.**
+   `training/model_loading.set_deterministic_eval()` existed but was never
+   called. `campaign.entry.configure_determinism()` calls it for real sessions
+   AND rehearsals, then records the flags as torch reports them
+   (`flb200.determinism_record.v1`) in the session journal
+   (`CAMPAIGN_ENTRY_WIRED`) and in `SESSION_FINAL_STATUS.json`. If
+   `torch.use_deterministic_algorithms(True)` does not take effect the entry
+   refuses rather than proceeding quietly.
+
+3. **A failed session always closes out.** `SessionSupervisor.run` wraps the
+   state machine in `try/finally`. On any abort — a failed state, an exception
+   outside a state, a KeyboardInterrupt — the supervisor attempts
+   `TRANSFER_FL_ARTIFACTS` (best effort; skipped when no ladder output exists,
+   because an empty archive would misdescribe the session) and ALWAYS attempts
+   `TERMINATE_ACCELERATOR`, records both in `close_out` and in the journal, and
+   always writes `SESSION_FINAL_STATUS.json`. Termination is attempted even
+   when the transfer failed: losing artefacts is bad, paying for an abandoned
+   accelerator is worse.
+
+4. **Resume rebuilds `state_results` from the journal.** A resumed session
+   restores every `STATE_COMPLETED` result payload, so
+   `COMPUTE_REMAINING_AUTHORIZED_TIME` is no longer skipped WITHOUT its result
+   (which previously made `RUN_FL_LADDER` refuse for want of an FL allowance —
+   a mid-session crash silently cost the entire FL half of the rental). The
+   restored allowance is REDUCED by the wall-clock gap between the journalled
+   record and the resume; the pod billed for that gap. This is an operational
+   budget decision, not a scientific path, and it can only ever SHRINK the
+   allowance (§20 is untouched).
+
+5. **Evaluation sets are capped PER FAMILY and their coverage is asserted.**
+   Every evaluation set was assembled as `load_episodes(...)[:cap]` over
+   shard-ordered episodes, which returns the first family's episodes and
+   silently turns every family-macro, family-clustered metric (§9, §14) into a
+   single-family metric. The cap is now divided across the split's families and
+   applied per shard (`eval_plan`, `load_balanced_eval_episodes`), the sealed
+   evaluation slices per SHARD, `mechanisms/stage_support.dev_episodes`
+   delegates to the same assembler, and `assert_eval_family_coverage` fails
+   loudly wherever a set is assembled. A hostile fixture
+   (`test_hostile_eval_set_family_collapse.py`) attacks it from four
+   directions. Consequence for projections: the projection uses the PLANNED set
+   size (`planned_eval_episodes`), never the raw cap.
+
+6. **A->B->A chains resolve against the split pool and stay pair-balanced.**
+   `load_chain_specs` moved into the campaign (`stage_definitions`) and
+   `mechanisms/stage_support.load_chain_specs` delegates to it. It completes the
+   episode pool from the split's own shards when a chain names an episode the
+   caller does not hold (previously most chains vanished silently) and selects
+   chains ROUND-ROBIN over the ordered family pairs (previously a `limit`
+   returned chains of one pair, which is not the family-balanced interference
+   metric §9 defines).
+
+7. **The sealed evaluation runs the FROZEN PROMOTED CANDIDATE.** It previously
+   evaluated a fresh BASE bundle and reported it as the campaign's sealed
+   result. `promoted_arm_bundle` restores the promoted arm's `final` checkpoint
+   through `mechanisms.stage_support.arm_checkpoint_state` and the report
+   records the arm, the checkpoint manifest hash and the restoration record; a
+   missing checkpoint REFUSES. The promoted arm is mechanical and frozen before
+   any sealed access: the core arm pinned in the development decisions, else
+   the frozen core treatment FL3 (`DEFAULT_PROMOTED_ARM`). A new entry
+   condition `sealed_eval_entry` requires the COMPLETED core comparison
+   (FL1/FL2/FL3), the frozen `DEV_DECISIONS_FROZEN.json`, and the promoted
+   arm's checkpoint. The sealed report also carries the §9 family-holdout
+   report (UNSEEN-INSTANCE / UNSEEN-FAMILY separated) and the §13.1 claim-scope
+   statement, and records are split-tagged through the evaluation layer's own
+   annotation path.
+
+8. **The sealed opening is TWO-PHASE (§12c, restated).** `open_sealed` now
+   grants PROVISIONAL access and writes NOTHING; `commit()` appends the single
+   `SEALED_OPENED` entry once the evaluation records exist; anything that
+   escapes before the commit appends `SEALED_OPENING_ABORTED` and permits
+   EXACTLY ONE retry (`MAX_OPENING_ATTEMPTS = 2`); a third attempt refuses and
+   both attempts stay in the append-only hash-chained ledger forever. A
+   provisional unlock may READ sealed shards but may NOT write a sealed result.
+   `sealed_opening(...)` is the context manager the campaign uses; it never
+   swallows the exception — the abort is a RECORD, not a recovery. Rationale: a
+   seal burned by the FIRST line of an evaluation is not robust; the EVIDENCE
+   is what consumes the opening. Nothing is weakened: the opening is still
+   single-use, still ledgered, still irreversible, and every attempt is
+   permanent.
+
+9. **The core comparison is audited in production (`campaign/core_matching.py`).**
+   `training.arms.assert_core_arms_matched`,
+   `training.compute_accounting.compare_core_ledgers` and the base-identity
+   check were invoked nowhere outside the test suite. A new `CORE_MATCHING`
+   stage (§11 priority band 5, immediately after the three core arms and before
+   any extension consumes them) runs all three against the real `ArmConfig`
+   objects, the realized compute ledgers and the arms' checkpoint manifests,
+   and writes `flb200.core_matching_report.v1`. A mismatch RAISES: the
+   scheduler records a failed stage with its predeclared fallback rather than
+   letting an unmatched comparison become the headline.
+
+10. **Metrics 11, 12 and 13 now have producing stages.** Three UNCONDITIONAL
+    diagnostics are added to the frozen table: `REMAP_DIAG` (metric 13, over
+    the pre-generated DEVELOPMENT remap records — 1,800 of the 3,600 total; the
+    SEALED_TEST half is never touched outside the single opening),
+    `INTERFERENCE_DIAG` (metric 11, over the pre-generated A->B->A chains) and
+    `POISON_DIAG` (metric 12, over the five frozen §9 conditions, independent of
+    FL6, which measures GATING rather than blind incorporation). They run on the
+    promoted arm when its checkpoint exists and record the fallback to the base
+    checkpoint when it does not. **Frozen order**: they carry §11 priority band
+    11 — after the FL4-FL8 admission attempts (bands 6-10) and BEFORE additional
+    predeclared seeds (12) and the sealed opening (13). They have NO entry
+    condition, so they also run under the §10 FL3-null fallback, which names
+    exactly these diagnostics as predeclared work. `SECOND_SEED` moves to band
+    12 and `SEALED_EVAL` to 13; the relative order of every pre-existing stage
+    is unchanged.
+
+11. **`fl0_work` passes the real TRAIN family list.** It passed `[]`, which
+    makes §9's UNSEEN-INSTANCE / UNSEEN-FAMILY partition vacuous. FL0 is
+    untrained, so every DEVELOPMENT family is an unseen FAMILY; the list fixes
+    the partition and makes FL0 comparable with the trained arms, and the
+    payload records that reasoning.
+
+12. **Projections model what the stages really run (§11).** Previously every
+    stage was projected as one training arm plus one evaluation pass.
+    `STAGE_EVAL_MULTIPLIER` now carries the structural cell counts (FL0 x4 =
+    2 feedback conditions x {history, context_reset}; FL5 x4 eval and
+    `STAGE_TRAIN_MULTIPLIER` x2 train; FL6 x10 = 2 gate variants x 5 poison
+    conditions; FL7 x3 = ungated + gated + matched baseline; FL8 x9 = 3
+    consolidation modes x 3 chain positions; REMAP_DIAG x3; INTERFERENCE_DIAG
+    x3; POISON_DIAG x5), `STAGE_BUNDLE_LOADS` adds a per-stage FRESH-LOAD term
+    (§7 reloads the checkpoint per arm), and FL4 is projected from its TARGET
+    COMPUTATION — `FL4_TARGET_FORWARDS_PER_EPISODE = 8` teacher-forced forwards
+    per episode — rather than from optimizer updates it does not run. Both new
+    inputs are MEASURED in BENCH (`model_load_seconds`,
+    `forward_seconds_per_episode`); a missing measurement BLOCKS the stage
+    instead of being assumed to be zero. `CORE_MATCHING` uses a declared
+    bookkeeping budget (`AUDIT_STAGE_SECONDS = 60`), the second declared (rather
+    than measured) projection in the ladder after BENCH, and it loads no model.
+
+13. **Stage watchdog.** A stage is ABORTED when its elapsed time exceeds
+    `max(projected x safety_factor, stage_watchdog_minimum_seconds)` or as soon
+    as the remaining authorized time falls to the FINAL TRANSFER RESERVE. The
+    outcome is `STAGE_ABORTED_OVERRUN` with the stage's predeclared fallback,
+    and the ladder continues (§10). `stage_watchdog_minimum_seconds = 900` is a
+    NEW frozen field of `FL_BUDGET_POLICY.json`, declared because a projection
+    derived from a short BENCH probe cannot bound a stage below its own
+    measurement noise; the reserve condition is the hard money guarantee and
+    has NO floor. HONEST LIMIT: the watchdog is checked at every phase boundary
+    of a stage and on every trainer step; it cannot interrupt a single in-flight
+    model call.
+
+14. **`bench_declared_budget_seconds` is policy-pinned.** The one declared
+    projection in the ladder may only be overridden by an explicitly labelled
+    dress rehearsal; a real campaign takes it from the frozen policy file.
+
+15. **`affordability.load_policy` routes its read through the isolation guard**
+    (the default guard when none is supplied), so no campaign file read
+    bypasses §13's realpath refusal (V-Obs7).
+
+16. **Layer-level gradient checkpointing is recorded honestly.**
+    `OuroModel` declares `supports_gradient_checkpointing = True` and
+    initialises `self.gradient_checkpointing = False`, but its forward never
+    consults the flag: `gradient_checkpointing_enable()` is a NO-OP on this
+    architecture, and only the loop-level RLTT checkpointing
+    (`torch.utils.checkpoint` around `_run_single_ut_loop`) is a real memory
+    saving. `enable_training_memory_savings` now separates REQUESTED from
+    ACTIVE and DETECTS the active value
+    (`layer_checkpointing_is_consulted`, by source inspection, reporting
+    `UNKNOWN` when the source is unavailable) instead of asserting it from the
+    API call succeeding. Recording a no-op as an active memory-saving path put a
+    false statement into every arm result and into the manifest.
+
+17. **`SECOND_SEED` semantics.** `PREDECLARED_NOT_RUN` is a DECLARATION, not a
+    result and not a silent skip. The whole campaign — pre-generated data,
+    split manifest, episode seeds, RNG substreams — is a pure function of the
+    root seed, so the second predeclared seed is a second CAMPAIGN RUN launched
+    with `--seed 20260810` against its own pre-generated root, never a stage
+    that mutates this run's frozen seed midway. The stage stays in the table so
+    that §11 priority "additional predeclared seeds" is explicit, the admission
+    arithmetic covers it, and the journal records whether the time for it
+    existed; it now writes its declaration as an artefact.
+
+18. **Release content policy (contract §19).** The zip is the ACCELERATOR
+    BUNDLE. It contains exactly: every GIT-TRACKED file under
+    `foundation_learner/` (`git ls-files`, which makes fresh-clone
+    reproducibility definitional — an uncommitted local scratch file can no
+    longer enter a release and make its hash unverifiable) plus
+    `artifacts_fl/pregen/**` (bitwise reproducible). It EXCLUDES
+    `foundation_learner/reports/**` — the evidence JSONs stay in GIT, where
+    they are reviewable and history-tracked; the zip is not the evidence
+    archive, and excluding them also removes the ordering trap in which
+    re-running the validation invalidated a checksum snapshot the zip had
+    already taken. It EXCLUDES `FOUNDATION_LEARNER_V0_MANIFEST.json`, which
+    BINDS the zip hash and therefore cannot be inside the archive it describes.
+    `SHA256SUMS` is not content: it covers every other bundled file and is the
+    LAST file written and added, so it never covers itself. Packaging outside a
+    git work tree REFUSES, and a RELEASE build (as opposed to a labelled
+    throwaway dry run) REFUSES on a dirty work tree: under a git-tracked
+    content policy an uncommitted module is silently ABSENT from the bundle, so
+    "commit, then package" is not advice but an enforced precondition. Build
+    order, corrected in `README.md`: validate -> package_release ->
+    make_manifest (the manifest LAST, never covered by the zip).
+
+19. **A seventh operator-bound unresolved field.**
+    `b200_derived_unresolved.container_registry_digest_ref =
+    UNRESOLVED_OPERATOR_BOUND_REGISTRY_PUSH`: the B200 image digest does not
+    exist until the operator pushes the image, mirroring the O1 record
+    (V-Obs6).
+
+20. **The dress rehearsal's own wall-clock bound is raised to 1200 s.**
+    The rehearsal now walks four more stages (`CORE_MATCHING` and the three
+    unconditional diagnostics) and family-balanced evaluation sets, which
+    triples the episode walks of the pre-existing stages. Measured on a 24-core
+    CPU: 673 s total, of which REMAP_DIAG 218 s, POISON_DIAG 188 s,
+    INTERFERENCE_DIAG 33 s, CORE_MATCHING 0.002 s. Contract §18 fixes no
+    rehearsal wall-clock number (the 600 s figure was the rehearsal's own bound
+    from Amendment 10 item 7); the bound is raised to cover the larger
+    rehearsal rather than shrinking the mechanics it walks, and the measured
+    elapsed time is reported in `REHEARSAL_REPORT.json` either way.
+
+21. **README sealed-path claim aligned with Amendments 1/7/8.** The cipher
+    primitives live in `ecology/base.py` and `data/shards.read_shard` will apply
+    an explicitly supplied key; what is unique is the CAMPAIGN path —
+    `campaign/sealed_gate.py` is the only module that DERIVES `K_seal` and the
+    only route by which campaign code reads sealed data. The protection is
+    procedural; no cryptographic unopenability is claimed.
+
+## Amendment 13 — scientific-validity repairs (2026-08-09, W7, PRE-RUN)
+
+Recorded by W7 after an adversarial review of the built package. Every item
+below is frozen BEFORE any campaign run, on data that has not been produced by
+the model under study. Nothing here weakens a test, a gate, a threshold or a
+promotion rule; no frozen value of §7–§11 changes; no metric is removed or
+replaced. Two things DO change by necessity and are stated explicitly: the
+`graph_edge_semantics` generator (with its version, its hashes and its
+regenerated data) and the eval-time sequence allowance (a new constant, not a
+change to the §7 rendering budget).
+
+### 1. Eval-time online context allowance = 4096 tokens (ENGINEERING FREEZE)
+
+§7 fixes `max_seq_len` 2048 "per episode rendering" and forbids
+generation-side truncation. That budget was applied to the ONLINE evaluator as
+well, which is a category error: an online episode is not the rendering it
+walks. Every one of the ten `MODEL_ATTEMPT` slots is replaced by up to 64 REAL
+generated tokens, so the last prompt of a long episode projects to
+`scripted_tokens + (n_attempt_slots + 1) x 64`. Measured on the tiny
+pre-generation with the real Ouro tokenizer: longest scripted rendering 1740
+tokens, longest projected online context 2444 — i.e. the current data really
+does exceed 2048 online, confirming the reviewer's ~2334-2448 projection.
+
+Frozen here, before any run:
+
+- `evaluation.learning_curve.EVAL_ONLINE_MAX_SEQ_LEN = 4096` is the EVAL-TIME
+  allowance and the default of `LearningCurveConfig.max_seq_len`;
+- `MAX_SEQ_LEN = 2048` remains the §7 TRAINING-side rendering budget and is
+  untouched (`data/pools.MAX_SEQ_LEN`, `training/tokenization`,
+  `campaign/stage_definitions._arm_config` all keep it);
+- the constant is duplicated in `data/pools.py` because nothing under `data/`
+  may import the torch-dependent evaluation package; a test pins the two
+  together.
+
+This is an engineering constant, not a scientific one: the frozen backbone's
+`max_position_embeddings` is 65536 (§1), 2048 was a data-generation constraint,
+and 4096 covers the worst case present in the data with margin. Truncation
+remains forbidden in every path.
+
+### 2. Per-episode isolation of an over-long online episode
+
+`evaluation/learning_curve.run_episodes` raised `SequenceBudgetError` on the
+first offending prompt, which aborted the WHOLE batch — one long episode
+destroyed every other episode's evidence, invisibly (no records were returned
+at all). Repaired:
+
+- `EpisodeWalker.abort_online_budget` stops THAT episode; the batch continues;
+- its record carries `status = "ONLINE_BUDGET_EXCEEDED"`, `R = {}`,
+  `aulc = None`, `R_missing_reason`, `partial_interaction_indices` (audit only)
+  and `online_budget_event` (prompt tokens, projection, allowance,
+  `truncated: false`, message);
+- a partial curve is NEVER averaged: `R` is marked missing rather than
+  reported short, so macro-AULC cannot silently average over a different index
+  grid;
+- `evaluation.metrics.excluded_records` reports the count, the statuses, the
+  families and the episode ids, and `summarize` always includes it;
+- `analysis/report.py` prints an "Episodes recorded but EXCLUDED" section.
+
+Every episode record now also carries `status` and `eval_online_allowance`.
+Records written before this amendment (there are none from a real run) are
+treated as `COMPLETE`.
+
+Hostile fixture: `tests/hostile/test_hostile_online_budget_overflow.py` builds
+a real batch containing one over-long episode, injects an allowance measured
+from the real renderings, and asserts batch survival, the recorded status, the
+missing `R`, the absence of truncation, the exclusion count, and — the failure
+mode it exists for — that the batch does NOT come back one record short.
+
+### 3. Pre-generation asserts the ONLINE projection as well
+
+`data/generate_shards.TokenBudget.check` now takes a required
+`n_attempt_slots` and hard-fails when
+`scripted_tokens + (n_attempt_slots + 1) x 64 > 4096`, for the canonical
+surface AND every remapped variant. `PREGEN_MANIFEST.json` records
+`eval_online_allowance`, `eval_max_new_tokens` and
+`max_online_projected_seen`. Consequence: data that the evaluator would have
+to exclude cannot be shipped in the first place.
+
+### 4. `graph_edge_semantics` hint-node selection is answer-independent
+(generator 1.0.0 -> 1.1.0)
+
+`_feedback` drew the hinted node from the queried PATH when one existed and
+from the SOURCE otherwise (§4's "one named node on the queried path"). The
+SELECTION therefore carried the reachability bit outright. Measured over 2160
+sampled items on generator 1.0.0:
+
+| feature (computable from the prompt) | branch | n | P(answer) |
+|---|---|---|---|
+| hinted node is the source | False | 382 | YES = 1.000 |
+| hinted node is the target | True | 291 | YES = 1.000 |
+
+Generator 1.1.0 selects the hinted node uniformly over the DISPLAYED node list
+with a generator seeded ONLY by displayed data (edges, source, target, node
+count) — nothing that depends on the hidden edge semantics — and keeps the hint
+content exactly as §4 requires (the TRUE out-degree under the hidden semantics
+of the named node). It remains a pure function of the instance, so two
+different attempts on one item get the same hinted node.
+
+This DEVIATES from §4's wording "one named node on the queried path": that
+phrase is precisely what made the selection answer-dependent (a path exists iff
+the answer is YES), so it cannot be satisfied without the leak. Measured after
+the repair: every model-computable branch sits within 0.05 of the base rate
+(strongest 0.7225 vs base 0.6778 for `outdeg = 0`), against 1.000 before.
+
+Consequences, all intended and none silent:
+
+- `generator_version` "1.0.0" -> "1.1.0" for this family ONLY, which changes
+  its `rule_id`, `instance_id` and episode ids;
+- the family module's source hash changes, so `family_split_manifest.json` and
+  `split_manifest_sha256` change, and therefore `K_seal` and the sealed shard
+  bytes change; the pre-generated data must be REGENERATED by the integrator
+  and `SHARD_SUMS.json` / `SHA256SUMS` / the release zip re-made;
+- the SPLIT ITSELF DOES NOT CHANGE: the §5 rule hashes `family_id` strings, and
+  no family id changes. Amendment 2's assignment stands.
+- `tests/test_families_generation.py` pins the per-family version table, so a
+  generator can never change again without its version moving.
+
+### 5. Hint-decodability is now measured for every family
+
+New hostile fixture `tests/hostile/test_hostile_hint_selection_leak.py` samples
+2160 items per family (120 rules x 18 items), computes
+`P(correct answer | branch)` for every discrete hint-derived feature, and
+classifies each feature as `content` (what the hint says), `selection` (WHICH
+displayed entity it names, expressed against the entities the QUESTION names —
+computable by a reader from the prompt alone) or `diagnostic` (requires the
+HIDDEN state to evaluate, therefore not a decode channel). It writes the full
+measured table to a JSON under the test scratch directory. Assertions:
+
+1. NO `selection` branch (n >= 30) is deterministic, for any family. The
+   fixture proves by construction that this fires on generator 1.0.0: it
+   re-runs the identical measurement against the old selection rule and
+   requires the violation to appear.
+2. The deterministic `content` branches are EXACTLY the frozen set
+   `{(constraint_rules, violated), (grammar_classification, fails)}` — new
+   entries fail, and a listed entry disappearing also fails.
+3. Per-family measured decodability stays under pinned ceilings.
+
+Measured per-family maximum over MODEL-COMPUTABLE branches (purity =
+P(most likely answer | branch); base = that answer's base rate):
+
+| family | base | max purity | max lift | deterministic |
+|---|---|---|---|---|
+| boolean_rule | 0.628 | 0.8934 (`pivot=ABSENT`) | 0.2652 | no |
+| propositional_transform | 0.001 | 0.0556 | 0.0546 | no |
+| modular_arithmetic | 0.093 | 0.0931 | 0.0000 | no |
+| sequence_transform | 0.002 | 0.0333 | 0.0329 | no |
+| string_rewrite | 0.033 | 0.0627 | 0.0299 | no |
+| finite_state_transducer | 0.018 | 0.2353 | 0.2172 | no |
+| permutation_composition | 0.001 | 0.0061 | 0.0056 | no |
+| set_operations | 0.241 | 0.5823 | 0.3416 | no |
+| graph_edge_semantics (1.1.0) | 0.678 | 0.7225 | 0.0447 | no |
+| dsl_execution | 0.012 | 0.0257 | 0.0141 | no |
+| constraint_rules | 0.884 | 1.0000 | 0.8838 | YES (by §4 content) |
+| grammar_classification | 0.550 | 1.0000 | 0.5500 | YES (by §4 content) |
+
+`boolean_rule`'s `pivot=ABSENT` branch (0.893 vs a 0.628 base rate) is RECORDED
+AND PERMITTED: probabilistic evidence is the legitimate content of feedback,
+and the fixture asserts that this branch stays both non-deterministic AND
+informative. Only DETERMINISTIC decode branches are defects.
+
+RECORDED LIMITATION, NOT REPAIRED HERE. `constraint_rules` (§4.11, "the number
+of violated constraints") and `grammar_classification` (§4.12, "which atomic
+predicate family the string fails") are answer-determining through their
+CONTENT, not through a selection artefact: a violation count of zero IS
+satisfaction, and failing neither predicate implies membership under both
+admissible connectives. Removing that would change §4's frozen feedback
+definitions for two families, which is a scientific-design decision outside
+this repair's authority; it is pinned, measured and visible instead of unknown.
+`constraint_rules` is a SEALED_TEST family and `grammar_classification` a TRAIN
+family, so neither touches the DEVELOPMENT-side promotion decision; the effect
+is that on those families a correct revision after INCORRECT feedback needs no
+rule inference — which is exactly what item 7's `flip_attributable_success_rate`
+measures and reports.
+
+### 6. `answer_line_rate` (metric 15) and the FORMAT_NONCOMPLIANT annotation
+
+The base model may never emit `ANSWER:` inside the frozen 64-token decode
+budget (chain-of-thought preamble), in which case FL0 floors at 0 for a reason
+that is not about learning. `evaluation/metrics.py` adds:
+
+- `answer_line_rate` — the macro fraction of `MODEL_ATTEMPT` generations
+  containing a parseable `ANSWER:` line, computed from the `parsed` field the
+  walker already writes (the SAME strict grammar the verifier scores against),
+  reported per arm, per family and per interaction index;
+- `finish_reason_counts` — the `answer_line` / `eos` / `max_new_tokens` /
+  `nonfinite_logits` breakdown, i.e. the direct evidence of "the answer never
+  arrived inside 64 tokens";
+- `format_compliance` / `format_flag` with the frozen threshold
+  `ANSWER_LINE_RATE_FLAG_THRESHOLD = 0.5`.
+
+`analysis/report.py` prints the answer-line rate next to every arm's macro-AULC
+and annotates any cell below the threshold `FORMAT_NONCOMPLIANT`. The
+annotation NEVER replaces, hides or adjusts the number. Prompts, headers and
+`max_new_tokens` are frozen and untouched.
+
+### 7. Flip-immune AULC (metric 16) and flip attribution (metric 17)
+
+On a two-label family, "emit the other label after INCORRECT" earns credit at
+the revision indices with no rule inference at all. Frozen additions:
+
+- `POST_FEEDBACK_FRESH_INDICES = (4, 5, 6)` and
+  `aulc_post_feedback_fresh` — macro-AULC restricted to the fresh items, where
+  a flip cannot pay. Reported with its own clustered interval next to the
+  headline macro-AULC, and as a paired delta next to every headline delta.
+- `flip_attributable_success_rate` — over the binary-answer families
+  (`BINARY_ANSWER_FAMILIES = boolean_rule, constraint_rules,
+  grammar_classification, graph_edge_semantics`, pinned and checked against the
+  real generators by a test), the share of successes at indices 1 and 3 that
+  followed an INCORRECT verdict on the same item AND changed the emitted label.
+  Computed from the transcripts already in the records.
+
+### 8. FL2 comparison reported with and without interaction index 0 (R-M10)
+
+FL2 is trained to imitate attempt0 behaviour, so a delta against FL2 that
+includes index 0 mixes an imitation handicap into a claim about learning from
+feedback. `analysis.stats.arm_comparison` gains an `indices` parameter (same
+paired machinery, same shared resample plan) and `analysis/report.py` now emits,
+for EVERY headline comparison, both companions:
+`INDICES_EXCLUDING_ZERO = (1, 2, 3, 4, 5, 6)` and the fresh
+`{4, 5, 6}`. The headline delta is unchanged and still the frozen metric 2/3.
+
+### 9. FL5: the `FAST_STATE_ON_S0` control and the corrected claim (R-M5)
+
+`fl5_training.py` claimed the ON/OFF contrast was "exactly 'the state carried
+the learning' and nothing else". That OVERCLAIMED. The docstring is corrected in
+place to the accurate segment-to-segment statement and names the three
+confounds: (1) FAST_STATE_OFF is an impossible-task control (segmentation
+removes the history and OFF has no state, so it cannot use any earlier
+interaction at all); (2) ON trains ~25M parameters OFF does not have; (3)
+`prefix_embeds(0)` is a LEARNED STATIC PREFIX, i.e. ordinary prefix tuning.
+
+New EVAL-ONLY control arm `FAST_STATE_ON_S0` (`FastStateS0Callbacks`): the
+TRAINED ON module evaluated on the same DEVELOPMENT episodes with `s` pinned to
+0 and never updated. There is NO third training run. `run_fl5_stage` runs it on
+the ON arm's own bundle and publishes `state_update_contribution`
+(ON - ON_S0, the state-update effect) and `static_prefix_contribution`
+(ON_S0 - OFF, the static prefix plus the extra parameters), both through the
+same §14 paired family-clustered bootstrap. Confounds (1) and (2) are recorded,
+not removed.
+
+Every FL5 payload, every per-arm entry and every `FL5ArmResult` now carries
+`comparable_to_fl3: false` with the reason string
+(`fl5_training.FL5_NOT_COMPARABLE_REASON`), so an FL5 number cannot be read off
+next to an FL3 number without the disclaimer travelling with it.
+
+### 10. `hint_for_condition` applies the answer-leak invariant (minor a)
+
+`ecology.poison.hint_for_condition` was the one hint-rendering path with no
+`answer_leak` check: a corruption, an irrelevant-pool body or a redundant
+restatement could have carried the answer with nothing firing. It now takes a
+REQUIRED keyword-only `answer_canonical` and applies exactly the check
+`TaskFamily.feedback_record` / `corrupted_feedback` apply, raising
+`AnswerLeakError`. Required rather than optional because an
+optional-and-omitted check is the failure mode being repaired; the three
+callers (`episodes/assemble.py` x2, `evaluation/learning_curve.py`) pass the
+pending item's canonical answer.
+
+### 11. Episode records carry the fields the new metrics need (minor b)
+
+`finish_reason` and `parsed` were already written for every attempt;
+`tests/test_evaluation_learning_curve.py` now asserts it, so the format metric
+can never silently lose its input.
+
+### Cross-worker consequences (for the integrator)
+
+1. REGENERATE the pre-generated data (`scripts/pregenerate_all.py`) after this
+   change: `graph_edge_semantics` ids, the family-split manifest, the sealed
+   key and all shard sums move. The split assignment itself does not move.
+2. Re-make `SHARD_SUMS.json`, `SHA256SUMS`, the release zip and the filled
+   manifest.
+3. The preregistration should state metrics 15–17 and the two restricted
+   deltas as pre-run additions (the prereg text is the integrator's file).
+
+## Amendment 14 — the last two answer-decoding hints are REPAIRED, not excused (2026-08-09, W7, PRE-RUN)
+
+Amendment 13 item 5 pinned two families as a recorded limitation:
+`constraint_rules` and `grammar_classification` decoded the label through their
+frozen §4 feedback CONTENT. That carve-out is withdrawn. `constraint_rules` is
+a SEALED_TEST family, and a permanent deterministic-decode exemption on the
+sealed set would undermine the principal claim; nothing has run, the sealed set
+is unopened and no development decision exists, so this is a legitimate
+preregistration-time repair rather than a post-hoc adjustment. Amendments 12
+and 13 are unmodified; this amendment supersedes Amendment 13 item 5's
+"RECORDED LIMITATION" paragraph and its allow-list.
+
+### 1. `constraint_rules` 1.0.0 -> 1.1.0: candidate-constraint probe
+
+§4.11 froze the feedback as "the number of violated constraints (count only)".
+That count IS the answer: zero violations is satisfaction and any positive
+count is violation, so every branch decoded the label (measured P = 1.000 on
+all seven branches with n >= 30).
+
+1.1.0 reports instead ONE CANDIDATE CONSTRAINT plus the displayed assignment's
+relation to it:
+
+* `CANDIDATE_POOL` (24 entries) enumerates, over the first THREE displayed
+  slots, every `(i, j, relation)` with relation in {LT, GT, NEQ} and every
+  "slot i must not equal v" for v in 1..5. The candidate NEED NOT be an active
+  constraint of the hidden rule.
+* The hint is `probe=CND_<code>; status=STA_MET|STA_UNMET` — one opaque
+  positional code plus the true status of the DISPLAYED assignment under that
+  candidate.
+* The probe is selected by a generator seeded from DISPLAYED data only (the
+  assignment values and the displayed slot count), never from the hidden
+  constraint set and never from the answer, and is a pure function of the
+  instance (both attempts on an item see the same probe).
+
+Why an inactive candidate is the whole point: a candidate that the assignment
+violates may not be in the rule (so the item can still be SAT), and a candidate
+that holds says nothing about the constraints that were not probed. No branch
+implies the label.
+
+Two design details that are load-bearing, both discovered by measurement:
+
+* the pool is INSTANCE-INDEPENDENT (`MAX_PROBE_SLOTS = 3`; every rule has at
+  least three slots, so these candidates always apply). A pool whose SIZE
+  varied with the displayed slot count made the opaque code disclose that
+  count, and the displayed slot count is itself strongly predictive of the
+  label (more slots -> more constraints -> almost always UNSAT). With a
+  slot-count-dependent pool, 13 of 55 code branches predicted UNSAT with
+  certainty for exactly that reason. Fixing the pool removed all of them.
+* the candidate is carried by ONE code, not by several fields. A multi-field
+  encoding let the deterministic corruption emit a structurally impossible
+  record (`left == right` under `LT`), and a malformed hint would disclose that
+  the hint is poisoned, which §6 forbids. With one code, corruption can only
+  move the probe to another well-formed candidate and/or flip the status; it is
+  still guaranteed to differ from the truth by the existing generic machinery.
+
+Status codes are `MET`/`UNMET` because they may not collide with any answer
+label of this family (`SAT`/`UNSAT`, `VALID`/`INVALID`, `HOLDS`/`FAILS`,
+`PASS`/`REJECT`) under any surface — the ("F","T") lesson of Amendment 7.4.
+
+### 2. `grammar_classification` 1.0.0 -> 1.1.0: pool-predicate probe
+
+§4.12 froze the feedback as "which atomic predicate family the string fails, by
+opaque predicate index". Two of its four branches decoded the label: failing
+NEITHER conjunct implies membership under both admissible connectives, and
+failing BOTH implies non-membership under both (measured P = 1.000 at n = 541
+and n = 576).
+
+1.1.0 reports `probe=PRD_<code>; status=STA_PASS|STA_FAIL`, where the code
+indexes `PREDICATE_POOL` — a frozen, rule-independent enumeration of all eight
+predicate schemas over the alphabet POSITIONS (50 entries; positions, not
+literal symbols, so one code denotes the same predicate under every surface
+remap). The probe is seeded from the displayed string only, never from the rule
+and never from the answer. A pool predicate outside the rule can fail while the
+string is IN, so no branch implies the label.
+
+### 3. Informativeness, stated honestly
+
+Both hints stay informative in the sense the campaign needs: the probe identity
+is a STABLE POSITIONAL code into a frozen pool, so across feedback rounds a
+learner accumulates (candidate, status, certified verdict) triples over many
+items and eliminates the candidate rules that cannot explain the verdicts —
+which is the rule identification these families exist to test. The module
+docstrings say this, and also say what is given up: the probe STATUS is
+computable from the displayed prompt, so the hint's value is that it points at
+a hypothesis from the family's own template pool and pre-computes it, not that
+it discloses hidden state.
+
+The obvious stronger design — also reporting whether the probed candidate is
+ACTIVE in the hidden rule — was REJECTED: "active AND violated" implies UNSAT
+with certainty, and "is a conjunct AND fails" implies OUT under AND with
+certainty, i.e. it would reintroduce exactly the defect being repaired. A hint
+that discloses hidden state without ever determining the label is not available
+in these two families; the probe design is the informative maximum that is
+provably leak-free.
+
+### 4. The hostile fixture has NO allow-list any more
+
+`tests/hostile/test_hostile_hint_selection_leak.py`:
+
+* `DETERMINISTIC_CONTENT_BY_DESIGN` is now EMPTY and asserted empty, so
+  re-introducing an exemption is a visible edit to a named object;
+* the primary assertion is that NO branch of ANY model-computable feature
+  (`content` or `selection`) of ANY of the twelve families is deterministic.
+  Features that require the HIDDEN state to evaluate (`graph_edge_semantics`'s
+  "the hinted node lies on the true path") stay classified `diagnostic`: a
+  reader cannot compute them without having already solved the task, so they
+  are measured and recorded but are not a decode channel;
+* non-vacuity is proved by construction for ALL THREE repairs — the identical
+  measurement is re-run against a frozen inline reimplementation of each
+  family's OLD hint rule, and the violation is REQUIRED to appear (graph's
+  `at_is_source` / `at_is_target`, constraint_rules' `violated` count including
+  the SAT-decoding zero branch, grammar_classification's `BOTH` and `ABSENT`
+  branches);
+* new tests pin that each probe reports the TRUE status of the named candidate,
+  that it is a pure function of the instance (not of the attempt), and that the
+  probe code RANGE does not vary with any instance covariate;
+* the sampling plan is raised to 360 rules x 18 items = 6480 items per family.
+  This is a POWER requirement, not a relaxation: at `constraint_rules`' 0.893
+  base rate a 32-item branch is accidentally pure about 2 % of the time, so
+  small branches make "P = 1.0" ambiguous. The fixture now ASSERTS its own
+  power (`base_rate_top ** smallest_branch < 1e-4`, smallest measured branch =
+  57 items) and records each perfect branch's chance probability. The criterion
+  itself is unchanged and fail-closed: a perfect branch fails the fixture
+  whatever its chance probability says.
+
+### 5. Measured decodability after the repair (6480 items/family)
+
+purity = P(most likely answer | branch) over model-computable branches;
+base = that answer's base rate; no family has a deterministic branch.
+
+| family | ver | base | max purity | max lift | smallest branch |
+|---|---|---|---|---|---|
+| boolean_rule | 1.0.0 | 0.6332 | 0.8861 | 0.2529 | 263 |
+| propositional_transform | 1.0.0 | 0.0009 | 0.0476 | 0.0468 | 105 |
+| modular_arithmetic | 1.0.0 | 0.0843 | 0.0843 | 0.0000 | 6480 |
+| sequence_transform | 1.0.0 | 0.0008 | 0.0198 | 0.0195 | 101 |
+| string_rewrite | 1.0.0 | 0.0295 | 0.2024 | 0.1729 | 66 |
+| finite_state_transducer | 1.0.0 | 0.0137 | 0.1553 | 0.1431 | 62 |
+| permutation_composition | 1.0.0 | 0.0003 | 0.0027 | 0.0026 | 368 |
+| set_operations | 1.0.0 | 0.2483 | 0.5828 | 0.5477 | 57 |
+| graph_edge_semantics | 1.1.0 | 0.6682 | 0.7405 | 0.0723 | 247 |
+| dsl_execution | 1.0.0 | 0.0110 | 0.0225 | 0.0116 | 3150 |
+| constraint_rules | 1.1.0 | 0.8934 | 0.9408 | 0.0474 | 180 |
+| grammar_classification | 1.1.0 | 0.5048 | 0.6045 | 0.1093 | 99 |
+
+Before the repairs the same measurement gave P = 1.000 for
+`graph_edge_semantics` (selection), `constraint_rules` (all seven count
+branches) and `grammar_classification` (`BOTH`, `ABSENT`).
+`boolean_rule`'s `pivot=ABSENT` branch (0.886 against a 0.633 base rate) remains
+RECORDED AND PERMITTED: probabilistic evidence is the legitimate content of
+feedback, and the fixture asserts that this branch stays both
+non-deterministic and informative.
+
+### 6. Consequences for the integrator
+
+`split_manifest_sha256` changes AGAIN (three family module hashes moved):
+`983c4ed1fc4ea240…` (original) -> `1f4901219c3a4e26…` (Amendment 13) ->
+`5e91a4548428663c…` (this amendment). Therefore `K_seal` and every sealed shard
+change again. REGENERATE THE FULL PREGEN ONCE, after this amendment, and re-make
+`SHARD_SUMS.json`, `SHA256SUMS`, the release zip and the filled manifest. The
+tiny pre-generation has already been regenerated and verified against
+`5e91a4548428663c…`. Instance ids, rule ids and episode ids move for
+`constraint_rules` and `grammar_classification` as well as
+`graph_edge_semantics`; the SPLIT ITSELF STILL DOES NOT CHANGE, because §5
+hashes `family_id` strings and no family id changed (Amendment 2's assignment
+stands).
+
+### 7. Observation recorded, NOT repaired: `constraint_rules` label imbalance
+
+The measurement incidentally shows that `constraint_rules` items are 89.3 %
+UNSAT and `boolean_rule` 63.3 % one label. That is a property of the frozen §4
+item samplers, not of any hint, and it means a constant-answer policy scores
+0.893 on that family's R_k. It is NOT touched here (changing item distributions
+is a different, larger scientific decision than removing a decode channel), but
+it is recorded so that no aggregate is read without it. `constraint_rules` is a
+SEALED_TEST family.
+
+## Amendment 15 — `constraint_rules` label balance and the constant-answer floor (2026-08-09, W7, PRE-RUN)
+
+Amendment 14 item 7 recorded, without repairing, that `constraint_rules` items
+were 89.3 % UNSAT: a constant "always answer UNSAT" policy scored 0.893 on that
+family's R_k, so no learning curve on it could be read. That is repaired here.
+`boolean_rule`'s 0.633 imbalance is RECORDED AND ACCEPTED unchanged — a hidden
+Boolean function is not expected to be balanced over assignments, and 0.633 is
+not a degenerate floor. Amendments 12, 13 and 14 are unmodified. This is the
+LAST generator change on the science side.
+
+### 1. `constraint_rules` 1.1.0 -> 1.2.0: label-balanced item sampler
+
+Two conditions, both deterministic, both leaving every instance a pure function
+of `(rule, seed, difficulty, surface_map_id)`:
+
+* **per item (the sampler).** `_item` draws a FAIR TARGET LABEL from the item's
+  own generator and then REJECTION-SAMPLES assignments from the same generator
+  until one carries that label, with a budget of
+  `LABEL_DRAW_ATTEMPTS = 512`; the fallback is the FIRST draw, so an item is
+  always well defined. Assignments are still drawn uniformly from the value
+  grid, so a balanced item carries no shape signature: a SAT item's assignment
+  is a uniform draw from the satisfying set, and nothing about the order or
+  magnitude of the values encodes the label. Applies to support, related, query
+  and transfer generation alike, and at every difficulty.
+* **per rule (the necessary precondition).** 14 % of 1.1.0 rules were outright
+  UNSATISFIABLE at the frozen campaign difficulty and a further 14 % were
+  satisfiable with probability < 0.005, so for those NO per-item budget can
+  produce a SAT item. `sample_rule` now redraws from the SAME frozen §4.11 rule
+  space until `satisfiability_rate(rule) >= RULE_MIN_SAT_RATE = 0.005`
+  (estimated by a 256-draw Monte Carlo seeded FROM THE RULE SPEC, so the
+  estimate and hence the rule stay pure functions). Exhausting the bounded
+  redraw budget is a hard error, never a silent acceptance.
+
+The rule condition is deliberately the mildest one that works: it keeps ~72 % of
+the 1.1.0 rule space and removes only the degenerate tail. (Conditioning rules
+into a satisfiability BAND of [0.2, 0.8] would have kept 19 % and would have
+changed the latent-rule distribution far more.) Rule diversity remains ample:
+40 sequential draws give 40 distinct rules, 3000 draws give 2464 distinct rule
+ids, and the deterministic uniqueness loop needed at most 3 redraws to place a
+full 300-rule SEALED pool.
+
+Predicted rates without the rule condition are recorded for honesty: per-item
+rejection ALONE would have reached only ~0.40 SAT at a 512 budget and ~0.43 at
+8192, because the unsatisfiable tail is unreachable by any budget.
+
+**Achieved rate (measured, 2400 items over 200 rules, all four instance kinds):
+P(SAT) = 0.4904** — by kind: support 0.5067, related 0.4650, query 0.5083,
+transfer 0.4817; by difficulty: 0.4958 / 0.5028 / 0.4972. The constant-answer
+floor on this family therefore falls from **0.893 to ~0.50**.
+`tests/test_families_generation.py::test_label_answer_families_are_not_degenerate`
+pins it over >= 2000 items with the honest finite-sample tolerance
+[0.35, 0.65], and also pins `graph_edge_semantics`, `grammar_classification`
+and (at a wider, status-quo bound) `boolean_rule`.
+
+### 2. Metric 18: the constant-answer floor is reported next to every family
+
+`evaluation/metrics.constant_answer_baseline` computes, per family, the AULC
+that the best "always answer X" policy would score, using the metric module's
+OWN aggregation (per candidate constant, the mean over interaction indices of
+the fraction of that index's attempts whose canonical answer is that constant,
+averaged over episodes), so it is directly comparable to `per_family_aulc`.
+`aulc_above_constant_answer_floor` reports the per-family difference.
+Open-answer families (more than `MAX_LABEL_ANSWERS = 4` distinct canonical
+answers) report `None` together with the observed number of distinct answers,
+so the omission is visible rather than silent; families whose records carry no
+canonical answers likewise report `None` with the reason.
+
+`analysis/report.py` prints a "Per-family results against the constant-answer
+floor" table (arm, family, macro-AULC, floor, above-floor) and annotates any
+cell at or below its floor `AT-OR-BELOW-FLOOR`. This is PURE REPORTING: no
+gate, threshold, promotion rule or frozen value consumes it, and no number is
+replaced or adjusted.
+
+### 3. Hint-decodability re-measured after balancing
+
+The balanced sampler changes `constraint_rules`' answer distribution, so the
+hostile fixture's table was regenerated. New row (6480 items, 24 branches, no
+allow-list):
+
+| family | ver | base | max purity | max lift | smallest branch | deterministic |
+|---|---|---|---|---|---|---|
+| constraint_rules | 1.2.0 | 0.5034 | 0.5734 | 0.0768 | 202 | none |
+
+Its pinned ceiling tightens from 0.96 to 0.65 accordingly. The power assertion
+still holds with the new base rate (0.5034 ** 202 is vanishing), and the other
+eleven rows are unchanged from Amendment 14. No family has a deterministic
+model-computable branch.
+
+### 4. Consequences for the integrator
+
+`split_manifest_sha256` moves once more — `983c4ed1fc4ea240…` (original) ->
+`1f4901219c3a4e26…` (Amd 13) -> `5e91a4548428663c…` (Amd 14) ->
+**`6cf330b47af9406edf8022564ea330f3f164fbaef22618710a11fa3b2f40d9b5`** (this
+amendment) — so `K_seal` and every sealed shard change again. This is the FINAL
+science-side generator change: regenerate the FULL pregen ONCE now, then re-make
+`SHARD_SUMS.json`, `SHA256SUMS`, the release zip and the filled manifest. The
+tiny pre-generation has already been regenerated and verified against
+`6cf330b4…`. `constraint_rules` instance ids, rule ids and episode ids all move;
+the SPLIT ITSELF STILL DOES NOT CHANGE (§5 hashes `family_id` strings, and no
+family id changed).
+
+### 5. What is NOT changed
+
+`boolean_rule` (0.633 majority label) is unchanged by decision; its floor is
+now printed next to its results by metric 18 rather than being invisible. No
+other family's item sampler is touched, and no frozen threshold, weight, pool
+size, promotion rule or split moves.

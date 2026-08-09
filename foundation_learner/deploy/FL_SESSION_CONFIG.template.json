@@ -20,5 +20,15 @@
   "fl_out_dir": "/workspace/foundation_learner/session",
   "session_authorized_seconds": "UNRESOLVED_SESSION_TIME (authorized runtime for the WHOLE session; FL receives what remains after O1 closes)",
   "fl_transfer_command": "UNRESOLVED_OPERATOR_BOUND (upload FL_ARTIFACTS.zip to the FL results repository — SEPARATE from the O1 results repository)",
-  "terminate_command": "UNRESOLVED_OPERATOR_BOUND (terminate — never merely stop — the accelerator)"
+  "terminate_command": "UNRESOLVED_OPERATOR_BOUND (terminate — never merely stop — the accelerator)",
+
+  "_fl_entry_note": "The fields below are consumed by campaign/entry.py, which builds the real StageContext (contract 13/22, Amendment 12). They are OPTIONAL and have campaign defaults; fl_tiny_model, fl_eval_episode_cap and fl_train_example_cap are REFUSED unless rehearsal=true, because they substitute the nonscientific model or shorten the frozen per-stage evaluation maxima.",
+  "fl_device": "cuda",
+  "fl_scope": "PEFT_MODE",
+  "fl_root_seed": 20260809,
+  "fl_max_tokens_per_batch": 2048,
+  "fl_tiny_model": false,
+  "fl_eval_episode_cap": null,
+  "fl_train_example_cap": null,
+  "fl_extra": {}
 }

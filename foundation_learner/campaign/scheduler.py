@@ -35,9 +35,10 @@ from typing import Any, Callable, Protocol, Sequence
 from . import o1_isolation, stage_definitions
 from .affordability import (AffordabilityRefusal, CorePlan, admission_check,
                             load_policy, plan_core_comparison, policy_sha256)
-from .stage_definitions import (StageContext, StageDefinition, StageError,
-                                project_stage_seconds, resolve_dotted,
-                                stages_in_priority_order)
+from .stage_definitions import (StageAbortedOverrun, StageContext,
+                                StageDefinition, StageError, StageWatchdog,
+                                planned_eval_episodes, project_stage_seconds,
+                                resolve_dotted, stages_in_priority_order)
 
 __all__ = [
     "Clock",
@@ -48,6 +49,7 @@ __all__ = [
     "JOURNAL_SCHEMA",
     "StageOutcome",
     "Scheduler",
+    "STATE_ABORTED_OVERRUN",
 ]
 
 JOURNAL_NAME = "FL_SCHEDULER_JOURNAL.jsonl"
@@ -58,6 +60,7 @@ STATE_REFUSED = "REFUSED_UNAFFORDABLE"
 STATE_SKIPPED = "SKIPPED_ENTRY_CONDITION"
 STATE_FAILED = "FAILED"
 STATE_BLOCKED = "BLOCKED_MISSING_PREREQUISITE"
+STATE_ABORTED_OVERRUN = "STAGE_ABORTED_OVERRUN"
 
 
 class SchedulerError(RuntimeError):
@@ -174,9 +177,24 @@ class Scheduler:
         return max(0.0, float(self.available_foundation_learner_seconds)
                    - self.elapsed())
 
+    @property
+    def watchdog_minimum(self) -> float:
+        return float(self.policy["stage_watchdog_minimum_seconds"])
+
     def checkpoint_cadence(self) -> tuple[float, int]:
         return (float(self.policy["checkpoint_cadence_seconds"]),
                 int(self.policy["checkpoint_cadence_steps"]))
+
+    def build_watchdog(self, stage_id: str, projected_seconds: float,
+                       started: float) -> StageWatchdog:
+        """The stage watchdog for one admitted stage (contract §11, R-M8)."""
+        return StageWatchdog(
+            stage_id=stage_id, projected_seconds=float(projected_seconds),
+            safety_factor=self.safety_factor,
+            minimum_seconds=self.watchdog_minimum,
+            started=float(started), clock=self.clock,
+            remaining_fn=self.remaining_authorized,
+            reserve_seconds=self.reserve)
 
     def assert_checkpoint_cadence(self, cfg: Any) -> None:
         """Refuse an arm configuration whose cadence is not the frozen one."""
@@ -220,9 +238,18 @@ class Scheduler:
                     out.append(json.loads(line))
         return out
 
-    def heartbeat_hook(self, stage_id: str, every: int = 25) -> Callable[[dict], None]:
-        """A trainer ``on_step`` hook that journals frequently."""
+    def heartbeat_hook(self, stage_id: str, every: int = 25,
+                       watchdog: StageWatchdog | None = None
+                       ) -> Callable[[dict], None]:
+        """A trainer ``on_step`` hook that journals frequently.
+
+        It also checks the stage watchdog on EVERY step (not only on journalled
+        steps), which is the finest granularity at which a training stage can
+        be stopped without interrupting an in-flight kernel.
+        """
         def _hook(state: dict) -> None:
+            if watchdog is not None:
+                watchdog.check(f"{stage_id}:step {state.get('step')}")
             step = int(state.get("step", 0))
             if step % max(1, int(every)) == 0:
                 self.journal("STAGE_HEARTBEAT", {
@@ -295,14 +322,30 @@ class Scheduler:
 
     # ---------------- running ----------------
 
+    def _bench_declared_budget(self, ctx: StageContext) -> float:
+        """The DECLARED BENCH budget, pinned to the policy outside a rehearsal.
+
+        ``ctx.extra`` may only shorten the declared budget for an explicitly
+        labelled dress rehearsal; in a real campaign the one declared (rather
+        than measured) projection in the whole ladder comes from the frozen
+        policy file and nowhere else.
+        """
+        policy_value = float(self.policy["bench_declared_budget_seconds"])
+        override = ctx.extra.get("bench_declared_budget_seconds")
+        if override is None:
+            return policy_value
+        if float(override) != policy_value and not ctx.rehearsal:
+            raise StageError(
+                f"bench_declared_budget_seconds={float(override)} overrides the "
+                f"frozen policy value {policy_value}; only an explicitly "
+                "labelled dress rehearsal may do that (contract §11/§20)")
+        return float(override)
+
     def _projection_for(self, stage: StageDefinition, ctx: StageContext) -> dict:
         if stage.projection == "BENCH":
             scopes = len(list(ctx.extra.get("bench_scopes") or [ctx.scope]))
             return {"stage": stage.stage_id, "projection": "BENCH_DECLARED",
-                    "projected_seconds": float(
-                        ctx.extra.get("bench_declared_budget_seconds",
-                                      self.policy["bench_declared_budget_seconds"])
-                    ) * scopes,
+                    "projected_seconds": self._bench_declared_budget(ctx) * scopes,
                     "scopes": scopes,
                     "note": ("BENCH is admitted against a DECLARED bounded "
                              "budget: it is the measurement every other "
@@ -310,7 +353,8 @@ class Scheduler:
         bench = ctx.throughput.get(ctx.scope)
         return project_stage_seconds(
             stage, bench=bench, updates=ctx.updates,
-            eval_episodes=ctx.eval_cap(stage) if stage.eval_episodes else 0)
+            eval_episodes=planned_eval_episodes(ctx, stage),
+            extra=ctx.extra)
 
     def run_stage(self, stage: StageDefinition, ctx: StageContext) -> StageOutcome:
         """Check the entry condition, admit, run, and journal a stage."""
@@ -354,9 +398,25 @@ class Scheduler:
                                        "work": stage.work,
                                        "projection": projection})
         started = self.clock.monotonic()
+        watchdog = self.build_watchdog(
+            stage.stage_id, projection["projected_seconds"], started)
+        ctx.watchdog = watchdog
         work = resolve_dotted(stage.work)
         try:
             result = work(ctx, stage)
+        except StageAbortedOverrun as exc:
+            seconds = self.clock.monotonic() - started
+            outcome = StageOutcome(stage.stage_id, STATE_ABORTED_OVERRUN,
+                                   seconds=seconds, admission=admission,
+                                   projection=projection, entry=entry,
+                                   error=str(exc),
+                                   fallback=stage.fallback_work)
+            self.journal("STAGE_ABORTED_OVERRUN", {
+                "stage_id": stage.stage_id, "error": str(exc),
+                "watchdog": watchdog.to_dict(),
+                "fallback": list(stage.fallback_work)})
+            self.outcomes.append(outcome)
+            return outcome
         except BaseException as exc:  # noqa: BLE001 - recorded, never swallowed
             seconds = self.clock.monotonic() - started
             outcome = StageOutcome(stage.stage_id, STATE_FAILED, seconds=seconds,
@@ -369,6 +429,8 @@ class Scheduler:
                 "fallback": list(stage.fallback_work)})
             self.outcomes.append(outcome)
             return outcome
+        finally:
+            ctx.watchdog = None
         seconds = self.clock.monotonic() - started
         outcome = StageOutcome(stage.stage_id, STATE_COMPLETE, seconds=seconds,
                                admission=admission, projection=projection,
@@ -384,9 +446,10 @@ class Scheduler:
                    stop_on_failure: bool = False) -> dict:
         """Run the frozen §11 priority order.
 
-        A refused, skipped, or failed stage never stops the ladder by default:
-        the predeclared fallback work is recorded and the scheduler moves on
-        (contract §10 — all remaining time goes to predeclared work only).
+        A refused, skipped, failed, or watchdog-ABORTED stage never stops the
+        ladder by default: the predeclared fallback work is recorded and the
+        scheduler moves on (contract §10 — all remaining time goes to
+        predeclared work only).
         """
         self.start()
         stages = stages_in_priority_order()

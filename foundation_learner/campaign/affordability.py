@@ -40,6 +40,7 @@ __all__ = [
     "SAFETY_FACTOR",
     "FINAL_TRANSFER_RESERVE",
     "BENCH_DECLARED_BUDGET_SECONDS",
+    "STAGE_WATCHDOG_MINIMUM_SECONDS",
     "UPDATE_LADDER",
     "FULL_MODEL_MIN_UPDATES",
     "PEFT_MODE",
@@ -71,6 +72,10 @@ FULL_MODEL_MIN_UPDATES = 600
 #: BENCH is the only stage that cannot be projected from a measurement (it IS
 #: the measurement); it is admitted against this DECLARED bounded budget.
 BENCH_DECLARED_BUDGET_SECONDS = 900.0
+#: Stage watchdog floor (Amendment 12).  A stage is aborted past
+#: ``max(projected * safety_factor, this)``; the hard money guarantee is the
+#: separate reserve condition, which has no floor.
+STAGE_WATCHDOG_MINIMUM_SECONDS = 900.0
 CORE_ARMS = 3
 GRID_CONFIGURATIONS = 2
 GRID_UPDATE_FRACTION = 0.25
@@ -96,6 +101,7 @@ _FROZEN_NUMERIC = {
     "safety_factor": SAFETY_FACTOR,
     "final_transfer_reserve_seconds": FINAL_TRANSFER_RESERVE,
     "bench_declared_budget_seconds": BENCH_DECLARED_BUDGET_SECONDS,
+    "stage_watchdog_minimum_seconds": STAGE_WATCHDOG_MINIMUM_SECONDS,
     "checkpoint_cadence_seconds": 600.0,
     "checkpoint_cadence_steps": 200.0,
     "full_model_minimum_updates_per_arm": float(FULL_MODEL_MIN_UPDATES),
@@ -113,11 +119,15 @@ def load_policy(path: str | None = None, *, guard: Any = None) -> dict:
     """Load and validate ``FL_BUDGET_POLICY.json``.
 
     Every frozen field is re-checked; an altered policy is an error, never a
-    silently accepted new setting.
+    silently accepted new setting.  The read ALWAYS goes through an O1
+    isolation guard — the default guard when none is supplied — so that no
+    campaign file read bypasses §13's realpath refusal (V-Obs7).
     """
-    target = os.path.abspath(path or POLICY_PATH)
-    if guard is not None:
-        target = guard.guard(target, "read")
+    if guard is None:
+        from . import o1_isolation
+
+        guard = o1_isolation.default_guard()
+    target = guard.guard(os.path.abspath(path or POLICY_PATH), "read")
     try:
         with open(target, encoding="utf-8") as fh:
             policy = json.load(fh)
@@ -173,6 +183,14 @@ class BenchMeasurement:
     max_tokens_per_batch: int
     device: str = "unknown"
     eval_seconds_per_episode: float | None = None
+    #: seconds for ONE fresh ``bundle_factory()`` load, measured in BENCH.
+    #: Contract §7 gives every arm a fresh load, so this is a real per-stage
+    #: cost that the projections previously ignored (R-M8).
+    model_load_seconds: float | None = None
+    #: seconds for ONE teacher-forced forward over one rendered episode,
+    #: measured in BENCH.  This is the unit of the FL4 target computation
+    #: (presence/ablation variants), which is not an optimizer update.
+    forward_seconds_per_episode: float | None = None
     source: str = "MEASURED_BENCH"
     notes: tuple[str, ...] = ()
 
@@ -200,6 +218,11 @@ class BenchMeasurement:
             "eval_seconds_per_episode": (
                 None if self.eval_seconds_per_episode is None
                 else float(self.eval_seconds_per_episode)),
+            "model_load_seconds": (None if self.model_load_seconds is None
+                                   else float(self.model_load_seconds)),
+            "forward_seconds_per_episode": (
+                None if self.forward_seconds_per_episode is None
+                else float(self.forward_seconds_per_episode)),
             "source": self.source,
             "notes": list(self.notes),
         }
@@ -207,6 +230,8 @@ class BenchMeasurement:
     @staticmethod
     def from_ledger(ledger: Mapping[str, Any], scope: str, *,
                     eval_seconds_per_episode: float | None = None,
+                    model_load_seconds: float | None = None,
+                    forward_seconds_per_episode: float | None = None,
                     notes: Sequence[str] = ()) -> "BenchMeasurement":
         """Build a measurement from a W2 ``flb200.compute_ledger.v1`` payload."""
         updates = int(ledger.get("optimizer_updates") or 0) + int(
@@ -227,6 +252,8 @@ class BenchMeasurement:
             max_tokens_per_batch=int(ledger.get("max_tokens_per_batch") or 0),
             device=str(ledger.get("device") or "unknown"),
             eval_seconds_per_episode=eval_seconds_per_episode,
+            model_load_seconds=model_load_seconds,
+            forward_seconds_per_episode=forward_seconds_per_episode,
             notes=tuple(notes),
         )
 

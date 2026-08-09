@@ -173,3 +173,112 @@ Never "recursive self-improvement"; never "generally self-improving system".
    entrypoint is currently a refusing stub; recorded, out of FL scope).
 
 No conceptual decision is left open for the accelerator session.
+
+## 13. Pre-run amendments after adversarial review (frozen 2026-08-09, before
+any accelerator use, before any training run, sealed set still unopened)
+
+An independent adversarial review and an independent verification of the
+complete package produced findings that are repaired in code and/or recorded
+here as claim-scope constraints. Everything in this section is frozen BEFORE
+any experiment ran; no outcome data existed when it was written.
+
+1. **Statistical power and claim scope (few clusters).** With 3 development
+   and 3 sealed families, the frozen family-clustered bootstrap's nominal-95%
+   intervals cover the *population* ("an unseen family in general") estimand
+   at only ≈74–83% (simulated under realistic between-family spread), and a
+   CI-excludes-0 rule has ≈17–26% type-I error. Therefore: all sealed
+   results are reported with the number of family clusters, per-family
+   effects, and a sign statement; intervals are explicitly conditional on
+   the three specific sealed families; the allowed conclusion
+   WHOLE_FAMILY_TRANSFER_GAIN is always qualified "on the three sealed
+   holdout families" and never presented as a population-level unseen-family
+   claim. The frozen +0.02 development promotion margin is acknowledged to
+   sit near this noise floor; it gates extension *spending*, not scientific
+   claims.
+2. **Headline decomposition (binary answer-flip shortcut).** Binary-answer
+   families admit a "repeat the other label after INCORRECT" heuristic worth
+   far more than the promotion margin at indices 1 and 3. The headline
+   ΔAULC is therefore always reported alongside (a) AULC restricted to
+   interaction indices {4,5,6} (fresh items, flip-immune) and (b) a
+   transcript-computed flip-attributable success rate. A positive headline
+   not supported by the {4,5,6}-restricted contrast is reported as
+   shortcut-suspect, not as meta-learning.
+3. **FL0 format floor.** The base model is expected to frequently fail the
+   strict `ANSWER:` grammar within 64 new tokens. `answer_line_rate` is
+   reported per arm × family × interaction index; any macro cell with rate
+   < 0.5 is flagged FORMAT_NONCOMPLIANT next to its value; persistence
+   ratios with zero-valued denominators are reported UNDEFINED, never 0.
+4. **Feedback information taxonomy.** Structured hints are legitimately
+   informative — probabilistic evidence is the point of feedback. The
+   defect class is *deterministic decodability* of the pending answer from
+   hint features. THREE such defects were found and FIXED pre-run, before
+   any training or sealed access: (a) graph_edge_semantics hint-NODE
+   SELECTION encoded reachability (generator → 1.1.0, answer-independent
+   selection); (b) constraint_rules hint CONTENT ("number of violated
+   constraints": zero ⟺ SAT) decoded the label with P=1.0 — replaced by a
+   candidate-constraint probe whose probed candidate need not be active in
+   the hidden rule (generator → 1.1.0+); (c) grammar_classification hint
+   content ("which conjunct fails": none ⟺ IN) likewise — replaced by a
+   pool-predicate probe (generator → 1.1.0). A permanent power-asserted
+   fixture (≈6,500 items/family) now forbids deterministic hint branches in
+   ALL twelve families with an EMPTY allow-list, and proves its own
+   non-vacuity by reconstructing each of the three defective 1.0.0 rules
+   and requiring the violation to reappear. Measured probabilistic lifts
+   are recorded in the fixture's report (e.g. boolean_rule pivot-ABSENT
+   ≈0.89 vs 0.63 prior; modular_arithmetic residue-band hints reduce the
+   candidate set to ≈3.5 after one hint and fully determine ≈48% of items
+   after two). The repaired probes' status is computable from the displayed
+   prompt; their value is that they point at and pre-evaluate a hypothesis
+   from the family's own pool, so rule identification comes from
+   accumulating (probe, status, verdict) evidence across rounds.
+   Interpretation rule: R_1/R_3 gains may reflect hint exploitation; the
+   leak-robust quantities are the {4,5,6}-restricted metrics and fresh-item
+   transfer.
+4b. **Label balance and constant-answer floors.** constraint_rules item
+   sampling was measured 89.3% UNSAT — a constant-answer policy would score
+   0.893 on that sealed family. Fixed pre-run: its sampler is conditioned
+   to approximately balanced labels (target P(SAT) ∈ [0.4, 0.6]); no other
+   family's distribution changed (boolean_rule's 0.63 majority rate is
+   recorded and accepted). Every family-level result is reported against a
+   per-family constant-answer baseline column so that no majority-class
+   floor can be read as competence.
+5. **FL2 comparison confounds.** FL2's successful-history data forces
+   attempt-0 wrong ≈70% of the time and imitates it with weight 1.0, so FL2
+   is trained to be wrong at R_0 by construction; FL2 and FL3 also train on
+   different history variants (not merely different objectives). Metric 3
+   (ΔAULC vs FL2) is therefore reported both including and excluding
+   interaction index 0, and is described as measuring objective + data
+   jointly.
+6. **FL5 claim scope.** FL5 arms use a segmented pipeline and are NOT
+   FL3-comparable; every FL5 result carries `comparable_to_fl3: false`. The
+   evaluation triad is frozen as ON / OFF / ON_S0 (trained ON module with
+   state pinned to zero). A persistent-fast-state claim requires ON >
+   ON_S0 under context reset — separating the recurrent state's
+   contribution from the learned static prefix; failing that, the result is
+   reported as prefix-tuning-equivalent (CONTEXT_ONLY_ADAPTATION /
+   PERSISTENT_FAST_STATE_GAIN not granted).
+7. **Off-policy scripted histories — named threat to validity.** Training
+   histories use hand-written plausible-error samplers; evaluation attempts
+   are the model's own. The error-style distribution shift could mute or
+   mimic treatment effects. Planned diagnostic (post-run, local): compare
+   scripted vs realized attempt/error distributions on TRAIN families from
+   FL0/FL3 transcripts; conclusions are restricted accordingly.
+8. **Eval-time online context allowance.** Online evaluation contexts
+   (scripted text + real generations) may exceed the 2048-token
+   *data-generation* budget; the frozen eval-time allowance is 4096 tokens
+   (model limit 65536), with per-episode overflow isolation (recorded and
+   excluded, never silently dropped, never aborting the batch).
+9. **Sealed-opening robustness.** The single sealed opening is two-phase:
+   evaluation must produce records before the opening commits; an aborted
+   attempt is permanently ledgered and permits exactly one retry. The
+   sealed evaluation runs the development-selected promoted arm from its
+   recorded checkpoint (never the untrained base), and requires the
+   completed core comparison as an entry condition.
+10. **Diagnostics.** Surface-remap, A→B→A interference, and
+    poisoned-feedback diagnostics run unconditionally after the core
+    comparison (metrics 9/11/12/13 are produced in V0), including under the
+    FL3-null fallback.
+11. **Seventh operator-bound unresolved field.** The B200 container
+    registry digest reference remains unresolved until the operator's
+    registry push (mirroring the O1 record); it joins the declared
+    mechanical unresolved set.

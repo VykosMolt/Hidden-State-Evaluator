@@ -291,15 +291,28 @@ def arm_comparison(records_a: Sequence[Mapping[str, Any]],
                    label_a: str = "A", label_b: str = "B",
                    n_replicates: int = DEFAULT_REPLICATES,
                    seed: int = 0, alpha: float = DEFAULT_ALPHA,
-                   require_matched_episodes: bool = True) -> dict[str, Any]:
-    """Paired macro-AULC difference between two arms with a clustered CI."""
-    sample_a = clustered_sample_from_records(records_a)
-    sample_b = clustered_sample_from_records(records_b)
+                   require_matched_episodes: bool = True,
+                   indices: Sequence[int] | None = None) -> dict[str, Any]:
+    """Paired macro-AULC difference between two arms with a clustered CI.
+
+    ``indices`` restricts the per-episode AULC to those interaction indices, so
+    the SAME paired machinery produces the Amendment 13 companions of the
+    headline delta ({4, 5, 6} only; everything except index 0).  ``None`` is the
+    frozen full-curve delta of metrics 2/3.
+    """
+    from foundation_learner.evaluation import metrics as _metrics
+
+    value_fn = (None if indices is None
+                else (lambda r, _i=tuple(indices): _metrics.record_aulc(r, _i)))
+    sample_a = clustered_sample_from_records(records_a, value_fn)
+    sample_b = clustered_sample_from_records(records_b, value_fn)
     result = paired_clustered_bootstrap(
         sample_a, sample_b, n_replicates=n_replicates, seed=seed, alpha=alpha,
         require_matched_episodes=require_matched_episodes)
     result.update({"schema": ARM_COMPARISON_SCHEMA,
-                   "label_a": label_a, "label_b": label_b})
+                   "label_a": label_a, "label_b": label_b,
+                   "indices": (None if indices is None
+                               else [int(k) for k in indices])})
     return result
 
 
@@ -513,12 +526,24 @@ def summarize_arm(records: Sequence[Mapping[str, Any]], *, label: str = "arm",
     from foundation_learner.evaluation import metrics as _metrics
 
     sample = clustered_sample_from_records(records)
+    fresh_sample = clustered_sample_from_records(
+        records,
+        lambda r: _metrics.record_aulc(r, _metrics.POST_FEEDBACK_FRESH_INDICES))
+    metrics = _metrics.summarize(records, trained_family_ids)
     out = {
         "label": label,
-        "metrics": _metrics.summarize(records, trained_family_ids),
+        "metrics": metrics,
         "macro_aulc_ci": (clustered_bootstrap_ci(
             sample, n_replicates=n_replicates, seed=seed, alpha=alpha)
             if sample.family_ids else None),
+        # Amendment 13: the flip-immune companion of the headline AULC, with
+        # the same clustered interval, reported ALONGSIDE it.
+        "aulc_post_feedback_fresh_ci": (clustered_bootstrap_ci(
+            fresh_sample, n_replicates=n_replicates, seed=seed, alpha=alpha)
+            if fresh_sample.family_ids else None),
+        "answer_line_rate": metrics.get("answer_line_rate"),
+        "format_flag": metrics.get("format_flag"),
+        "excluded_records": metrics.get("excluded_records"),
         "learning_curve": learning_curve_with_ci(
             records, n_replicates=n_replicates, seed=seed, alpha=alpha),
     }

@@ -28,7 +28,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from .base import Feedback, HintField, derive_seed, letters, make_rng
+from .base import (AnswerLeakError, Feedback, HintField, answer_leak,
+                   derive_seed, letters, make_rng)
 
 __all__ = ["POISON_CONDITIONS", "CONDITION_DESCRIPTIONS", "POISONED_CONDITIONS",
            "corrupt_feedback", "redundant_hint", "irrelevant_hint",
@@ -113,18 +114,36 @@ def irrelevant_hint(rng: np.random.Generator) -> str:
 
 
 def hint_for_condition(record: Feedback, condition: str,
-                       rng: np.random.Generator) -> str:
-    """Render the HINT body for one poison condition."""
+                       rng: np.random.Generator, *,
+                       answer_canonical: str) -> str:
+    """Render the HINT body for one poison condition.
+
+    ``answer_canonical`` is REQUIRED and is the pending item's canonical answer:
+    every rendered hint body is checked with the SAME
+    :func:`~.base.answer_leak` invariant that ``TaskFamily.feedback_record`` and
+    ``TaskFamily.corrupted_feedback`` apply.  Before Amendment 13 this function
+    was the one hint-rendering path with no leak check, so a condition body
+    (a corruption landing on the truth's token, an irrelevant-pool entry, a
+    redundant restatement) could have carried the answer without any check
+    firing.  The parameter is required rather than optional because an
+    optional-and-omitted check is exactly the failure mode being repaired.
+    """
     if condition not in POISON_CONDITIONS:
         raise ValueError(f"unknown poison condition {condition!r}")
     if condition == "clean":
-        return record.render()
-    if condition == "correct-redundant":
-        return redundant_hint(record)
-    if condition == "irrelevant":
-        return irrelevant_hint(rng)
-    severity = "partial" if condition == "partially-misleading" else "full"
-    return corrupt_feedback(record, rng, severity=severity).render()
+        text = record.render()
+    elif condition == "correct-redundant":
+        text = redundant_hint(record)
+    elif condition == "irrelevant":
+        text = irrelevant_hint(rng)
+    else:
+        severity = "partial" if condition == "partially-misleading" else "full"
+        text = corrupt_feedback(record, rng, severity=severity).render()
+    if answer_leak(text, answer_canonical):
+        raise AnswerLeakError(
+            f"hint body for condition {condition!r} would reveal the pending "
+            f"answer: {text!r} vs {answer_canonical!r}")
+    return text
 
 
 def condition_schedule(root_seed: int, episode_id: str, condition: str,

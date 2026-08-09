@@ -13,7 +13,9 @@ import tempfile
 import pytest
 
 from foundation_learner.data import generate_shards as gen
-from foundation_learner.data.pools import MAX_SEQ_LEN, ROOT_SEED, tiny_pools
+from foundation_learner.data.pools import (EVAL_MAX_NEW_TOKENS,
+                                           EVAL_ONLINE_MAX_SEQ_LEN,
+                                           MAX_SEQ_LEN, ROOT_SEED, tiny_pools)
 from foundation_learner.data.shards import (SHARD_SUMS_NAME, read_json,
                                             read_shard)
 from foundation_learner.ecology.base import (TaskInstance, sealed_key,
@@ -131,6 +133,40 @@ def test_token_budget_is_enforced_and_recorded():
     assert budget["max_tokens_allowed"] == MAX_SEQ_LEN
     assert 0 < budget["max_tokens_seen"] <= MAX_SEQ_LEN
     assert budget["renders_measured"] > 0
+
+
+def test_online_budget_projection_is_enforced_and_recorded():
+    """Amendment 13: every episode must ALSO fit the eval-time allowance once
+    each attempt slot carries real generated tokens."""
+    manifest = _pregen()
+    budget = manifest["token_budget"]
+    assert budget["eval_online_allowance"] == EVAL_ONLINE_MAX_SEQ_LEN
+    assert budget["eval_max_new_tokens"] == EVAL_MAX_NEW_TOKENS
+    projected = budget["max_online_projected_seen"]
+    assert budget["max_tokens_seen"] < projected <= EVAL_ONLINE_MAX_SEQ_LEN
+
+
+def test_the_eval_allowance_is_the_one_the_online_walker_uses():
+    """The constant is duplicated (data/ may not import torch); it may not
+    drift from the evaluator's own value."""
+    from foundation_learner.evaluation import learning_curve as LC
+
+    assert EVAL_ONLINE_MAX_SEQ_LEN == LC.EVAL_ONLINE_MAX_SEQ_LEN
+    assert LC.LearningCurveConfig().max_seq_len == EVAL_ONLINE_MAX_SEQ_LEN
+    assert MAX_SEQ_LEN == LC.MAX_SEQ_LEN == 2048
+
+
+def test_an_episode_that_would_overflow_online_is_refused_at_pregen_time():
+    """The assertion is real: a budget whose allowance the SAME data exceeds
+    hard-fails instead of shipping an episode the evaluator must exclude."""
+    manifest = _pregen()
+    text = "x " * 64
+    tight = gen.TokenBudget(gen.DEFAULT_TOKENIZER_PATH,
+                            online_max_tokens=256, eval_max_new_tokens=64)
+    tight.check("fits", text, n_attempt_slots=1)          # 128 + 2*64 = 256
+    with pytest.raises(ValueError, match="projected ONLINE context"):
+        tight.check("overflows", text, n_attempt_slots=2)  # 128 + 3*64 = 320
+    assert manifest["token_budget"]["max_online_projected_seen"] > 0
 
 
 def test_no_instance_or_rule_crosses_a_split():

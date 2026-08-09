@@ -65,13 +65,23 @@ produces `SMOKE_REPORT.json` marked `NONSCIENTIFIC`.
 - **The model is frozen.** Every arm starts from a fresh load of the same
   checkpoint (`tree sha256 a701f7a7…`); the base artefact is never modified.
 - **Exact verifiers only.** No LLM judge anywhere in a principal outcome.
-- **The sealed set opens once.** `campaign/sealed_gate.py` is the only decipher
-  path; it refuses until `DEV_DECISIONS_FROZEN.json` exists, writes a
-  single-use append-only hash-chained ledger, refuses a second opening, and
-  writes results read-only. SEALED_TEST is never consulted for model
-  selection, hyperparameters, promotion, checkpoint selection or early
-  stopping — the promotion API takes an object that structurally cannot hold a
-  sealed record.
+- **The sealed set opens once.** The cipher primitives themselves live in
+  `ecology/base.py` (they are what `data/shards.py` enciphers the sealed shards
+  with at pre-generation time, and `data/shards.read_shard` will apply an
+  explicitly supplied key — Amendments 1, 7 and 8). What is unique is the
+  **campaign path**: `campaign/sealed_gate.py` is the only module that DERIVES
+  `K_seal` and the only route by which campaign code reads sealed data. It
+  refuses until `DEV_DECISIONS_FROZEN.json` exists; the opening is two-phase,
+  so the single-use `SEALED_OPENED` entry in the append-only hash-chained
+  ledger is written only once the evaluation records exist, and a failed
+  attempt is recorded as `SEALED_OPENING_ABORTED` and leaves exactly one retry.
+  A second committed opening refuses, results are written read-only, and the
+  sealed evaluation runs the promoted arm restored from its recorded
+  checkpoint. SEALED_TEST is never consulted for model selection,
+  hyperparameters, promotion, checkpoint selection or early stopping — the
+  promotion API takes an object that structurally cannot hold a sealed record.
+  The protection is PROCEDURAL (gate, ledger, hostile fixtures): the key comes
+  from a public digest, and no cryptographic unopenability is claimed.
 - **O1 has absolute priority and absolute isolation.** FL runs only after the
   O1 records are verified, transferred and the O1 process closed; every FL path
   is realpath-guarded against the O1 roots.
@@ -98,16 +108,26 @@ Regenerate it with:
 python -m foundation_learner.scripts.pregenerate_all --out artifacts_fl/pregen
 ```
 
-**Order matters when packaging.** `SHA256SUMS` is a snapshot of the tree, and
-the validation run rewrites `reports/TEST_REPORT.json`, so the release order is
-*validate, then package*:
+**Order matters when packaging**: *validate → package → manifest*.
 
 ```bash
 python -m foundation_learner.scripts.run_all_tests          # writes reports/
 python -m foundation_learner.scripts.package_release        # writes SHA256SUMS + zip
-python -m foundation_learner.scripts.make_manifest          # fills the manifest
+python -m foundation_learner.scripts.make_manifest          # fills the manifest LAST
 ```
 
-Running the validation again afterwards will legitimately report the checksum
-suite as FAILED, because the tree has changed since the snapshot. That is the
-exact-coverage check doing its job, not a bug.
+The manifest is written **after** the zip because it binds the zip hash, and
+`package_release.py` therefore excludes `FOUNDATION_LEARNER_V0_MANIFEST.json`
+from the bundle: a file cannot describe the digest of an archive that contains
+it. `SHA256SUMS` likewise covers every other bundled file and is written and
+added last, so it never covers itself.
+
+The bundle contains only **git-tracked** files under `foundation_learner/` plus
+`artifacts_fl/pregen/**` — so a fresh clone of the pushed branch reproduces it
+byte for byte. Consequently a release build **refuses a dirty work tree**:
+under a tracked-content policy an uncommitted module would be silently missing
+from the zip, so commit first (a `--dry-run` build may proceed and says so). `foundation_learner/reports/**` is deliberately *not* in the
+zip: those evidence JSONs stay in git (reviewable, history-tracked), while the
+zip is the accelerator bundle. That also removes the old ordering trap in which
+re-running the validation invalidated a checksum snapshot the zip had already
+taken.

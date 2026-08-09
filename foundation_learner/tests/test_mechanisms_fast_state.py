@@ -5,12 +5,14 @@ import pytest
 import torch
 
 from foundation_learner.mechanisms.fast_state import (
+    ARM_FAST_STATE_ON_S0,
     FL5_PREFIX_K,
     FL5_STATE_DIM,
     FastStateCallbacks,
     FastStateError,
     FastStateModule,
     FastStateOffCallbacks,
+    FastStateS0Callbacks,
     rho_from_embeddings,
 )
 from foundation_learner.mechanisms.value_gating import GateDecision
@@ -220,3 +222,73 @@ def test_off_arm_callbacks_inject_nothing():
     assert cb.prefix_provider() is None
     cb.on_feedback(object(), _summary_fn())
     assert cb.summary()["injection"] == "DISABLED"
+
+
+# -- Amendment 13: the s = 0 control arm ---------------------------------
+def test_s0_control_arm_never_updates_the_state():
+    module = _module()
+    cb = FastStateS0Callbacks(module)
+    cb.on_episode_start(_Ctx())
+    zero_prefix = cb.prefix_provider().clone()
+    cb.on_feedback(object(), _summary_fn())
+    cb.on_feedback(object(), _summary_fn(3.0))
+    assert torch.count_nonzero(cb.s) == 0
+    assert cb.updates_applied == 0 and cb.updates_skipped == 2
+    # every prompt of every episode sees the SAME learned static prefix
+    assert torch.equal(cb.prefix_provider(), zero_prefix)
+    cb.on_episode_start(_Ctx())
+    assert torch.equal(cb.prefix_provider(), zero_prefix)
+    assert cb.summary()["state_pinned_to_zero"] is True
+    assert cb.summary()["eval_only_control"] is True
+    assert cb.summary()["arm_id"] == ARM_FAST_STATE_ON_S0
+
+
+def test_s0_control_uses_the_trained_module_and_differs_from_on():
+    """The control must isolate the static prefix, not disable the mechanism:
+    it injects ON's own trained prefix, and ON diverges from it as soon as the
+    state is updated."""
+    module = _module()
+    on = FastStateCallbacks(module)
+    s0 = FastStateS0Callbacks(module)
+    for cb in (on, s0):
+        cb.on_episode_start(_Ctx())
+    assert torch.equal(on.prefix_provider(), s0.prefix_provider())
+    on.on_feedback(object(), _summary_fn())
+    s0.on_feedback(object(), _summary_fn())
+    assert not torch.equal(on.prefix_provider(), s0.prefix_provider())
+    assert s0.module is module and on.module is module
+
+
+def test_s0_control_refuses_to_carry_state_or_be_gated():
+    module = _module()
+    cb = FastStateS0Callbacks(module, carry_across_episodes=True,
+                              gate=_StubGate(True))
+    assert cb.carry_across_episodes is False
+    assert cb.gate is None
+
+
+def test_fl5_records_disclaim_fl3_comparability():
+    from foundation_learner.mechanisms.fl5_training import (
+        FL5_COMPARABLE_TO_FL3, FL5_NOT_COMPARABLE_REASON, FL5ArmResult)
+
+    assert FL5_COMPARABLE_TO_FL3 is False
+    for phrase in ("impossible-task control", "parameter-matched",
+                   "LEARNED STATIC PREFIX", "FAST_STATE_ON_S0"):
+        assert phrase in FL5_NOT_COMPARABLE_REASON
+    result = FL5ArmResult(arm_id="FAST_STATE_ON", out_dir="", steps=0,
+                          stopped_reason="COMPLETED", final_loss=None).to_dict()
+    assert result["comparable_to_fl3"] is False
+    assert result["comparable_to_fl3_reason"] == FL5_NOT_COMPARABLE_REASON
+
+
+def test_the_fl5_docstring_no_longer_claims_the_state_carried_the_learning():
+    """The overclaim is a scientific defect, so its absence is a fixture."""
+    from foundation_learner.mechanisms import fl5_training
+
+    doc = fl5_training.__doc__ or ""
+    # the old sentence survives ONLY as the quoted claim being retracted
+    assert doc.count("and nothing else") == 1
+    assert 'and nothing else" OVERCLAIMED' in doc
+    for phrase in ("impossible-task control", "LEARNED STATIC PREFIX",
+                   "not parameter-matched", "FAST_STATE_ON_S0"):
+        assert phrase in doc

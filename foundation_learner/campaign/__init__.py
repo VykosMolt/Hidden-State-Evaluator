@@ -18,11 +18,17 @@ calibration programme out of the Foundation Learner's reach:
                           structurally cannot carry a sealed record.
 * ``dev_selector``      — the frozen 2-LR grid on FL3 at 25 % U and the
                           ``DEV_DECISIONS_FROZEN.json`` writer.
-* ``sealed_gate``       — the ONLY decipher path for sealed shards, with the
-                          single-use append-only opening ledger.
+* ``sealed_gate``       — the ONLY campaign decipher path for sealed shards,
+                          with the two-phase, single-use, append-only opening
+                          ledger (Amendment 12).
+* ``core_matching``     — the production audit of the core comparison: compute
+                          matching, realized ledgers, and one shared frozen base.
 * ``result_verifier``   — run-output hashing and the deterministic transfer
                           archive.
 * ``session_supervisor``— the O1-first session state machine.
+* ``entry``             — the PRODUCTION campaign entry: §22 determinism, the
+                          real ``StageContext`` factory, and the ladder runner
+                          that ``session_supervisor.main()`` wires on.
 
 Nothing in this package spends money, contacts a provider, rents an
 accelerator, or opens sealed data outside ``sealed_gate``.

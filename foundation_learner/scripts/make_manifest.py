@@ -14,9 +14,16 @@ knowable BEFORE the accelerator session:
 
 Everything under ``b200_derived_unresolved`` is left UNRESOLVED, deliberately:
 measured throughput, the affordable ``U``, the FULL-vs-PEFT outcome, the
-available Foundation Learner seconds, the post-gate evaluation batch size and
-the operator-bound ``o1_entry_command`` are all decided on (or before) the
-accelerator session, never here.
+available Foundation Learner seconds, the post-gate evaluation batch size, the
+operator-bound ``o1_entry_command`` and the operator-bound
+``container_registry_digest_ref`` (the B200 image is pushed by the operator;
+its registry digest does not exist until then — verification finding V-Obs6)
+are all decided on (or before) the accelerator session, never here.
+
+ORDER (contract §19, repaired): validate -> package_release -> make_manifest.
+The manifest binds the zip hash, so it is written AFTER the zip and is never
+covered by it; ``scripts/package_release.py`` excludes it from the bundle for
+exactly that reason.
 
 Usage::
 

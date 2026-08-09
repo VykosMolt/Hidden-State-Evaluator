@@ -429,32 +429,94 @@ def load_frozen_backbone(
     return ModelBundle(model=model, tokenizer=tokenizer, device=device, identity=identity)
 
 
+def layer_checkpointing_is_consulted(model) -> bool | None:
+    """Does any module of this model actually READ its checkpointing flag?
+
+    ``PreTrainedModel.gradient_checkpointing_enable()`` sets
+    ``module.gradient_checkpointing = True`` (and installs
+    ``_gradient_checkpointing_func``) on every submodule that declares support.
+    Whether that has any EFFECT depends on the modelling code: a decoder loop
+    that never consults the flag makes the call a no-op.
+
+    This inspects the source of every concrete module class that carries the
+    flag and reports whether the flag (or the checkpointing function) is read
+    anywhere outside its own assignment.  Returns ``None`` when the source is
+    unavailable, which is recorded as UNKNOWN rather than assumed either way.
+    """
+    import inspect
+    import re
+
+    assignment = re.compile(r"self\.gradient_checkpointing\s*=(?!=)")
+    seen_flag = False
+    unknown = False
+    for module in model.modules():
+        if not hasattr(module, "gradient_checkpointing"):
+            continue
+        seen_flag = True
+        try:
+            source = inspect.getsource(type(module))
+        except (OSError, TypeError):  # pragma: no cover - source-less class
+            unknown = True
+            continue
+        # strip the flag's own assignments; anything left is a READ
+        remainder = assignment.sub("", source)
+        if ("self.gradient_checkpointing" in remainder
+                or "_gradient_checkpointing_func" in remainder):
+            return True
+    if not seen_flag or unknown:
+        return None
+    return False
+
+
 def enable_training_memory_savings(model) -> dict[str, Any]:
     """Gradient checkpointing + input grads (contract §22, training path).
 
-    Two independent mechanisms exist on this backbone:
+    Two independent mechanisms could apply to this backbone:
 
-    * loop-level checkpointing inside ``OuroModel.forward`` (driven by
-      ``config.rltt_loop_level_checkpointing`` and active only while training
-      with ``use_cache=False``), and
-    * layer-level checkpointing enabled here through the standard transformers
-      API with ``use_reentrant=False``.
+    * **loop-level** checkpointing inside ``OuroModel.forward``, driven by
+      ``config.rltt_loop_level_checkpointing`` and active while training with
+      ``use_cache=False``.  This one is REAL on the frozen checkpoint: the
+      forward wraps ``_run_single_ut_loop`` in ``torch.utils.checkpoint``;
+    * **layer-level** checkpointing through the standard transformers API.
+      ``OuroModel`` declares ``supports_gradient_checkpointing = True`` and
+      initialises ``self.gradient_checkpointing = False``, but its decoder path
+      never consults the flag, so ``gradient_checkpointing_enable()`` is a
+      NO-OP on this architecture.
 
-    Both are recorded in the returned dict so the manifest can state exactly
-    which memory-saving paths were active.
+    The record therefore separates what was REQUESTED from what is ACTIVE, and
+    the active value is DETECTED (:func:`layer_checkpointing_is_consulted`)
+    rather than inferred from the API call succeeding.  Recording a no-op as an
+    active memory-saving path would have put a false statement into every arm
+    result and into the campaign manifest (review finding, minor (d)).
     """
+    consulted = layer_checkpointing_is_consulted(model)
     state: dict[str, Any] = {
         "loop_level_checkpointing": bool(
             getattr(model.config, "rltt_loop_level_checkpointing", False)
         ),
-        "layer_level_checkpointing": False,
+        "layer_level_checkpointing_requested": False,
+        "layer_level_checkpointing_active": False,
+        "layer_level_checkpointing_detection": (
+            "UNKNOWN" if consulted is None else
+            ("CONSULTED_BY_FORWARD" if consulted else "NOT_CONSULTED_BY_FORWARD")
+        ),
         "input_require_grads": False,
     }
     if getattr(model, "supports_gradient_checkpointing", False):
         model.gradient_checkpointing_enable(
             gradient_checkpointing_kwargs={"use_reentrant": False}
         )
-        state["layer_level_checkpointing"] = True
+        state["layer_level_checkpointing_requested"] = True
+        state["layer_level_checkpointing_active"] = bool(consulted)
+    #: kept for consumers that read the old key; it now carries the ACTIVE
+    #: value, never the merely requested one.
+    state["layer_level_checkpointing"] = state["layer_level_checkpointing_active"]
+    if not state["layer_level_checkpointing_active"]:
+        state["layer_level_checkpointing_note"] = (
+            "gradient_checkpointing_enable() was called but this architecture's "
+            "forward never consults the flag; only the loop-level RLTT "
+            "checkpointing above is a real memory saving"
+        )
     if hasattr(model, "enable_input_require_grads"):
         model.enable_input_require_grads()
         state["input_require_grads"] = True

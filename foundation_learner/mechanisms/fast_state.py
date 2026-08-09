@@ -65,10 +65,16 @@ __all__ = [
     "rho_from_embeddings",
     "FastStateModule",
     "FastStateCallbacks",
+    "FastStateS0Callbacks",
     "FastStateOffCallbacks",
     "FL5_STATE_NORM_LIMIT",
+    "ARM_FAST_STATE_ON_S0",
     "run_fl5_stage",
 ]
+
+#: EVAL-ONLY control arm (Amendment 13): the trained FAST_STATE_ON module with
+#: ``s`` pinned to 0.  It is never trained separately.
+ARM_FAST_STATE_ON_S0 = "FAST_STATE_ON_S0"
 
 #: contract §7
 FL5_STATE_DIM = 1024
@@ -342,6 +348,60 @@ class FastStateCallbacks(NullCallbacks):
         }
 
 
+class FastStateS0Callbacks(FastStateCallbacks):
+    """``FAST_STATE_ON_S0``: the TRAINED module with ``s`` pinned to 0.
+
+    Why this arm exists (Amendment 13).  ``FAST_STATE_ON`` minus
+    ``FAST_STATE_OFF`` is not "the state carried the learning": OFF is an
+    impossible-task control (segmentation removes the history and OFF has no
+    state), ON carries ~25M extra trained parameters, and ``prefix_embeds(0)``
+    is a LEARNED STATIC PREFIX — ordinary prefix tuning, which needs no
+    within-episode learning at all.
+
+    This arm runs the same trained module and the same 8-vector injection but
+    NEVER updates ``s``: every prompt of every episode sees exactly
+    ``prefix_embeds(0)``.  Therefore
+
+        ON  - ON_S0  = the contribution of the STATE UPDATES,
+        ON_S0 - OFF  = the static prefix plus the extra parameters.
+
+    It is EVAL-ONLY: no third training run exists, and none is implied.  The
+    hidden summary is deliberately not requested (the state is pinned, so the
+    forward would be paid for nothing), which also keeps this arm's decode
+    numerically identical to ON's except for the prefix content.
+    """
+
+    ARM_ID = "FAST_STATE_ON_S0"
+
+    def __init__(self, module: FastStateModule, **kwargs: Any) -> None:
+        kwargs.pop("carry_across_episodes", None)
+        kwargs.pop("gate", None)
+        super().__init__(module, carry_across_episodes=False, gate=None,
+                         **kwargs)
+        self._zero = self.module.reset_state(1)
+
+    def on_episode_start(self, ctx: Any) -> None:
+        self.last_context = ctx
+        self.s = self._zero
+        self.episodes_seen += 1
+
+    def on_feedback(self, event: Any, hidden_summary_fn: Any) -> None:
+        # The update is deliberately NOT applied; it is counted as skipped so
+        # the record still shows how many updates this arm declined.
+        self.updates_skipped += 1
+        return None
+
+    def summary(self) -> dict[str, Any]:
+        out = super().summary()
+        out.update({
+            "arm_id": self.ARM_ID,
+            "state_pinned_to_zero": True,
+            "eval_only_control": True,
+            "isolates": "learned static prefix (prefix-tuning confound)",
+        })
+        return out
+
+
 class FastStateOffCallbacks(NullCallbacks):
     """FAST_STATE_OFF eval arm: the identical pipeline with NO injection.
 
@@ -373,7 +433,17 @@ def run_fl5_stage(ctx: Any, stage: Any) -> dict:
       state updates, then the DEVELOPMENT learning curve in BOTH the
       ``history`` and the ``context_reset`` condition with the trained state;
     * ``FAST_STATE_OFF`` — the identical pipeline, data order and seed with
-      injection disabled (no prefix, no state usage).
+      injection disabled (no prefix, no state usage);
+    * ``FAST_STATE_ON_S0`` — EVAL-ONLY control (Amendment 13): the TRAINED ON
+      module evaluated on the same episodes with ``s`` pinned to 0, i.e. the
+      learned static prefix without any state update.  No third training run
+      exists.  ``ON - ON_S0`` is the state-update contribution; ``ON_S0 - OFF``
+      is the static prefix plus the extra ~25M parameters.
+
+    Every payload and every per-arm record carries ``comparable_to_fl3: false``
+    with the reason: FL5's segmented forward, its impossible-task OFF control,
+    its extra parameters and its static-prefix channel all put it off the FL3
+    core-comparison scale.
 
     Promotion interface: the paired family-clustered bootstrap of retained
     post-reset improvement (ON minus OFF, §14 conventions) is published to
@@ -385,8 +455,12 @@ def run_fl5_stage(ctx: Any, stage: Any) -> dict:
     """
     from foundation_learner.mechanisms import stage_support as _s
     from foundation_learner.mechanisms.fl5_training import (
-        ARM_FAST_STATE_OFF, ARM_FAST_STATE_ON, FL5TrainConfig,
-        run_fast_state_arm, segment_episode)
+        ARM_FAST_STATE_OFF, ARM_FAST_STATE_ON, FL5_COMPARABLE_TO_FL3,
+        FL5_NOT_COMPARABLE_REASON, FL5TrainConfig, run_fast_state_arm,
+        segment_episode)
+
+    comparability = {"comparable_to_fl3": FL5_COMPARABLE_TO_FL3,
+                     "comparable_to_fl3_reason": FL5_NOT_COMPARABLE_REASON}
 
     n_train = _s.stage_episode_count(ctx, stage, "fl5_train_episodes")
     train_eps = _s.train_episodes(ctx, n_train)
@@ -394,7 +468,8 @@ def run_fl5_stage(ctx: Any, stage: Any) -> dict:
     if not train_eps or not dev_eps:
         return _s.finish_stage(ctx, stage, _s.mechanism_payload(
             stage, _s.STATUS_SKIPPED_INPUT,
-            reason="no TRAIN or DEVELOPMENT episodes are available"))
+            reason="no TRAIN or DEVELOPMENT episodes are available",
+            **comparability))
     updates = _s.stage_updates(ctx, "fl5_updates")
     learning_rate = float(ctx.extra.get("fl5_learning_rate",
                                         ctx.learning_rate or 1e-4))
@@ -444,7 +519,42 @@ def run_fl5_stage(ctx: Any, stage: Any) -> dict:
                     for mode, recs in records[arm_id].items()},
             "prefix_used": {mode: [bool(r.get("prefix_used")) for r in recs]
                             for mode, recs in records[arm_id].items()},
+            **comparability,
         }
+
+        if arm_id == ARM_FAST_STATE_ON:
+            # EVAL-ONLY control on the SAME trained bundle and the SAME trained
+            # module: s pinned to 0, so the injection is the learned static
+            # prefix and nothing else.  No third training run.
+            def s0_factory(_ep, _module=module):
+                return FastStateS0Callbacks(_module)
+
+            control = ARM_FAST_STATE_ON_S0
+            records[control] = {
+                mode: _s.dev_records(bundle, dev_eps, ctx=ctx,
+                                     arm_tag=f"{control}_{mode}",
+                                     callbacks_factory=s0_factory,
+                                     context_mode=mode)
+                for mode in ("history", "context_reset")}
+            arms[control] = {
+                "eval_only": True,
+                "control_of": ARM_FAST_STATE_ON,
+                "trained_by": ARM_FAST_STATE_ON,
+                "state_pinned_to_zero": True,
+                "isolates": ("learned static prefix (prefix-tuning confound); "
+                             "ON - ON_S0 is the state-update contribution, "
+                             "ON_S0 - OFF is the static prefix plus the extra "
+                             "parameters"),
+                "arm_result": None,
+                "trainable": trainable.to_dict(),
+                "fast_state_config": module.config(),
+                "fast_state_config_hash": module.config_hash(),
+                "dev": {mode: _s.dev_metrics_dict(recs, f"{control}_{mode}")
+                        for mode, recs in records[control].items()},
+                "prefix_used": {mode: [bool(r.get("prefix_used")) for r in recs]
+                                for mode, recs in records[control].items()},
+                **comparability,
+            }
 
     from foundation_learner.evaluation import metrics as _metrics
 
@@ -458,6 +568,15 @@ def run_fl5_stage(ctx: Any, stage: Any) -> dict:
                                                 recs["history"])
         for arm, recs in records.items()}
 
+    state_update_contribution = _s.paired_persistence_evidence(
+        records[ARM_FAST_STATE_ON]["context_reset"],
+        records[ARM_FAST_STATE_ON_S0]["context_reset"],
+        label="FL5_ON_minus_ON_S0", seed=int(ctx.root_seed))
+    static_prefix_contribution = _s.paired_persistence_evidence(
+        records[ARM_FAST_STATE_ON_S0]["context_reset"],
+        records[ARM_FAST_STATE_OFF]["context_reset"],
+        label="FL5_ON_S0_minus_OFF", seed=int(ctx.root_seed))
+
     payload = _s.mechanism_payload(
         stage, _s.STATUS_COMPLETE,
         arms=arms,
@@ -469,5 +588,9 @@ def run_fl5_stage(ctx: Any, stage: Any) -> dict:
                     for arm, by_mode in records.items()},
         context_reset_persistence=retained,
         persistence_evidence=persistence,
+        control_arm=ARM_FAST_STATE_ON_S0,
+        state_update_contribution=state_update_contribution,
+        static_prefix_contribution=static_prefix_contribution,
+        **comparability,
     )
     return _s.finish_stage(ctx, stage, payload)

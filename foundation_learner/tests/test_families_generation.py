@@ -27,6 +27,108 @@ def _rule_and_instances(family, seed=20260809, difficulty=1):
     }
 
 
+#: Frozen per-family generator versions.  Amendment 13 bumped
+#: ``graph_edge_semantics`` to 1.1.0 (answer-independent hint-node selection);
+#: Amendment 14 bumped ``constraint_rules`` (candidate-constraint probe) and
+#: ``grammar_classification`` (pool-predicate probe) for the same reason — a
+#: hint that decoded the label — and Amendment 15 bumped ``constraint_rules``
+#: again to 1.2.0 for its label-balanced item sampler.  Every other family is
+#: untouched at 1.0.0.
+#: Pinned so that a generator can never change without the version, the
+#: manifests and the data moving with it.
+EXPECTED_GENERATOR_VERSIONS = {
+    "boolean_rule": "1.0.0",
+    "propositional_transform": "1.0.0",
+    "modular_arithmetic": "1.0.0",
+    "sequence_transform": "1.0.0",
+    "string_rewrite": "1.0.0",
+    "finite_state_transducer": "1.0.0",
+    "permutation_composition": "1.0.0",
+    "set_operations": "1.0.0",
+    "graph_edge_semantics": "1.1.0",
+    "dsl_execution": "1.0.0",
+    "constraint_rules": "1.2.0",
+    "grammar_classification": "1.1.0",
+}
+
+
+def test_generator_versions_are_pinned():
+    assert {f.family_id: f.generator_version
+            for f in FAMILIES} == EXPECTED_GENERATOR_VERSIONS
+
+
+#: Amendment 15: the label-balanced family, its target and the honest tolerance
+#: for a finite sample.  ``boolean_rule``'s 0.633 imbalance is RECORDED AND
+#: ACCEPTED unchanged (a hidden Boolean function is not expected to be balanced
+#: over assignments), so it carries a wider bound that pins the status quo
+#: rather than a target.
+LABEL_BALANCE_BOUNDS = {
+    "constraint_rules": (0.35, 0.65),
+    "graph_edge_semantics": (0.20, 0.80),
+    "grammar_classification": (0.35, 0.65),
+    "boolean_rule": (0.20, 0.80),
+}
+
+
+@pytest.mark.parametrize("family_id", sorted(LABEL_BALANCE_BOUNDS))
+def test_label_answer_families_are_not_degenerate(family_id):
+    """A family whose items are almost all one label makes a constant-answer
+    policy score that rate, so its learning curve says nothing.  Measured over
+    >= 2000 items spanning every instance kind."""
+    from foundation_learner.ecology.base import (KIND_QUERY, KIND_RELATED,
+                                                 KIND_SUPPORT, KIND_TRANSFER,
+                                                 encode_seed)
+
+    family = get_family(family_id)
+    counts: dict[str, int] = {}
+    kinds = (KIND_SUPPORT, KIND_RELATED, KIND_QUERY, KIND_TRANSFER)
+    for r in range(180):
+        rule = family.sample_rule(
+            make_rng(derive_seed(20260809, family_id, "balance", r)))
+        for i in range(12):
+            raw = int(make_rng(derive_seed(7, family_id, r, i)
+                               ).integers(0, 1 << 40))
+            instance = family.instance(rule, encode_seed(raw, kinds[i % 4]), 1)
+            counts[instance.answer_canonical] = \
+                counts.get(instance.answer_canonical, 0) + 1
+    total = sum(counts.values())
+    assert total >= 2000
+    assert len(counts) == 2, f"{family_id} is not a two-label family: {counts}"
+    lo, hi = LABEL_BALANCE_BOUNDS[family_id]
+    rate = min(counts.values()) / total
+    assert lo <= rate <= hi, (
+        f"{family_id}: minority-label share {rate:.4f} outside [{lo}, {hi}]; "
+        f"a constant-answer policy would score {1 - rate:.4f}")
+
+
+def test_constraint_rules_balance_is_a_pure_deterministic_function():
+    """The balanced sampler may not smuggle in state: the same identity must
+    rebuild the same instance, and the rule condition must be reproducible."""
+    from foundation_learner.ecology.base import KIND_SUPPORT, encode_seed
+    from foundation_learner.ecology.families import constraint_rules as CR
+
+    family = get_family("constraint_rules")
+    rule_a = family.sample_rule(make_rng(derive_seed(1, "balance")))
+    rule_b = family.sample_rule(make_rng(derive_seed(1, "balance")))
+    assert canonical_json(rule_a.params) == canonical_json(rule_b.params)
+    assert family.satisfiability_rate(rule_a) == \
+        family.satisfiability_rate(rule_b) >= CR.RULE_MIN_SAT_RATE
+    for raw in (11, 2222, 333333):
+        first = family.instance(rule_a, encode_seed(raw, KIND_SUPPORT), 1)
+        second = family.instance(rule_a, encode_seed(raw, KIND_SUPPORT), 1)
+        assert canonical_json(first.to_dict()) == canonical_json(second.to_dict())
+
+
+def test_every_sampled_constraint_rule_can_produce_both_labels():
+    from foundation_learner.ecology.families import constraint_rules as CR
+
+    family = get_family("constraint_rules")
+    for r in range(60):
+        rule = family.sample_rule(
+            make_rng(derive_seed(5, "constraint_rules", "reachable", r)))
+        assert family.satisfiability_rate(rule) >= CR.RULE_MIN_SAT_RATE
+
+
 def test_registry_matches_the_frozen_family_ids():
     assert tuple(FAMILY_REGISTRY) == FAMILY_IDS
     assert len(FAMILIES) == 12
@@ -70,7 +172,7 @@ def test_identity_fields_follow_the_frozen_scheme(family):
                                                  family.rule_spec(rule))
     for kind, instance in instances.items():
         assert instance.family_id == family.family_id
-        assert instance.generator_version == "1.0.0"
+        assert instance.generator_version == family.generator_version
         assert instance.kind == kind
         assert instance.surface_map_id == "canonical"
         assert instance.instance_id == domain_sha256("FL_V0_INSTANCE", {

@@ -5,6 +5,15 @@ plain second call, a second call from a second process-level guard, deleting
 the ledger, truncating it, and rewriting the opening entry.  It also checks
 that a refused second opening leaves the ledger untouched and that the results
 of the FIRST opening remain immutable.
+
+UPDATED for the two-phase opening (Amendment 12).  The semantics that changed:
+the ``SEALED_OPENED`` entry is written by ``commit()``, after the evaluation
+records exist, and a failed attempt is recorded as ``SEALED_OPENING_ABORTED``
+and permits exactly ONE retry.  The attacks are unchanged in spirit and are
+extended, not weakened: a THIRD attempt must refuse, an aborted attempt must
+stay in the ledger forever, a provisional unlock must not be able to write a
+sealed result, and reading without frozen development decisions must still be
+impossible.
 """
 from __future__ import annotations
 
@@ -50,25 +59,33 @@ def opening_kwargs(pregen, out, guard):
                 guard=guard)
 
 
+def commit_an_opening(pregen, out, guard, shard):
+    """The NORMAL flow: read the sealed shard, then commit on real records."""
+    unlock = sg.open_sealed(**opening_kwargs(pregen, out, guard))
+    records = unlock.read_shard(shard)
+    unlock.commit(evaluation={"n_records": len(records)})
+    return unlock
+
+
 def test_a_second_opening_refuses(tmp_path):
-    guard, pregen, out, _ = campaign(tmp_path)
-    sg.open_sealed(**opening_kwargs(pregen, out, guard))
+    guard, pregen, out, shard = campaign(tmp_path)
+    commit_an_opening(pregen, out, guard, shard)
     with pytest.raises(sg.LedgerError):
         sg.open_sealed(**opening_kwargs(pregen, out, guard))
 
 
 def test_a_fresh_guard_does_not_reset_the_ledger(tmp_path):
     """The single-use record lives on disk, not in process memory."""
-    guard, pregen, out, _ = campaign(tmp_path)
-    sg.open_sealed(**opening_kwargs(pregen, out, guard))
+    guard, pregen, out, shard = campaign(tmp_path)
+    commit_an_opening(pregen, out, guard, shard)
     other = o1_isolation.IsolationGuard(label="HOSTILE_SECOND_PROCESS")
     with pytest.raises(sg.LedgerError):
         sg.open_sealed(**opening_kwargs(pregen, out, other))
 
 
 def test_a_refused_second_opening_leaves_the_ledger_unchanged(tmp_path):
-    guard, pregen, out, _ = campaign(tmp_path)
-    sg.open_sealed(**opening_kwargs(pregen, out, guard))
+    guard, pregen, out, shard = campaign(tmp_path)
+    commit_an_opening(pregen, out, guard, shard)
     ledger = os.path.join(out, sg.LEDGER_NAME)
     before = open(ledger, encoding="utf-8").read()
     with pytest.raises(sg.LedgerError):
@@ -76,15 +93,51 @@ def test_a_refused_second_opening_leaves_the_ledger_unchanged(tmp_path):
     assert open(ledger, encoding="utf-8").read() == before
 
 
+def test_a_third_attempt_refuses_after_two_recorded_aborts(tmp_path):
+    """The retry budget is ONE, and every attempt stays in the ledger."""
+    guard, pregen, out, _ = campaign(tmp_path)
+    sg.open_sealed(**opening_kwargs(pregen, out, guard)).abort("attempt 1")
+    sg.open_sealed(**opening_kwargs(pregen, out, guard)).abort("attempt 2")
+    with pytest.raises(sg.LedgerError) as exc:
+        sg.open_sealed(**opening_kwargs(pregen, out, guard))
+    assert "budget is 2" in str(exc.value)
+    events = [e["event"] for e in
+              sg.read_ledger(os.path.join(out, sg.LEDGER_NAME), guard=guard)]
+    assert events == [sg.EVENT_ABORTED, sg.EVENT_ABORTED]
+
+
+def test_a_provisional_unlock_cannot_write_a_sealed_result(tmp_path):
+    """Phase one may READ; only the committed opening may write a result."""
+    guard, pregen, out, shard = campaign(tmp_path)
+    unlock = sg.open_sealed(**opening_kwargs(pregen, out, guard))
+    assert unlock.read_shard(shard)
+    with pytest.raises(sg.SealedGateRefusal):
+        unlock.write_result(os.path.join(out, "premature.json"), {"x": 1})
+    assert not os.path.exists(os.path.join(out, "premature.json"))
+
+
+def test_an_abort_cannot_be_used_to_erase_an_attempt(tmp_path):
+    """An aborted attempt is permanent and the unlock is dead afterwards."""
+    guard, pregen, out, shard = campaign(tmp_path)
+    unlock = sg.open_sealed(**opening_kwargs(pregen, out, guard))
+    unlock.abort("the attack aborts and hopes the attempt disappears")
+    ledger = os.path.join(out, sg.LEDGER_NAME)
+    assert len(open(ledger, encoding="utf-8").read().splitlines()) == 1
+    with pytest.raises(sg.SealedGateRefusal):
+        unlock.read_shard(shard)
+    with pytest.raises(sg.SealedGateRefusal):
+        unlock.commit(evaluation={"n_records": 0})
+
+
 def test_deleting_the_ledger_is_detectable_from_the_results(tmp_path):
     """A deleted ledger permits a re-open, so the RESULTS carry the proof."""
-    guard, pregen, out, _ = campaign(tmp_path)
-    unlock = sg.open_sealed(**opening_kwargs(pregen, out, guard))
+    guard, pregen, out, shard = campaign(tmp_path)
+    unlock = commit_an_opening(pregen, out, guard, shard)
     result = unlock.write_result(os.path.join(out, "sealed_report.json"),
                                  {"macro_aulc": 0.1})
     first_entry = unlock.entry["entry_sha256"]
     os.remove(os.path.join(out, sg.LEDGER_NAME))
-    second = sg.open_sealed(**opening_kwargs(pregen, out, guard))
+    second = commit_an_opening(pregen, out, guard, shard)
     assert second.entry["entry_sha256"] != first_entry
     # the surviving read-only result still names the FIRST opening, so the
     # deletion is evident to any auditor comparing the two
@@ -100,8 +153,8 @@ def test_deleting_the_ledger_is_detectable_from_the_results(tmp_path):
 
 
 def test_a_truncated_or_edited_ledger_refuses_rather_than_reopening(tmp_path):
-    guard, pregen, out, _ = campaign(tmp_path)
-    unlock = sg.open_sealed(**opening_kwargs(pregen, out, guard))
+    guard, pregen, out, shard = campaign(tmp_path)
+    unlock = commit_an_opening(pregen, out, guard, shard)
     unlock.write_result(os.path.join(out, "r.json"), {"a": 1})
     ledger = os.path.join(out, sg.LEDGER_NAME)
     lines = open(ledger, encoding="utf-8").read().splitlines()
@@ -123,7 +176,7 @@ def test_a_truncated_or_edited_ledger_refuses_rather_than_reopening(tmp_path):
 
 def test_the_unlock_cannot_be_reused_after_revocation(tmp_path):
     guard, pregen, out, shard = campaign(tmp_path)
-    unlock = sg.open_sealed(**opening_kwargs(pregen, out, guard))
+    unlock = commit_an_opening(pregen, out, guard, shard)
     assert unlock.read_shard(shard)
     unlock.revoke()
     with pytest.raises(sg.SealedGateRefusal):

@@ -203,9 +203,27 @@ def stage_episode_count(ctx: Any, stage: Any, key: str, *,
 
 def dev_episodes(ctx: Any, stage: Any, *, count: int | None = None,
                  mode: str = "scripted") -> list[Any]:
-    episodes = load_split_episodes(ctx, "DEVELOPMENT", mode)
-    cap = ctx.eval_cap(stage) if count is None else int(count)
-    return episodes[:cap]
+    """The DEVELOPMENT evaluation set for a mechanism rung.
+
+    Delegates to the campaign's single evaluation-set assembler, which applies
+    the cap PER FAMILY and asserts that the assembled set covers exactly the
+    frozen DEVELOPMENT families.  The previous global ``episodes[:cap]`` slice
+    silently collapsed every mechanism rung's evaluation onto whichever family
+    sorts first in shard order, turning macro-averaged, family-clustered
+    metrics into single-family ones (review finding R-C3).
+    """
+    sd = _stage_definitions()
+    if count is None:
+        return sd.load_balanced_eval_episodes(ctx, stage, mode=mode,
+                                              split="DEVELOPMENT")
+    plan = sd.eval_plan(ctx, stage, split="DEVELOPMENT")
+    per_family = max(1, int(count) // int(plan["n_families"]))
+    episodes = sd.load_episodes(ctx.pregen_root, "DEVELOPMENT", mode,
+                                guard=ctx.guard, limit_per_family=per_family)
+    sd.assert_eval_family_coverage(
+        episodes, "DEVELOPMENT",
+        context=f"{getattr(stage, 'stage_id', '?')} evaluation set")
+    return episodes
 
 
 def train_episodes(ctx: Any, count: int, *, mode: str = "scripted") -> list[Any]:
@@ -373,22 +391,18 @@ def load_poison_records(ctx: Any, split: str) -> dict[str, dict]:
 
 def load_chain_specs(ctx: Any, episodes: Sequence[Any], *, split: str = "DEVELOPMENT",
                      limit: int | None = None) -> list[Any]:
-    """Pre-generated A->B->A chains resolved against loaded episodes."""
-    from foundation_learner.evaluation.interference import ChainSpec
+    """Pre-generated A->B->A chains (the campaign's resolver).
 
-    by_id = {ep.episode_id: ep for ep in episodes}
-    chains: list[Any] = []
-    for row in _guarded_jsonl(ctx, "chains", split):
-        ids = [str(i) for i in row.get("episode_ids", [])]
-        if len(ids) != 3 or any(i not in by_id for i in ids):
-            continue
-        chains.append(ChainSpec(
-            chain_id=str(row["chain_id"]), family_a=str(row["family_a"]),
-            family_b=str(row["family_b"]), episode_a1=by_id[ids[0]],
-            episode_b=by_id[ids[1]], episode_a2=by_id[ids[2]]))
-        if limit is not None and len(chains) >= int(limit):
-            break
-    return chains
+    Delegates to ``campaign.stage_definitions.load_chain_specs``, which
+    completes the episode pool from the split's own shards when a chain names
+    an episode the caller does not hold, and selects chains ROUND-ROBIN over
+    the ordered family pairs.  The previous implementation dropped every chain
+    whose three episodes were not all inside the caller's capped subset and, on
+    a limit, returned chains of a single ordered pair — neither of which is the
+    family-balanced interference metric of contract §9 (review finding R-C3).
+    """
+    return _stage_definitions().load_chain_specs(ctx, episodes, split=split,
+                                                 limit=limit)
 
 
 def reveal_variant(episode: Any) -> Any:

@@ -45,7 +45,8 @@ def frozen_decisions(guard, out_dir):
     return path
 
 
-def open_once(tmp_path):
+def open_provisional(tmp_path):
+    """Phase ONE only: nothing is written to the ledger yet."""
     guard, pregen, out, shard, manifest = campaign_dir(tmp_path)
     decisions = frozen_decisions(guard, out)
     unlock = sg.open_sealed(
@@ -54,6 +55,22 @@ def open_once(tmp_path):
         split_manifest_path=os.path.join(pregen, "family_split_manifest.json"),
         guard=guard)
     return guard, pregen, out, shard, unlock
+
+
+def open_once(tmp_path):
+    """Both phases: read the sealed shard, then COMMIT (the normal flow)."""
+    guard, pregen, out, shard, unlock = open_provisional(tmp_path)
+    records = unlock.read_shard(shard)
+    unlock.commit(evaluation={"n_records": len(records)})
+    return guard, pregen, out, shard, unlock
+
+
+def reopen_kwargs(pregen, out, guard):
+    return dict(ledger_path=os.path.join(out, sg.LEDGER_NAME),
+                dev_decisions_path=os.path.join(out, sg.DEV_DECISIONS_NAME),
+                split_manifest_path=os.path.join(pregen,
+                                                 "family_split_manifest.json"),
+                guard=guard)
 
 
 # ---------------- the shard really is enciphered ----------------
@@ -126,18 +143,106 @@ def test_a_valid_opening_reads_the_sealed_records_and_ledgers_it(tmp_path):
     assert entries[0]["prev_sha256"] == "0" * 64
     assert entries[0]["stage_states"] == {"FL3": "COMPLETE"}
     assert "utc" in entries[0]
+    # the committed entry proves the EVIDENCE existed first
+    assert entries[0]["records_read"] == len(RECORDS)
+    assert entries[0]["attempt_index"] == 0
+    assert entries[0]["evaluation"]["n_records"] == len(RECORDS)
+
+
+# ---------------- the two-phase opening (contract §12c + Amendment 12) ------
+
+def test_phase_one_writes_nothing_to_the_ledger(tmp_path):
+    guard, _, out, shard, unlock = open_provisional(tmp_path)
+    assert unlock.committed is False
+    assert not os.path.exists(os.path.join(out, sg.LEDGER_NAME))
+    assert unlock.read_shard(shard) == RECORDS      # reading is allowed
+    assert not os.path.exists(os.path.join(out, sg.LEDGER_NAME))
+
+
+def test_a_provisional_unlock_may_not_write_a_result(tmp_path):
+    _, _, out, _, unlock = open_provisional(tmp_path)
+    with pytest.raises(sg.SealedGateRefusal) as exc:
+        unlock.write_result(os.path.join(out, "r.json"), {"a": 1})
+    assert "COMMITTED" in str(exc.value)
+    with pytest.raises(sg.SealedGateRefusal):
+        unlock.write_result_records(os.path.join(out, "r.jsonl"), [{"a": 1}])
+
+
+def test_an_aborted_attempt_is_ledgered_and_leaves_exactly_one_retry(tmp_path):
+    guard, pregen, out, shard, unlock = open_provisional(tmp_path)
+    unlock.abort("simulated infrastructure failure")
+    entries = sg.read_ledger(os.path.join(out, sg.LEDGER_NAME), guard=guard)
+    assert [e["event"] for e in entries] == [sg.EVENT_ABORTED]
+    assert entries[0]["retries_remaining"] == 1
+    # the aborted unlock is dead
+    with pytest.raises(sg.SealedGateRefusal):
+        unlock.read_shard(shard)
+
+    retry = sg.open_sealed(**reopen_kwargs(pregen, out, guard))
+    assert retry.attempt_index == 1 and retry.prior_aborted == 1
+    retry.read_shard(shard)
+    retry.commit(evaluation={"n_records": len(RECORDS)})
+    events = [e["event"] for e in
+              sg.read_ledger(os.path.join(out, sg.LEDGER_NAME), guard=guard)]
+    assert events == [sg.EVENT_ABORTED, sg.EVENT_OPENED]
+
+
+def test_a_third_attempt_refuses_and_both_attempts_stay_recorded(tmp_path):
+    guard, pregen, out, _, unlock = open_provisional(tmp_path)
+    unlock.abort("attempt 1 failed")
+    second = sg.open_sealed(**reopen_kwargs(pregen, out, guard))
+    second.abort("attempt 2 failed")
+    with pytest.raises(sg.LedgerError) as exc:
+        sg.open_sealed(**reopen_kwargs(pregen, out, guard))
+    assert "budget is 2" in str(exc.value)
+    events = [e["event"] for e in
+              sg.read_ledger(os.path.join(out, sg.LEDGER_NAME), guard=guard)]
+    assert events == [sg.EVENT_ABORTED, sg.EVENT_ABORTED]
+
+
+def test_the_context_manager_aborts_on_an_exception_and_reraises(tmp_path):
+    guard, pregen, out, shard, _ = campaign_dir(tmp_path)
+    frozen_decisions(guard, out)
+    with pytest.raises(RuntimeError, match="boom"):
+        with sg.sealed_opening(**reopen_kwargs(pregen, out, guard)) as unlock:
+            unlock.read_shard(shard)
+            raise RuntimeError("boom")
+    entries = sg.read_ledger(os.path.join(out, sg.LEDGER_NAME), guard=guard)
+    assert [e["event"] for e in entries] == [sg.EVENT_ABORTED]
+    assert "boom" in entries[0]["reason"]
+
+
+def test_the_context_manager_commits_on_success(tmp_path):
+    guard, pregen, out, shard, _ = campaign_dir(tmp_path)
+    frozen_decisions(guard, out)
+    with sg.sealed_opening(**reopen_kwargs(pregen, out, guard)) as unlock:
+        unlock.read_shard(shard)
+        unlock.commit(evaluation={"n_records": len(RECORDS)})
+        unlock.write_result(os.path.join(out, "sealed.json"), {"aulc": 0.1})
+    entries = sg.read_ledger(os.path.join(out, sg.LEDGER_NAME), guard=guard)
+    assert [e["event"] for e in entries] == [sg.EVENT_OPENED, sg.EVENT_RESULT]
+
+
+def test_a_body_that_never_commits_is_recorded_as_an_aborted_attempt(tmp_path):
+    guard, pregen, out, shard, _ = campaign_dir(tmp_path)
+    frozen_decisions(guard, out)
+    with sg.sealed_opening(**reopen_kwargs(pregen, out, guard)) as unlock:
+        unlock.read_shard(shard)            # produced nothing, committed nothing
+    entries = sg.read_ledger(os.path.join(out, sg.LEDGER_NAME), guard=guard)
+    assert [e["event"] for e in entries] == [sg.EVENT_ABORTED]
 
 
 def test_a_second_opening_refuses(tmp_path):
     guard, pregen, out, _, _ = open_once(tmp_path)
     with pytest.raises(sg.LedgerError) as exc:
-        sg.open_sealed(
-            ledger_path=os.path.join(out, sg.LEDGER_NAME),
-            dev_decisions_path=os.path.join(out, sg.DEV_DECISIONS_NAME),
-            split_manifest_path=os.path.join(pregen,
-                                             "family_split_manifest.json"),
-            guard=guard)
+        sg.open_sealed(**reopen_kwargs(pregen, out, guard))
     assert "already been opened" in str(exc.value)
+
+
+def test_a_committed_opening_cannot_be_aborted(tmp_path):
+    _, _, _, _, unlock = open_once(tmp_path)
+    with pytest.raises(sg.SealedGateRefusal):
+        unlock.abort("too late")
 
 
 def test_a_revoked_unlock_cannot_read(tmp_path):

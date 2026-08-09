@@ -125,7 +125,9 @@ def assemble_episode(family: TaskFamily, rule: Rule, *, split: str,
         if structured:
             record = family.feedback_record(rule, support, text, hint_rng)
             slot_condition = hint_conditions[si]
-            hint_text = hint_for_condition(record, slot_condition, hint_rng)
+            hint_text = hint_for_condition(
+                record, slot_condition, hint_rng,
+                answer_canonical=support.answer_canonical)
             poisoned = slot_condition in POISONED_CONDITIONS
             index = add(Role.HINT, hint_text, support.instance_id, None, False,
                         poisoned, False, f"{slot}a0",
@@ -229,7 +231,9 @@ def build_hint_variants(family: TaskFamily, rule: Rule, episode: Episode,
                 "slot": slot["slot"],
                 "condition": slot_condition,
                 "poison": slot_condition in POISONED_CONDITIONS,
-                "text": hint_for_condition(record, slot_condition, rng),
+                "text": hint_for_condition(
+                    record, slot_condition, rng,
+                    answer_canonical=instance.answer_canonical),
             })
         out[condition] = variant
     return out

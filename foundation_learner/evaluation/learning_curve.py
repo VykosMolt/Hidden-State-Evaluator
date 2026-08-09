@@ -19,6 +19,17 @@ attempts carried by index ``k``), plus a full transcript record
 (``flb200.episode_record.v1``: prompts' hashes, generations, token ids,
 finish reasons, verifier outcomes, feedback texts).
 
+Eval-time sequence allowance and per-episode isolation (Amendment 13)
+====================================================================
+The ONLINE context is longer than the pre-generated rendering it walks: every
+MODEL_ATTEMPT slot carries up to ``max_new_tokens`` REAL generated tokens
+instead of the scripted answer line.  ``EVAL_ONLINE_MAX_SEQ_LEN`` (4096) is the
+frozen EVAL-TIME allowance; the contract's 2048 remains the training-side
+rendering budget and is unchanged.  An episode whose online context would still
+exceed the allowance is NEVER truncated: it is recorded with
+``status = "ONLINE_BUDGET_EXCEEDED"``, its ``R`` is marked missing (so no metric
+consumes a partial curve), and every other episode in the batch continues.
+
 Feedback channel policy (frozen for the ONLINE evaluator)
 =========================================================
 * ``FEEDBACK`` is the CERTIFIED channel: it is always verifier-truthful and,
@@ -118,7 +129,27 @@ HIDDEN_LABEL_ROLES = frozenset({"QUERY_TASK", "TRANSFER_TASK"})
 
 ATTEMPT_SENTINEL = "FL_V0_ATTEMPT_SLOT"
 DEFAULT_ATTEMPT_CUE = "ATTEMPT:"
-MAX_SEQ_LEN = 2048  # contract section 7
+#: Contract section 7: the budget every PRE-GENERATED episode RENDERING is
+#: sized to fit.  It bounds the training-side sequence length and is unchanged.
+MAX_SEQ_LEN = 2048
+
+#: Frozen EVAL-TIME online context allowance (Amendment 13, recorded before any
+#: run).  An ONLINE episode is not a rendering of the pre-generated transcript:
+#: every one of the ten MODEL_ATTEMPT slots is replaced by up to
+#: ``max_new_tokens`` REAL generated tokens, so the last prompt of the longest
+#: episodes projects past 2048 even though the scripted rendering fits.  2048
+#: was a DATA-GENERATION constraint, not an evaluation constraint: the frozen
+#: backbone's ``max_position_embeddings`` is 65536 (contract section 1).  4096
+#: covers the worst case present in the pre-generated data: measured with the
+#: real Ouro tokenizer, the longest scripted rendering is 1740 tokens and the
+#: longest projected online context 1740 + 11 x 64 = 2444.  Truncation
+#: remains forbidden; an episode that would still exceed this allowance is
+#: recorded, excluded and counted, never silently shortened.
+EVAL_ONLINE_MAX_SEQ_LEN = 4096
+
+#: episode-record ``status`` values
+STATUS_COMPLETE = "COMPLETE"
+STATUS_ONLINE_BUDGET_EXCEEDED = "ONLINE_BUDGET_EXCEEDED"
 
 FEEDBACK_CONDITIONS = ("structured", "correctness_only")
 CONTEXT_MODES = ("history", "context_reset")
@@ -133,7 +164,14 @@ class EpisodeEnvironmentError(RuntimeError):
 
 
 class SequenceBudgetError(RuntimeError):
-    """A rendered prompt exceeds the frozen sequence budget (never truncated)."""
+    """An online prompt exceeds the frozen eval-time allowance (never truncated).
+
+    Since Amendment 13 the ONLINE driver does not let this abort a whole batch:
+    :meth:`EpisodeWalker.abort_online_budget` isolates the offending episode and
+    stores this exception's message in that episode's record.  The class is kept
+    because it is the named, catchable type of that condition and because
+    callers that drive a single episode may still want to raise it.
+    """
 
 
 class FeedbackLeakError(RuntimeError):
@@ -348,7 +386,9 @@ class FamilyEnvironment:
                     f"ecology.poison.hint_for_condition is unavailable: {exc!r}") from exc
             rng = self._rng(item_id, f"hint::{declared}", attempt_number)
             record = self.family.feedback_record(self.rule, inst, answer_text, rng)
-            return str(hint_for_condition(record, declared, rng))
+            return str(hint_for_condition(
+                record, declared, rng,
+                answer_canonical=self.canonical_answer(item_id)))
         if poison:
             return str(self.family.corrupted_feedback(
                 self.rule, inst, answer_text,
@@ -500,7 +540,9 @@ class LearningCurveConfig:
     generation: GenerationConfig = field(default_factory=GenerationConfig)
     prompt_mode: str = "sentinel"          # "sentinel" | "upto_event_with_cue"
     attempt_cue: str = DEFAULT_ATTEMPT_CUE
-    max_seq_len: int = MAX_SEQ_LEN
+    #: EVAL-TIME allowance, not the section 7 rendering budget (see
+    #: ``EVAL_ONLINE_MAX_SEQ_LEN``); training-side rendering still uses 2048.
+    max_seq_len: int = EVAL_ONLINE_MAX_SEQ_LEN
     record_generations: bool = True
     record_prompts: bool = False           # full prompt text (large); hashes always
     arm_tag: str = "unspecified"
@@ -641,6 +683,8 @@ class EpisodeWalker:
         self.live_source_index: list[int] = []
         self.pos = 0
         self.finished = False
+        self.status = STATUS_COMPLETE
+        self.budget_event: dict[str, Any] | None = None
         self.attempt_cue: str | None = None
         self.attempts: list[dict[str, Any]] = []
         self.outcomes: dict[str, VerifierOutcome] = {}
@@ -777,6 +821,47 @@ class EpisodeWalker:
             "reset": use_reset,
         }
         return PromptRequest(walker=self, prompt=prompt, prefix=prefix)
+
+    # -- per-episode budget isolation ------------------------------------
+    def abort_online_budget(self, *, prompt_tokens: int, max_new_tokens: int,
+                            limit: int) -> dict[str, Any]:
+        """Stop THIS episode because its online context exceeds the allowance.
+
+        Contract section 7 forbids generation-side truncation, so an episode
+        whose online context would not fit cannot be shortened.  Before
+        Amendment 13 the whole ``run_episodes`` batch raised
+        :class:`SequenceBudgetError` on the first such episode, i.e. one long
+        episode destroyed an entire evaluation.  The episode is now recorded
+        with ``status = ONLINE_BUDGET_EXCEEDED``, its partial ``R_k`` is marked
+        MISSING (so no metric can consume a truncated curve), it is counted in
+        the record set, and every other episode proceeds.  Nothing is dropped
+        silently: the record is returned like any other and
+        ``metrics.excluded_records`` reports the count.
+        """
+        pending = self._pending or {}
+        self._pending = None
+        self.status = STATUS_ONLINE_BUDGET_EXCEEDED
+        self.budget_event = {
+            "reason": STATUS_ONLINE_BUDGET_EXCEEDED,
+            "interaction_index": pending.get("interaction_index"),
+            "item_id": pending.get("item_id"),
+            "attempts_completed": len(self.attempts),
+            "prompt_tokens": int(prompt_tokens),
+            "max_new_tokens": int(max_new_tokens),
+            "projected_tokens": int(prompt_tokens) + int(max_new_tokens),
+            "allowance": int(limit),
+            "context_mode": ("context_reset" if pending.get("reset")
+                             else "history"),
+            "truncated": False,
+            "detail": str(SequenceBudgetError(
+                f"prompt {int(prompt_tokens)} tokens + {int(max_new_tokens)} new "
+                f"exceeds the frozen eval-time allowance {int(limit)} "
+                f"(episode {self.ctx.episode_id}); generation-side truncation is "
+                "forbidden, so this episode is recorded and excluded")),
+        }
+        self.finished = True
+        self.cb.on_episode_end(self.ctx)
+        return self.budget_event
 
     # -- generation feedback --------------------------------------------
     def submit(self, gen: GenerationRecord) -> None:
@@ -965,6 +1050,14 @@ class EpisodeWalker:
             by_index.setdefault(int(idx), []).append(bool(a["correct"]))
         R = {str(k): float(sum(v) / len(v)) for k, v in sorted(by_index.items())}
         aulc = float(sum(R.values()) / len(R)) if R else None
+        partial_indices: list[int] = []
+        if self.status != STATUS_COMPLETE:
+            # The curve of an aborted episode is INCOMPLETE, so it is marked
+            # missing rather than reported as a shorter curve: a partial R
+            # would silently change what macro-AULC averages over.
+            partial_indices = sorted(int(k) for k in R)
+            R = {}
+            aulc = None
         record = {
             "schema": EPISODE_RECORD_SCHEMA,
             "episode_id": self.ctx.episode_id,
@@ -981,9 +1074,15 @@ class EpisodeWalker:
             "poison_condition": _jsonable(condition_get(self.ep, "poison_condition")),
             "remap_id": _jsonable(condition_get(self.ep, "remap_id")),
             "generalization_scope": None,
+            "status": self.status,
             "R": R,
             "interaction_indices": sorted(int(k) for k in R),
             "aulc": aulc,
+            "R_missing_reason": (None if self.status == STATUS_COMPLETE
+                                 else self.status),
+            "partial_interaction_indices": partial_indices,
+            "online_budget_event": self.budget_event,
+            "eval_online_allowance": int(self.cfg.max_seq_len),
             "n_attempts": len(self.attempts),
             "n_feedback_events": self.n_feedback_events,
             "reset_prompts_used": self.reset_prompts_used,
@@ -1063,22 +1162,31 @@ def run_episodes(
                 still.append(w)
         if not requests:
             break
+        admitted: list[PromptRequest] = []
         for req in requests:
             n_tok = _prompt_token_count(bundle, req.prompt)
-            budget = n_tok + int(cfg.generation.max_new_tokens)
-            if budget > int(cfg.max_seq_len):
-                raise SequenceBudgetError(
-                    f"prompt {n_tok} tokens + {cfg.generation.max_new_tokens} new "
-                    f"exceeds the frozen budget {cfg.max_seq_len} "
-                    f"(episode {req.walker.ctx.episode_id}); episodes are sized to "
-                    "fit and generation-side truncation is forbidden")
-        prefixes = [r.prefix for r in requests]
-        gens = greedy_generate_detailed(
-            bundle, [r.prompt for r in requests],
-            prefix_embeds=(prefixes if any(p is not None for p in prefixes) else None),
-            config=cfg.generation, parser=parser)
-        for req, gen in zip(requests, gens):
-            req.walker.submit(gen)
+            projected = n_tok + int(cfg.generation.max_new_tokens)
+            if projected > int(cfg.max_seq_len):
+                # PER-EPISODE ISOLATION (Amendment 13): the offending episode is
+                # recorded with status ONLINE_BUDGET_EXCEEDED and its R marked
+                # missing; the rest of the batch continues.  Truncating instead
+                # is forbidden (contract section 7), and aborting the batch made
+                # one long episode destroy every other episode's evidence.
+                req.walker.abort_online_budget(
+                    prompt_tokens=n_tok,
+                    max_new_tokens=int(cfg.generation.max_new_tokens),
+                    limit=int(cfg.max_seq_len))
+                continue
+            admitted.append(req)
+        if admitted:
+            prefixes = [r.prefix for r in admitted]
+            gens = greedy_generate_detailed(
+                bundle, [r.prompt for r in admitted],
+                prefix_embeds=(prefixes if any(p is not None for p in prefixes)
+                               else None),
+                config=cfg.generation, parser=parser)
+            for req, gen in zip(admitted, gens):
+                req.walker.submit(gen)
         active = [w for w in still if not w.finished]
     return [w.episode_record() for w in walkers]
 
@@ -1130,6 +1238,9 @@ __all__ = [
     "FEEDBACK_ROLES",
     "ATTEMPT_SENTINEL",
     "MAX_SEQ_LEN",
+    "EVAL_ONLINE_MAX_SEQ_LEN",
+    "STATUS_COMPLETE",
+    "STATUS_ONLINE_BUDGET_EXCEEDED",
     "FEEDBACK_CONDITIONS",
     "CONTEXT_MODES",
     "RenderIntegrationError",

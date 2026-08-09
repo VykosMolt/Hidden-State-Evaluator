@@ -236,11 +236,48 @@ def test_sharing_one_callbacks_object_across_episodes_is_refused():
 
 # -- invariants ----------------------------------------------------------
 def test_sequence_budget_is_enforced_and_never_truncated():
+    """Amendment 13: the budget is still enforced, but it now stops THIS
+    episode instead of the whole batch, and the episode is recorded, marked and
+    excluded rather than truncated."""
     bundle = S.tiny_bundle()
     ep, family, rule = S.real_episode()
-    with pytest.raises(LC.SequenceBudgetError):
-        LC.run_episode(bundle, ep, S.env_for(ep, family, rule),
-                       cfg=_cfg(max_seq_len=40))
+    record = LC.run_episode(bundle, ep, S.env_for(ep, family, rule),
+                            cfg=_cfg(max_seq_len=40))
+    assert record["status"] == LC.STATUS_ONLINE_BUDGET_EXCEEDED
+    assert record["R"] == {} and record["aulc"] is None
+    assert record["R_missing_reason"] == LC.STATUS_ONLINE_BUDGET_EXCEEDED
+    event = record["online_budget_event"]
+    assert event["truncated"] is False
+    assert event["allowance"] == 40
+    assert event["projected_tokens"] > 40
+
+
+def test_the_eval_allowance_is_frozen_and_separate_from_the_render_budget():
+    assert LC.MAX_SEQ_LEN == 2048               # contract §7, training side
+    assert LC.EVAL_ONLINE_MAX_SEQ_LEN == 4096   # Amendment 13, eval side
+    assert LC.LearningCurveConfig().max_seq_len == LC.EVAL_ONLINE_MAX_SEQ_LEN
+
+
+def test_records_carry_the_fields_the_format_metric_needs():
+    """Amendment 13 minor (b): ``answer_line_rate`` reads ``parsed`` and the
+    finish-reason diagnostic reads ``finish_reason``; both must exist on every
+    attempt of every record."""
+    from foundation_learner.evaluation import metrics as EM
+
+    bundle = S.tiny_bundle()
+    ep, family, rule = S.real_episode()
+    record = LC.run_episode(bundle, ep, S.env_for(ep, family, rule), cfg=_cfg())
+    assert record["attempts"]
+    for attempt in record["attempts"]:
+        assert "parsed" in attempt and "finish_reason" in attempt
+        assert attempt["role"] == "MODEL_ATTEMPT"
+        assert attempt["finish_reason"] in (
+            "answer_line", "eos", "max_new_tokens", "nonfinite_logits")
+    rate = EM.record_answer_line_rate(record)
+    assert rate is not None and 0.0 <= rate <= 1.0
+    assert EM.answer_line_rate([record]) == pytest.approx(rate)
+    assert set(EM.finish_reason_counts([record])) <= {
+        "answer_line", "eos", "max_new_tokens", "nonfinite_logits"}
 
 
 def test_certified_event_flagged_poison_is_refused():

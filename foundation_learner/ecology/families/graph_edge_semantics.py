@@ -14,8 +14,27 @@ one- or two-hop patterns under the hidden semantics does not carry over.  The
 latent label semantics is unchanged.
 
 Structured feedback: the effective out-degree (under the hidden semantics) of
-one node on the queried path, identified by its opaque index in the displayed
-node list.  The reachability bit itself is never stated.
+ONE displayed node, identified by its opaque index in the displayed node list.
+The reachability bit itself is never stated.
+
+WHICH node is hinted is chosen ANSWER-INDEPENDENTLY (generator 1.1.0)
+------------------------------------------------------------------
+Generator 1.0.0 drew the hinted node from the queried PATH when one existed and
+used the source otherwise (contract §4's "one named node on the queried path").
+That made the SELECTION itself a decode channel: "the hinted node is not the
+source" and "the hinted node is the target" are features a reader can compute
+from the prompt alone, and both were deterministic evidence for ``YES``
+(measured P = 1.0 at n = 382 / n = 291 over 2160 sampled items).  The
+reachability bit was therefore readable without ever inferring the hidden edge
+semantics.
+
+Generator 1.1.0 selects the hinted node from the FULL displayed node list with
+a generator seeded ONLY by displayed data (edges, source, target, node count),
+i.e. by nothing that depends on the hidden semantics.  The selection channel
+consequently carries no reachability information (measured: every
+model-computable branch within 0.05 of the base rate), while the hint content
+stays exactly as informative as §4 requires — the TRUE out-degree of a named
+node under the hidden semantics.  Recorded in Amendment 13.
 """
 from __future__ import annotations
 
@@ -65,6 +84,11 @@ def _bfs(adj, source: int, target: int) -> list[int] | None:
 
 class GraphEdgeSemanticsFamily(TaskFamily):
     family_id = "graph_edge_semantics"
+    #: 1.0.0 -> 1.1.0: answer-independent hint-node selection (Amendment 13).
+    #: The bump changes rule_id / instance_id / episode ids for this family and
+    #: the family-split manifest's generator source hash; the data is
+    #: regenerated, the SPLIT itself is unchanged (family ids are unchanged).
+    generator_version = "1.1.0"
     canon_mode = "label"
     symbol_pool = SYMBOL_POOL
     symbol_blocks = (NODE_POOL, LABEL_POOL)
@@ -132,12 +156,29 @@ class GraphEdgeSemanticsFamily(TaskFamily):
 
     # -- feedback -----------------------------------------------------------
 
+    def _hint_node(self, item: Item) -> int:
+        """The hinted node: uniform over the DISPLAYED nodes, answer-independent.
+
+        The seed is derived from DISPLAYED data only (the edge list, the queried
+        source and target, the node count).  The hidden label semantics — the
+        only thing reachability depends on — is deliberately absent from the
+        seed, so the choice of node cannot carry one bit about the answer.  It
+        is still a pure function of the instance, so the same item always gets
+        the same hinted node no matter which attempt the hint answers.
+        """
+        data = item.data
+        seed = derive_seed(0, self.family_id, "HINT_NODE",
+                           [[int(u), int(v), int(label)]
+                            for u, v, label in data["edges"]],
+                           int(data["source"]), int(data["target"]),
+                           int(data["n_nodes"]))
+        return int(make_rng(seed).integers(0, int(data["n_nodes"])))
+
     def _feedback(self, rule: Rule, item: Item, plan, attempt, truth,
                   rng: np.random.Generator) -> Feedback:
         n_nodes = item.data["n_nodes"]
         adj = _adjacency(item.data["edges"], rule.params["semantics"], n_nodes)
-        path = item.data["path"]
-        node = int(rng.choice(path)) if path else item.data["source"]
+        node = self._hint_node(item)
         degree = len(adj[node])
         names = tuple(letters(i) for i in range(n_nodes))
         return Feedback("HINT-DEGREE", (

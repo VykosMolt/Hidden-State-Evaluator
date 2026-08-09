@@ -17,6 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 __all__ = ["ROOT_SEED", "SECOND_SEED", "DEFAULT_DIFFICULTY", "MAX_SEQ_LEN",
+           "EVAL_ONLINE_MAX_SEQ_LEN", "EVAL_MAX_NEW_TOKENS",
            "PoolSizes", "FULL_POOLS", "tiny_pools", "SPLIT_POOL_KEYS",
            "REMAP_SPLITS", "N_REMAP_VARIANTS", "N_CHAINS_PER_PAIR",
            "TINY_DIVISOR", "FL1_ITEMS_PER_EPISODE"]
@@ -30,6 +31,18 @@ DEFAULT_DIFFICULTY = 1
 
 #: contract §7 sequence budget; episodes are SIZED to fit, never truncated
 MAX_SEQ_LEN = 2048
+
+#: Frozen EVAL-TIME online context allowance (Amendment 13).  The ONLINE
+#: evaluator replaces every scripted attempt line with up to
+#: ``EVAL_MAX_NEW_TOKENS`` real generated tokens, so the online context grows
+#: past the 2048 rendering budget; the same constant lives in
+#: ``evaluation.learning_curve.EVAL_ONLINE_MAX_SEQ_LEN`` (a test pins the two
+#: together) and is duplicated here because nothing under ``data/`` may import
+#: the torch-dependent evaluation package.
+EVAL_ONLINE_MAX_SEQ_LEN = 4096
+
+#: contract §6: frozen online decode budget per MODEL_ATTEMPT slot
+EVAL_MAX_NEW_TOKENS = 64
 
 TINY_DIVISOR = 100
 

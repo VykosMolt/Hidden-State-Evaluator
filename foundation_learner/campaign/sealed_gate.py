@@ -10,13 +10,24 @@ The gate:
     path presented without a valid unlock record, so an evaluator, the dev
     selector, or a stray script cannot read sealed data by accident;
 (b) **prerequisite** — :func:`open_sealed` refuses to derive or apply
-    ``K_seal`` unless ``DEV_DECISIONS_FROZEN.json`` exists, validates against
-    the ``flb200.dev_decisions.v1`` schema, and its hash is written to the
-    opening ledger;
-(c) **single opening** — the ledger is append-only and hash-chained; a second
-    unlock refuses;
+    ``K_seal`` unless ``DEV_DECISIONS_FROZEN.json`` exists and validates
+    against the ``flb200.dev_decisions.v1`` schema;
+(c) **single opening, in two phases** — :func:`open_sealed` grants PROVISIONAL
+    access and writes NOTHING; the ``SEALED_OPENED`` entry is appended only
+    when :meth:`SealedUnlock.commit` is called, i.e. after the evaluation has
+    actually produced records.  A failure before the commit appends a
+    ``SEALED_OPENING_ABORTED`` entry instead, which permits EXACTLY ONE retry;
+    both attempts stay permanently in the append-only, hash-chained ledger, and
+    a third attempt (or any attempt after a committed opening) refuses;
 (d) **immutable results** — sealed results are written once, then ``chmod
-    0444`` and hash-ledgered; overwriting an existing sealed result is refused.
+    0444`` and hash-ledgered; overwriting an existing sealed result is refused,
+    and a result may only be written by a COMMITTED unlock.
+
+The two-phase rule exists because a single-use seal that is burned by the FIRST
+line of an evaluation is not robust: an infrastructure error (an OOM, a missing
+shard, a crashed decode) would consume the one opening without producing any
+evidence.  Nothing is weakened by it — the *evidence* is what consumes the
+seal, every attempt is recorded forever, and the retry budget is one.
 
 HONEST STATEMENT OF STRENGTH (Amendment 1, restated where it bites).  The key
 is derived from a PUBLIC digest (the split-manifest SHA-256), so the cipher is
@@ -33,6 +44,7 @@ wall-clock in scientific paths, and this is not one).
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import secrets
@@ -56,7 +68,9 @@ __all__ = [
     "LEDGER_SCHEMA",
     "SEALED_RESULT_SCHEMA",
     "EVENT_OPENED",
+    "EVENT_ABORTED",
     "EVENT_RESULT",
+    "MAX_OPENING_ATTEMPTS",
     "sealed_families",
     "is_sealed_family",
     "is_sealed_path",
@@ -67,6 +81,7 @@ __all__ = [
     "read_ledger",
     "SealedUnlock",
     "open_sealed",
+    "sealed_opening",
 ]
 
 DEV_DECISIONS_NAME = "DEV_DECISIONS_FROZEN.json"
@@ -76,7 +91,12 @@ LEDGER_SCHEMA = "flb200.sealed_opening_ledger.v1"
 SEALED_RESULT_SCHEMA = "flb200.sealed_result.v1"
 
 EVENT_OPENED = "SEALED_OPENED"
+EVENT_ABORTED = "SEALED_OPENING_ABORTED"
 EVENT_RESULT = "SEALED_RESULT_WRITTEN"
+
+#: Contract §12c + Amendment 12: one opening, and at most one retry after a
+#: recorded abort.  Both attempts stay in the ledger forever.
+MAX_OPENING_ATTEMPTS = 2
 
 #: Fields ``DEV_DECISIONS_FROZEN.json`` must carry (contract §12 + §8).
 DEV_DECISIONS_REQUIRED = (
@@ -309,31 +329,115 @@ def _utc_now() -> str:
 
 @dataclass
 class SealedUnlock:
-    """A single-use, ledgered permission to read the sealed set."""
+    """A single-use, ledgered permission to read the sealed set.
+
+    The unlock is PROVISIONAL when :func:`open_sealed` returns it: it may read
+    sealed shards, but it has written nothing to the ledger and may not write a
+    result.  :meth:`commit` appends the single ``SEALED_OPENED`` entry (the
+    seal is consumed by evidence, not by intent); :meth:`abort` appends a
+    ``SEALED_OPENING_ABORTED`` entry instead and leaves exactly one retry.
+    """
 
     ledger_path: str
     dev_decisions_sha256: str
     split_manifest_sha256: str
-    entry: dict
     guard: o1_isolation.IsolationGuard
+    entry: dict | None = None
+    attempt_index: int = 0
+    prior_aborted: int = 0
+    opening_payload: dict = field(default_factory=dict)
     _key: bytes = field(repr=False, default=b"")
     reads: list[dict] = field(default_factory=list)
     results: list[dict] = field(default_factory=list)
     revoked: bool = False
+    aborted: bool = False
 
     # -- validity ----------------------------------------------------------
+
+    @property
+    def committed(self) -> bool:
+        return self.entry is not None
 
     def assert_valid(self) -> None:
         if self.revoked:
             raise SealedGateRefusal(
                 "this sealed unlock was revoked; a new sealed set is required "
                 "for a further cycle (contract §12)")
+        if self.aborted:
+            raise SealedGateRefusal(
+                "this sealed opening attempt was ABORTED and permanently "
+                "recorded in the ledger; a retry needs a fresh open_sealed() "
+                "call (contract §12c + Amendment 12)")
         if not self._key:
             raise SealedGateRefusal("sealed unlock carries no key")
+
+    def assert_committed(self, *, action: str) -> None:
+        self.assert_valid()
+        if not self.committed:
+            raise SealedGateRefusal(
+                f"REFUSED: {action} requires a COMMITTED sealed opening. The "
+                "opening is two-phase: read the sealed shards, produce the "
+                "evaluation records, then commit() writes the single "
+                "SEALED_OPENED ledger entry; only then may an immutable "
+                "sealed result be written (contract §12 + Amendment 12).")
 
     def revoke(self) -> None:
         self.revoked = True
         self._key = b""
+
+    # -- phase two ---------------------------------------------------------
+
+    def commit(self, *, evaluation: Mapping[str, Any] | None = None) -> dict:
+        """Write the single ``SEALED_OPENED`` entry.  Idempotent per unlock."""
+        self.assert_valid()
+        if self.committed:
+            raise SealedGateRefusal(
+                "this sealed opening is already committed; commit() writes the "
+                "single opening entry exactly once")
+        entries = read_ledger(self.ledger_path, guard=self.guard)
+        if any(e.get("event") == EVENT_OPENED for e in entries):
+            raise LedgerError(
+                "REFUSED: the ledger already records a committed opening; a "
+                "second opening is refused (contract §12c)")
+        payload = dict(self.opening_payload)
+        payload.update({
+            "attempt_index": int(self.attempt_index),
+            "prior_aborted_attempts": int(self.prior_aborted),
+            "shards_read": len(self.reads),
+            "records_read": sum(int(r["records"]) for r in self.reads),
+            "evaluation": dict(evaluation or {}),
+            "phase": ("COMMITTED_AFTER_EVALUATION: the sealed evidence existed "
+                      "before this entry was written"),
+        })
+        self.entry = _append_ledger(self.ledger_path, EVENT_OPENED, payload,
+                                    guard=self.guard, utc=_utc_now())
+        return self.entry
+
+    def abort(self, reason: str) -> dict:
+        """Record a failed opening attempt; leaves at most one retry."""
+        if self.aborted:
+            raise SealedGateRefusal("this opening attempt is already aborted")
+        if self.committed:
+            raise SealedGateRefusal(
+                "a committed opening cannot be aborted; the seal is consumed")
+        payload = dict(self.opening_payload)
+        payload.update({
+            "attempt_index": int(self.attempt_index),
+            "prior_aborted_attempts": int(self.prior_aborted),
+            "shards_read": len(self.reads),
+            "records_read": sum(int(r["records"]) for r in self.reads),
+            "reason": str(reason)[:2000],
+            "retries_remaining": max(
+                0, MAX_OPENING_ATTEMPTS - (self.prior_aborted + 1)),
+            "phase": ("ABORTED_BEFORE_EVALUATION_RECORDS: no sealed result was "
+                      "written; this attempt is permanently recorded"),
+        })
+        entry = _append_ledger(self.ledger_path, EVENT_ABORTED, payload,
+                               guard=self.guard, utc=_utc_now())
+        self.aborted = True
+        self.entry = None
+        self._key = b""
+        return entry
 
     @property
     def key_fingerprint(self) -> str:
@@ -379,7 +483,7 @@ class SealedUnlock:
     # -- immutable results --------------------------------------------------
 
     def _write_immutable(self, path: str, payload: bytes, kind: str) -> dict:
-        self.assert_valid()
+        self.assert_committed(action="writing a sealed result")
         resolved = self.guard.guard(path, o1_isolation.MODE_WRITE)
         if os.path.exists(resolved):
             raise SealedGateRefusal(
@@ -411,6 +515,7 @@ class SealedUnlock:
 
     def write_result(self, path: str, obj: Any) -> dict:
         """Write one immutable, hash-ledgered sealed result document."""
+        self.assert_committed(action="writing a sealed result")
         document = dict(obj)
         document.setdefault("schema", SEALED_RESULT_SCHEMA)
         document["sealed_opening_entry_sha256"] = self.entry["entry_sha256"]
@@ -429,7 +534,12 @@ class SealedUnlock:
             "ledger_path": self.ledger_path,
             "dev_decisions_sha256": self.dev_decisions_sha256,
             "split_manifest_sha256": self.split_manifest_sha256,
-            "opening_entry_sha256": self.entry["entry_sha256"],
+            "opening_entry_sha256": (None if self.entry is None
+                                     else self.entry["entry_sha256"]),
+            "committed": bool(self.committed),
+            "aborted": bool(self.aborted),
+            "attempt_index": int(self.attempt_index),
+            "prior_aborted_attempts": int(self.prior_aborted),
             "key_fingerprint": self.key_fingerprint,
             "reads": list(self.reads),
             "results": list(self.results),
@@ -444,10 +554,17 @@ def open_sealed(*, ledger_path: str, dev_decisions_path: str,
                 guard: o1_isolation.IsolationGuard | None = None,
                 utc_fn=_utc_now,
                 verify_split_sources: bool = True) -> SealedUnlock:
-    """The single, ledgered sealed opening (contract §12).
+    """Phase ONE of the single, ledgered sealed opening (contract §12).
 
-    Refuses unless ``DEV_DECISIONS_FROZEN.json`` exists and validates, and
-    refuses outright when the ledger already records an opening.
+    Refuses unless ``DEV_DECISIONS_FROZEN.json`` exists and validates, refuses
+    outright when the ledger already records a COMMITTED opening, and refuses
+    once the recorded aborted attempts have exhausted the retry budget
+    (:data:`MAX_OPENING_ATTEMPTS`).
+
+    The returned unlock is PROVISIONAL: nothing has been appended to the
+    ledger.  The caller must call :meth:`SealedUnlock.commit` after the
+    evaluation has produced its records, or :meth:`SealedUnlock.abort` — which
+    :func:`sealed_opening` does automatically.
     """
     guard = guard or o1_isolation.default_guard()
     decisions = read_dev_decisions(dev_decisions_path, guard=guard)
@@ -462,6 +579,14 @@ def open_sealed(*, ledger_path: str, dev_decisions_path: str,
             f"(ledger entry {prior[0].get('entry_index')} at "
             f"{prior[0].get('utc')}). A second opening is refused; a further "
             "cycle requires a NEW sealed set (contract §12c).")
+    aborted = [e for e in entries if e.get("event") == EVENT_ABORTED]
+    if len(aborted) >= MAX_OPENING_ATTEMPTS:
+        raise LedgerError(
+            f"REFUSED: {len(aborted)} sealed opening attempts are already "
+            f"recorded in the ledger and the budget is {MAX_OPENING_ATTEMPTS} "
+            "(one attempt plus one retry). Every attempt is permanent; a "
+            "further cycle requires a NEW sealed set (contract §12c + "
+            "Amendment 12).")
 
     from ..ecology.manifests import read_split_manifest, verify_split_manifest
 
@@ -474,37 +599,61 @@ def open_sealed(*, ledger_path: str, dev_decisions_path: str,
     verify_split_manifest(manifest, check_sources=verify_split_sources)
     split_hex = manifest["split_manifest_sha256"]
 
-    entry = _append_ledger(
-        ledger_path, EVENT_OPENED,
-        {
-            "dev_decisions_sha256": decisions["dev_decisions_sha256"],
-            "dev_decisions_file_sha256": decisions_file_sha256,
-            "dev_decisions_path": os.path.basename(dev_decisions_path),
-            "split_manifest_sha256": split_hex,
-            "stage_states": dict(stage_states or decisions["stage_states"]),
-            "chosen_scope": decisions["chosen_scope"],
-            "chosen_learning_rate": decisions["chosen_learning_rate"],
-            "updates_U": decisions["updates_U"],
-            "opened_by": str(opened_by),
-            # Audit-only uniqueness tag.  Two openings of the same campaign in
-            # the same wall-clock second would otherwise produce byte-identical
-            # entries, and a deleted-then-recreated ledger would be
-            # indistinguishable from the original.  With the nonce, the entry
-            # hash recorded INSIDE every (read-only) sealed result is a
-            # cross-check the ledger cannot forge by being deleted.  It never
-            # enters a scientific decision (contract §20).
-            "opening_nonce": secrets.token_hex(16),
-            "policy": ("single opening; no model modification may be justified "
-                       "from sealed outcomes; a future cycle requires a NEW "
-                       "sealed set"),
-        },
-        guard=guard, utc=utc_fn())
+    opening_payload = {
+        "dev_decisions_sha256": decisions["dev_decisions_sha256"],
+        "dev_decisions_file_sha256": decisions_file_sha256,
+        "dev_decisions_path": os.path.basename(dev_decisions_path),
+        "split_manifest_sha256": split_hex,
+        "stage_states": dict(stage_states or decisions["stage_states"]),
+        "chosen_scope": decisions["chosen_scope"],
+        "chosen_learning_rate": decisions["chosen_learning_rate"],
+        "updates_U": decisions["updates_U"],
+        "opened_by": str(opened_by),
+        # Audit-only uniqueness tag.  Two openings of the same campaign in the
+        # same wall-clock second would otherwise produce byte-identical
+        # entries, and a deleted-then-recreated ledger would be
+        # indistinguishable from the original.  With the nonce, the entry hash
+        # recorded INSIDE every (read-only) sealed result is a cross-check the
+        # ledger cannot forge by being deleted.  It never enters a scientific
+        # decision (contract §20).
+        "opening_nonce": secrets.token_hex(16),
+        "utc_provisional": utc_fn(),
+        "policy": ("single opening; no model modification may be justified "
+                   "from sealed outcomes; a future cycle requires a NEW "
+                   "sealed set"),
+    }
 
     return SealedUnlock(
         ledger_path=guard.guard(ledger_path, o1_isolation.MODE_WRITE),
         dev_decisions_sha256=decisions["dev_decisions_sha256"],
         split_manifest_sha256=split_hex,
-        entry=entry,
         guard=guard,
+        attempt_index=len(aborted),
+        prior_aborted=len(aborted),
+        opening_payload=opening_payload,
         _key=sealed_key(split_hex),
     )
+
+
+@contextlib.contextmanager
+def sealed_opening(**kwargs):
+    """Two-phase opening as a context manager (contract §12c + Amendment 12).
+
+    Yields a PROVISIONAL :class:`SealedUnlock`.  The body must call
+    ``unlock.commit(...)`` once its evaluation records exist; anything that
+    escapes the body before that appends a ``SEALED_OPENING_ABORTED`` entry —
+    leaving exactly one retry — and re-raises.  The exception is never
+    swallowed: the abort is a RECORD, not a recovery.
+    """
+    unlock = open_sealed(**kwargs)
+    try:
+        yield unlock
+    except BaseException as exc:  # noqa: BLE001 - recorded, then re-raised
+        if not unlock.committed and not unlock.aborted:
+            unlock.abort(f"{type(exc).__name__}: {exc}")
+        raise
+    else:
+        if not unlock.committed:
+            unlock.abort(
+                "the opening context exited without committing: no evaluation "
+                "records were produced")

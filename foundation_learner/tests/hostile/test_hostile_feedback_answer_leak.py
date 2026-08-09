@@ -54,8 +54,18 @@ def test_brute_force_search_finds_no_leak(family):
                         record = family.feedback_record(rule, instance,
                                                         attempt, rng)
                         for condition in POISON_CONDITIONS:
-                            text = hint_for_condition(record, condition,
-                                                      make_rng(11))
+                            try:
+                                text = hint_for_condition(
+                                    record, condition, make_rng(11),
+                                    answer_canonical=instance.answer_canonical)
+                            except AnswerLeakError as exc:
+                                # Amendment 13 installed the same invariant
+                                # INSIDE hint_for_condition; a raise here is
+                                # the guard firing, i.e. exactly the defect
+                                # this fixture searches for.
+                                leaks.append((condition, str(exc),
+                                              instance.answer_canonical))
+                                continue
                             if answer_leak(text, instance.answer_canonical):
                                 leaks.append((condition, text,
                                               instance.answer_canonical))

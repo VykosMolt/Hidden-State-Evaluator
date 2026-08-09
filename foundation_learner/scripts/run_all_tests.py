@@ -46,6 +46,9 @@ TESTS_DIR = os.path.join(PACKAGE, "tests")
 #: ``--fast`` ignores exactly these, and the report NAMES them, so a fast run
 #: can never be mistaken for a full one.  No test is weakened or deleted.
 SLOW_NODE_IDS: tuple[str, ...] = (
+    # walks the WHOLE ladder through the production entry (Amendment 12
+    # item 1); minutes on CPU, and the dress rehearsal covers the same walk
+    "tests/test_campaign_entry.py",
     "tests/test_training_trainer.py",
     "tests/test_training_checkpointing.py",
     "tests/test_evaluation_fl0_base.py",

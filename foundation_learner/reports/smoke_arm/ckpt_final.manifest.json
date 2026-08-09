@@ -65,7 +65,7 @@
   "base_identity_hash": "81daa259942a334391bac1c4c44336bb8e1fedf67f226a06a9bdbc2bc4b10758",
   "code_commit": {
     "branch": "foundation-learner-b200-v0",
-    "commit": "1b858d0b0ce8f0e554d7e15db18525b5820c9146",
+    "commit": "00adeba09155724bbb8f3954252d30c416163358",
     "dirty": true
   },
   "environment": {
@@ -80,15 +80,15 @@
   },
   "family_split_hash": null,
   "loss_tokens": 35,
-  "manifest_hash": "51628a1d197e11bbedc453143abf0237ab5c5cc1126699c5fe020ba5915d491e",
+  "manifest_hash": "d429c8b4f79d1cca09e37b46748a9cbd818fe955d74d2d53fa6efd3942c586f2",
   "payload_file": "ckpt_final.pt",
-  "payload_sha256": "08969d40e667e1f220f4256e372950c270cbb7a1388aa81662c34c1bbb929e81",
+  "payload_sha256": "60d03f0c5021d8dc7d34d86aa2739bc39edfbaf01afaaa1b13a93753a346ce3c",
   "schema": "flb200.checkpoint_manifest.v1",
   "shard_hashes": null,
   "stage": "SMOKE",
   "step": 1,
   "tag": "final",
-  "tokens": 667,
+  "tokens": 682,
   "trained_scope": "PEFT_MODE",
   "trained_tensors": [
     "model.layers.0.mlp.down_proj.lora_A",

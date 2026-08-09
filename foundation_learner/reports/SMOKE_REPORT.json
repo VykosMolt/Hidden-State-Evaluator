@@ -14,7 +14,7 @@
   },
   "classification": "NONSCIENTIFIC",
   "device": "cuda",
-  "elapsed_seconds": 22.87,
+  "elapsed_seconds": 27.421,
   "forward_tokens": 59,
   "generation_preview": "\nStep 1: The string is bcbabcbc.\nStep 2: The string has 8 characters.\nStep 3: The string has 4 a's, 2 b's, and 2 c's.\nStep 4: The hidden language requires that the number of a",
   "identity": {
@@ -53,8 +53,8 @@
   },
   "label": "LOCAL_NONSCIENTIFIC_OURO_SMOKE_TEST",
   "memory": {
-    "max_allocated_bytes": 5973990400,
-    "max_reserved_bytes": 6639583232
+    "max_allocated_bytes": 5985900032,
+    "max_reserved_bytes": 6652166144
   },
   "mode": "REAL_CHECKPOINT",
   "schema": "flb200.smoke_report.v1",
@@ -65,43 +65,43 @@
   "scratch_tag": "NONSCIENTIFIC_SMOKE",
   "timings": [
     {
-      "elapsed_seconds": 0.418,
+      "elapsed_seconds": 0.415,
       "step": "assert_transformers_version"
     },
     {
-      "elapsed_seconds": 10.973,
+      "elapsed_seconds": 12.654,
       "step": "load"
     },
     {
-      "elapsed_seconds": 12.051,
+      "elapsed_seconds": 14.121,
       "step": "forward"
     },
     {
-      "elapsed_seconds": 19.405,
+      "elapsed_seconds": 23.796,
       "step": "generation"
     },
     {
-      "elapsed_seconds": 19.405,
+      "elapsed_seconds": 23.796,
       "step": "parse_round_trip"
     },
     {
-      "elapsed_seconds": 22.87,
+      "elapsed_seconds": 27.421,
       "step": "peft_optimizer_step"
     }
   ],
   "training": {
-    "final_loss": 0.26446476578712463,
-    "grad_norm": 6.40625,
+    "final_loss": 0.21203863620758057,
+    "grad_norm": 16.625,
     "ledger": {
       "arm_id": "FL3",
-      "backward_tokens": 667,
+      "backward_tokens": 682,
       "batches": 1,
       "device": "cuda",
       "episodes": 1,
       "examples": 1,
-      "forward_tokens": 667,
-      "forward_tokens_unpadded": 667,
-      "gpu_seconds": 2.476457451004535,
+      "forward_tokens": 682,
+      "forward_tokens_unpadded": 682,
+      "gpu_seconds": 2.506556422013091,
       "loss_tokens": 35,
       "max_tokens_per_batch": 2048,
       "notes": [],
@@ -110,12 +110,12 @@
       "schema": "flb200.compute_ledger.v1",
       "skipped_updates": 0,
       "stage": "SMOKE",
-      "tokens_per_second": 269.2625700234646,
-      "wall_time_s": 2.477135978988372,
+      "tokens_per_second": 272.0093199354911,
+      "wall_time_s": 2.507267031003721,
       "weighted_loss_mass": 27.5
     },
     "steps": 1
   },
-  "utc": "2026-08-09T14:49:18Z",
+  "utc": "2026-08-09T20:17:09Z",
   "verdict": "PASS"
 }

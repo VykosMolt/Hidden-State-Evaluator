@@ -17,16 +17,49 @@ TRANSFER SHIFT: much longer strings (length 18) where the modular-count and
 bigram predicates behave very differently from the short training strings.  The
 latent language is unchanged.
 
-Structured feedback: WHICH of the two hidden atomic predicates the string fails,
-by opaque predicate index (``A``, ``B``, ``BOTH`` or ``ABSENT``).  The
-membership bit itself is never stated.
+Structured feedback (generator 1.1.0): a POOL-PREDICATE PROBE.
+==============================================================
+Generator 1.0.0 reported WHICH of the two hidden atomic predicates the string
+fails (``A`` / ``B`` / ``BOTH`` / ``ABSENT``, §4.12).  Two of those branches
+DECODE the answer: failing NEITHER conjunct implies membership under both
+admissible connectives, and failing BOTH implies non-membership under both
+(measured P = 1.000 at n = 541 and n = 576 over 2160 sampled items).  A reader
+could therefore read the label off the hint without inferring the hidden
+language at all.
+
+Generator 1.1.0 reports instead:
+
+* the opaque index of ONE CANDIDATE predicate drawn from :data:`PREDICATE_POOL`
+  — a FIXED, rule-independent enumeration of the family's eight predicate
+  schemas over the displayed alphabet POSITIONS.  The probe need not be one of
+  the hidden rule's two conjuncts;
+* whether the string passes that candidate predicate.
+
+A pool predicate outside the rule can fail while the string is IN (and pass
+while it is OUT), so no branch of this hint implies the label.  The probe is
+selected from the DISPLAYED string only — never from the rule, never from the
+answer — so the selection channel carries no membership information either.
+
+WHY IT IS STILL INFORMATIVE.  :data:`PREDICATE_POOL` is frozen and ordered, and
+it is indexed over alphabet POSITIONS rather than literal symbols, so one code
+always denotes the same predicate under every surface remap.  Across feedback
+rounds a learner accumulates (candidate predicate, pass/fail, certified
+verdict) triples and eliminates the candidate languages that cannot explain the
+verdicts — the rule identification this family exists to test.  Recorded
+honestly in Amendment 14: the probe's pass/fail is computable from the
+displayed string, so the hint's value is that it points at a hypothesis from the
+family's own pool and pre-computes it, not that it discloses hidden state.  The
+alternative — also reporting whether the candidate is one of the rule's
+conjuncts — was rejected because "is a conjunct AND fails" implies OUT under
+``AND`` with certainty, i.e. it would reintroduce the defect being repaired.
 """
 from __future__ import annotations
 
 import numpy as np
 
-from ..base import (KIND_TRANSFER, Feedback, HintField, Item, Rule, TaskFamily,
-                    TaskInstance, derive_seed, make_rng)
+from ..base import (KIND_TRANSFER, Feedback, HintField, Item, MAX_HINT_OPTIONS,
+                    Rule, TaskFamily, TaskInstance, derive_seed, letters,
+                    make_rng)
 from ..surface_remap import PromptSpec, lab, syms
 
 SYMBOL_POOL = ("a", "b", "c", "d", "e", "f")
@@ -35,6 +68,60 @@ SCHEMAS = ("count_mod", "ends_with", "starts_with", "contains_bigram",
            "length_mod", "no_occurrence", "first_before", "count_at_least")
 _LENGTHS = {0: 5, 1: 8, 2: 11}
 _TRANSFER_LENGTH = 18
+
+#: Probe status codes.  They may not collide with any answer label of this
+#: family (``IN``/``OUT``, ``ACCEPT``/``REJECT``, ``MEMBER``/``NONMEMBER``,
+#: ``GREEN``/``AMBER``) under any surface.
+PROBE_STATUS = ("PASS", "FAIL")
+
+
+def _build_predicate_pool() -> tuple[dict, ...]:
+    """The FROZEN candidate-predicate pool the hint probes (Amendment 14).
+
+    One deterministic enumeration of all eight schemas over the alphabet
+    POSITIONS 0..N_SYMBOLS-1 (positions, not literal symbols, so a probe code
+    denotes the same predicate under every surface remap).  The order is fixed
+    by this function, so the opaque index is a stable positional code that a
+    learner can accumulate evidence against across feedback rounds.
+    """
+    pool: list[dict] = []
+    for s in range(N_SYMBOLS):
+        for m in (2, 3):
+            for r in range(m):
+                pool.append({"schema": "count_mod", "sym": s, "m": m, "r": r})
+    for schema in ("ends_with", "starts_with", "no_occurrence"):
+        for s in range(N_SYMBOLS):
+            pool.append({"schema": schema, "sym": s})
+    for x in range(N_SYMBOLS):
+        for y in range(N_SYMBOLS):
+            pool.append({"schema": "contains_bigram", "x": x, "y": y})
+    for m in (2, 3):
+        for r in range(m):
+            pool.append({"schema": "length_mod", "m": m, "r": r})
+    for x in range(N_SYMBOLS):
+        for y in range(N_SYMBOLS):
+            if x != y:
+                pool.append({"schema": "first_before", "x": x, "y": y})
+    for s in range(N_SYMBOLS):
+        for t in (1, 2):
+            pool.append({"schema": "count_at_least", "sym": s, "t": t})
+    return tuple(pool)
+
+
+#: frozen, rule-independent candidate pool (see :func:`_build_predicate_pool`)
+PREDICATE_POOL: tuple[dict, ...] = _build_predicate_pool()
+assert len(PREDICATE_POOL) <= MAX_HINT_OPTIONS, (
+    "the probe index must stay inside the frozen opaque-code cap")
+
+
+def _pool_atom(entry: dict) -> dict:
+    """Bind a positional pool entry to the concrete alphabet symbols."""
+    alphabet = SYMBOL_POOL[:N_SYMBOLS]
+    atom = dict(entry)
+    for key in ("sym", "x", "y"):
+        if key in atom:
+            atom[key] = alphabet[int(atom[key])]
+    return atom
 
 
 def _sample_atom(rng: np.random.Generator) -> dict:
@@ -85,6 +172,9 @@ def _holds(atom: dict, text: str) -> bool:
 
 class GrammarClassificationFamily(TaskFamily):
     family_id = "grammar_classification"
+    #: 1.0.0 -> 1.1.0: pool-predicate probe replaces the failing-conjunct
+    #: report, two of whose branches decoded the label (Amendment 14).
+    generator_version = "1.1.0"
     canon_mode = "label"
     symbol_pool = SYMBOL_POOL
     label_variants = (("ACCEPT", "REJECT"), ("MEMBER", "NONMEMBER"),
@@ -133,19 +223,28 @@ class GrammarClassificationFamily(TaskFamily):
 
     # -- feedback -----------------------------------------------------------
 
+    def _probe_index(self, item: Item) -> int:
+        """Which pool predicate this item's hint reports on.
+
+        Seeded from the DISPLAYED string only: the hidden rule and the
+        membership bit are absent from the seed, so the selection channel
+        cannot carry the answer.  Pure function of the instance, so both
+        attempts on one item see the same probe.
+        """
+        rng = make_rng(derive_seed(0, self.family_id, "PROBE",
+                                   item.data["text"]))
+        return int(rng.integers(0, len(PREDICATE_POOL)))
+
     def _feedback(self, rule: Rule, item: Item, plan, attempt, truth,
                   rng: np.random.Generator) -> Feedback:
-        left, right = self._atom_values(rule, item.data["text"])
-        if not left and not right:
-            value = 2
-        elif not left:
-            value = 0
-        elif not right:
-            value = 1
-        else:
-            value = 3
-        return Feedback("HINT-PRED", (
-            HintField("fails", "PRD", value, 4, ("A", "B", "BOTH", "ABSENT")),))
+        index = self._probe_index(item)
+        holds = _holds(_pool_atom(PREDICATE_POOL[index]), item.data["text"])
+        names = tuple(letters(i) for i in range(len(PREDICATE_POOL)))
+        return Feedback("HINT-PROBE", (
+            HintField("probe", "PRD", index, len(PREDICATE_POOL), names),
+            HintField("status", "STA", 0 if holds else 1, len(PROBE_STATUS),
+                      PROBE_STATUS),
+        ))
 
     def plausible_error(self, rule: Rule, instance: TaskInstance,
                         rng: np.random.Generator) -> str:

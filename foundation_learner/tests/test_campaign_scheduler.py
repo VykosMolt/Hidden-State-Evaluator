@@ -16,7 +16,8 @@ from foundation_learner.campaign.affordability import (AffordabilityRefusal,
                                                        FULL_MODEL_MODE,
                                                        PEFT_MODE)
 from foundation_learner.campaign.stage_definitions import (StageContext,
-                                                           StageDefinition)
+                                                           StageDefinition,
+                                                           StageError)
 
 CALLS: list[str] = []
 
@@ -49,7 +50,8 @@ def stage(stage_id="STUB", projection="TRAIN_ARM", work="stub_work",
         eval_episodes=eval_episodes, **kw)
 
 
-def context(tmp_path, *, spu=1.0, eval_per_episode=0.1, updates=600):
+def context(tmp_path, *, spu=1.0, eval_per_episode=0.1, updates=600,
+            model_load=0.0, forward_per_episode=0.01):
     guard = o1_isolation.IsolationGuard(label="TEST")
     ctx = StageContext(out_dir=str(tmp_path / "ladder"),
                        pregen_root=str(tmp_path / "pregen"),
@@ -58,7 +60,9 @@ def context(tmp_path, *, spu=1.0, eval_per_episode=0.1, updates=600):
     ctx.throughput.add(BenchMeasurement(
         scope=PEFT_MODE, seconds_per_update=spu, tokens_per_second=100.0,
         updates_measured=10, wall_seconds=10 * spu, forward_tokens=1000,
-        max_tokens_per_batch=2048, eval_seconds_per_episode=eval_per_episode))
+        max_tokens_per_batch=2048, eval_seconds_per_episode=eval_per_episode,
+        model_load_seconds=model_load,
+        forward_seconds_per_episode=forward_per_episode))
     return ctx, guard
 
 
@@ -136,7 +140,11 @@ def test_projection_uses_measured_throughput_only(tmp_path):
     s.start()
     outcome = s.run_stage(stage(eval_episodes=10), ctx)
     assert outcome.projection["train_seconds"] == 1200.0
-    assert outcome.projection["eval_seconds"] == 5.0
+    # the projection uses the PLANNED evaluation set (the cap divided across
+    # the 3 DEVELOPMENT families and applied per family = 9 episodes), not the
+    # raw cap, so it cannot under-project by the number of families
+    assert outcome.projection["eval_episodes"] == 9
+    assert outcome.projection["eval_seconds"] == 4.5
     # an unmeasured scope must block, never estimate
     ctx.scope = FULL_MODEL_MODE
     blocked = s.run_stage(stage(stage_id="STUB2"), ctx)
@@ -192,6 +200,88 @@ def test_journal_is_append_only_and_machine_readable(tmp_path):
         record = json.loads(line)
         assert record["schema"] == sched.JOURNAL_SCHEMA
         assert record["index"] == index
+
+
+def test_the_projection_includes_the_measured_model_load_term(tmp_path):
+    """R-M8: a fresh multi-GB load per arm is not free and is not ignored."""
+    ctx, guard = context(tmp_path, spu=1.0, eval_per_episode=0.0,
+                         model_load=120.0)
+    s = make_scheduler(tmp_path, 1e6, guard)
+    s.start()
+    outcome = s.run_stage(stage(eval_episodes=0), ctx)
+    assert outcome.projection["load_seconds"] == 120.0
+    assert outcome.projection["projected_seconds"] == 600.0 + 120.0
+
+
+def test_an_unmeasured_model_load_blocks_rather_than_assuming_zero(tmp_path):
+    guard = o1_isolation.IsolationGuard(label="TEST")
+    ctx = StageContext(out_dir=str(tmp_path / "ladder"),
+                       pregen_root=str(tmp_path / "pregen"),
+                       bundle_factory=lambda: None, guard=guard, updates=600)
+    ctx.throughput.add(BenchMeasurement(
+        scope=PEFT_MODE, seconds_per_update=1.0, tokens_per_second=100.0,
+        updates_measured=10, wall_seconds=10.0, forward_tokens=1000,
+        max_tokens_per_batch=2048, eval_seconds_per_episode=0.1))
+    s = make_scheduler(tmp_path, 1e6, guard)
+    s.start()
+    outcome = s.run_stage(stage(), ctx)
+    assert outcome.state == sched.STATE_BLOCKED
+    assert "model-load" in outcome.error
+
+
+def slow_work(ctx, stage):
+    """A stage that outruns its projection, checked at a phase boundary."""
+    ctx.scheduler.clock.advance(100_000.0)
+    ctx.checkpoint("slow_work:after the expensive part")
+    return {"never": "reached"}
+
+
+def test_a_stage_that_outruns_its_projection_is_aborted_and_the_ladder_goes_on(tmp_path):
+    ctx, guard = context(tmp_path, spu=0.001, eval_per_episode=0.0,
+                         model_load=0.0)
+    clock = sched.ManualClock()
+    s = make_scheduler(tmp_path, 1e6, guard, clock)
+    s.start()
+    outcome = s.run_stage(stage(work="slow_work",
+                                fallback_work=("predeclared",)), ctx)
+    assert outcome.state == sched.STATE_ABORTED_OVERRUN
+    assert outcome.fallback == ("predeclared",)
+    record = [r for r in s.read_journal()
+              if r["event"] == "STAGE_ABORTED_OVERRUN"][0]
+    assert record["watchdog"]["tripped"] == "PROJECTION_OVERRUN"
+    # the ladder is not stopped by an aborted stage
+    assert s.run_stage(stage(stage_id="AFTER"), ctx).state == sched.STATE_COMPLETE
+
+
+def test_the_watchdog_also_defends_the_transfer_reserve(tmp_path):
+    ctx, guard = context(tmp_path, spu=1.0, eval_per_episode=0.0)
+    clock = sched.ManualClock()
+    s = make_scheduler(tmp_path, 3000.0, guard, clock)
+    s.start()
+    watchdog = s.build_watchdog("FL3", projected_seconds=1e9,
+                                started=clock.monotonic())
+    watchdog.check("start")                 # plenty of time left
+    clock.advance(1900.0)                   # 1100 s left, reserve is 1200 s
+    with pytest.raises(sched.StageAbortedOverrun) as exc:
+        watchdog.check("late")
+    assert watchdog.tripped == "RESERVE_FLOOR"
+    assert "reserve" in str(exc.value)
+
+
+def test_the_bench_declared_budget_is_policy_pinned_outside_a_rehearsal(tmp_path):
+    ctx, guard = context(tmp_path)
+    s = make_scheduler(tmp_path, 1e6, guard)
+    s.start()
+    bench_stage = StageDefinition(stage_id="BENCH", priority=1, kind="BENCH",
+                                  work=f"{THIS}:stub_work", projection="BENCH",
+                                  outputs=())
+    assert s._projection_for(bench_stage, ctx)["projected_seconds"] == 900.0
+    ctx.extra["bench_declared_budget_seconds"] = 10.0
+    with pytest.raises(StageError) as exc:
+        s._projection_for(bench_stage, ctx)
+    assert "frozen policy value" in str(exc.value)
+    ctx.rehearsal = True                    # only a labelled rehearsal may
+    assert s._projection_for(bench_stage, ctx)["projected_seconds"] == 10.0
 
 
 def test_summary_records_the_reserve_and_states(tmp_path):

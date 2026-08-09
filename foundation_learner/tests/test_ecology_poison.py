@@ -7,6 +7,10 @@ from foundation_learner.ecology.base import Feedback, HintField, make_rng
 from foundation_learner.ecology import poison
 
 
+#: a canonical answer that no hint body of ``_record`` can contain
+ANSWER = "ZZTOP"
+
+
 def _record():
     return Feedback("HINT-TEST", (
         HintField("first", "POS", 2, 6),
@@ -58,25 +62,58 @@ def test_single_field_records_still_corrupt():
 
 def test_hint_for_condition_bodies():
     record = _record()
-    clean = poison.hint_for_condition(record, "clean", make_rng(1))
+    clean = poison.hint_for_condition(record, "clean", make_rng(1),
+                                      answer_canonical=ANSWER)
     assert clean == record.render()
     redundant = poison.hint_for_condition(record, "correct-redundant",
-                                          make_rng(1))
+                                          make_rng(1), answer_canonical=ANSWER)
     assert redundant.startswith("HINT-ECHO")
     assert redundant != clean
-    irrelevant = poison.hint_for_condition(record, "irrelevant", make_rng(1))
+    irrelevant = poison.hint_for_condition(record, "irrelevant", make_rng(1),
+                                           answer_canonical=ANSWER)
     assert irrelevant in poison.IRRELEVANT_POOL
     for condition in ("partially-misleading", "corrupted"):
-        assert poison.hint_for_condition(record, condition, make_rng(1)) != clean
+        assert poison.hint_for_condition(
+            record, condition, make_rng(1), answer_canonical=ANSWER) != clean
     with pytest.raises(ValueError):
-        poison.hint_for_condition(record, "no-such-condition", make_rng(1))
+        poison.hint_for_condition(record, "no-such-condition", make_rng(1),
+                                  answer_canonical=ANSWER)
 
 
 def test_all_hint_bodies_are_digit_free():
     record = _record()
     for condition in poison.POISON_CONDITIONS:
-        text = poison.hint_for_condition(record, condition, make_rng(4))
+        text = poison.hint_for_condition(record, condition, make_rng(4),
+                                         answer_canonical=ANSWER)
         assert not any(ch.isdigit() for ch in text), text
+
+
+def test_hint_for_condition_applies_the_answer_leak_invariant():
+    """Amendment 13 minor (a): the condition renderer must apply the SAME
+    ``answer_leak`` check that ``feedback_record`` / ``corrupted_feedback``
+    apply, and it cannot be skipped by omitting the answer."""
+    import inspect
+
+    from foundation_learner.ecology.base import AnswerLeakError
+
+    signature = inspect.signature(poison.hint_for_condition)
+    parameter = signature.parameters["answer_canonical"]
+    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
+    assert parameter.default is inspect.Parameter.empty, (
+        "answer_canonical must be REQUIRED: an optional-and-omitted leak check "
+        "is the failure mode being repaired")
+
+    # A hint body that IS the answer must be refused in every condition where
+    # the body can contain it.  "POS_C" is a code the clean body really renders.
+    for condition in ("clean", "correct-redundant", "irrelevant",
+                      "partially-misleading", "corrupted"):
+        record = _record()
+        rendered = poison.hint_for_condition(record, condition, make_rng(5),
+                                             answer_canonical=ANSWER)
+        leaking_answer = rendered.split()[-1].strip(";")
+        with pytest.raises(AnswerLeakError):
+            poison.hint_for_condition(record, condition, make_rng(5),
+                                      answer_canonical=leaking_answer)
 
 
 def test_schedule_is_deterministic_and_always_realised():

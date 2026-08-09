@@ -33,10 +33,27 @@ recorded in the journal, so the claim is auditable rather than asserted.
 refuses a real run, exactly like the O1 session config.  A DRESS REHEARSAL may
 proceed with unresolved values, and then every artefact it writes is loudly
 labelled ``DRESS_REHEARSAL``.
+
+**Closing out costs money.**  :meth:`SessionSupervisor.run` wraps the whole
+state machine in ``try/finally``: whatever happens — a failed state, an
+unexpected exception, a keyboard interrupt — the supervisor still attempts the
+FL transfer (best effort) and ALWAYS attempts ``TERMINATE_ACCELERATOR``, and
+always writes ``SESSION_FINAL_STATUS.json``.  A rented accelerator that keeps
+billing after a crash is a real failure mode, not a hypothetical one (review
+finding R-C2).
+
+**Resume rebuilds state.**  On resume the supervisor reconstructs
+``state_results`` from the journal's ``STATE_COMPLETED`` payloads, so a session
+that crashed after ``COMPUTE_REMAINING_AUTHORIZED_TIME`` still knows its FL
+allowance instead of refusing ``RUN_FL_LADDER``.  The resumed allowance is
+additionally REDUCED by the wall-clock gap since that record was written: the
+pod kept billing while the process was gone, and an over-estimated budget is
+the one error that can consume the transfer reserve.
 """
 from __future__ import annotations
 
 import argparse
+import calendar
 import json
 import os
 import subprocess
@@ -335,6 +352,8 @@ class SessionSupervisor:
     payload: dict = field(init=False)
     state_results: dict[str, Any] = field(default_factory=dict, init=False)
     completed: list[str] = field(default_factory=list, init=False)
+    determinism: dict | None = field(default=None, init=False)
+    close_out: dict = field(default_factory=dict, init=False)
     _t0: float | None = field(default=None, init=False)
     _records: int = field(default=0, init=False)
 
@@ -389,6 +408,67 @@ class SessionSupervisor:
                 if line.strip():
                     out.append(json.loads(line))
         return out
+
+    # ---------------- resume ----------------
+
+    @staticmethod
+    def _utc_seconds(stamp: str | None) -> float | None:
+        if not stamp:
+            return None
+        try:
+            return float(calendar.timegm(
+                time.strptime(str(stamp), "%Y-%m-%dT%H:%M:%SZ")))
+        except (ValueError, TypeError):
+            return None
+
+    def rebuild_state_results(self) -> dict:
+        """Reconstruct ``state_results`` from the journal (review R-C2).
+
+        Without this a resumed session skips ``COMPUTE_REMAINING_AUTHORIZED_TIME``
+        as "already completed" and then refuses ``RUN_FL_LADDER`` for want of an
+        FL allowance — i.e. a crash anywhere in the middle silently cost the
+        whole FL half of the session.
+
+        The restored allowance is REDUCED by the wall-clock gap between the
+        journalled record and now.  The pod billed for that gap; using the
+        stale value would be the one arithmetic error that can eat the final
+        transfer reserve.  This is an operational budget decision, not a
+        scientific path (contract §20).
+        """
+        restored: dict[str, Any] = {}
+        stamps: dict[str, Any] = {}
+        for record in self.read_journal():
+            if record.get("event") != "STATE_COMPLETED":
+                continue
+            state = str(record.get("state"))
+            if "result" in record:
+                restored[state] = record["result"]
+                stamps[state] = record.get("utc")
+        self.state_results.update(restored)
+        report = {"restored_states": sorted(restored),
+                  "available_foundation_learner_seconds": None}
+        compute = restored.get("COMPUTE_REMAINING_AUTHORIZED_TIME")
+        if isinstance(compute, Mapping):
+            available = float(
+                compute.get("available_foundation_learner_seconds") or 0.0)
+            recorded_at = self._utc_seconds(
+                stamps.get("COMPUTE_REMAINING_AUTHORIZED_TIME"))
+            gap = 0.0
+            if recorded_at is not None:
+                gap = max(0.0, time.time() - recorded_at)
+            adjusted = max(0.0, available - gap)
+            self.state_results["available_foundation_learner_seconds"] = adjusted
+            report.update({
+                "available_foundation_learner_seconds": adjusted,
+                "journalled_available_seconds": available,
+                "resume_wall_clock_gap_seconds": round(gap, 3),
+                "rule": ("a resumed session re-derives its FL allowance from "
+                         "the journal and subtracts the wall-clock gap; the "
+                         "accelerator billed for it"),
+            })
+        if restored:
+            self.journal("STATE_RESULTS_REBUILT", "START_SESSION", report)
+        return report
 
     # ---------------- prerequisites ----------------
 
@@ -629,29 +709,93 @@ class SessionSupervisor:
 
     # ---------------- the machine ----------------
 
+    def _emergency_close(self, failed_state: str | None) -> dict:
+        """Best-effort transfer, then ALWAYS attempt termination (R-C2).
+
+        Runs from ``run``'s ``finally`` block.  Nothing here may raise: a
+        failure inside the close-out would strand the pod, so every step is
+        recorded (in the journal and in the returned record) and the next one
+        still runs.  Termination is attempted even when the transfer failed —
+        losing artefacts is bad, paying for an abandoned accelerator is worse,
+        and the artefacts also live in the session directory.
+        """
+        record: dict[str, Any] = {"triggered_by": failed_state,
+                                  "transfer": None, "terminate": None}
+        if failed_state is None and "TERMINATE_ACCELERATOR" in self.completed:
+            record["note"] = "the session closed normally; nothing to force"
+            return record
+        for state, key in (("TRANSFER_FL_ARTIFACTS", "transfer"),
+                           ("TERMINATE_ACCELERATOR", "terminate")):
+            if state in self.completed:
+                record[key] = {"status": "ALREADY_COMPLETED"}
+                continue
+            if key == "transfer" and not os.path.isdir(
+                    os.path.join(self.out_dir, "ladder")):
+                # nothing ran, so there is nothing to transfer; an empty
+                # archive would misdescribe the session
+                record[key] = {"status": "SKIPPED_NO_LADDER_OUTPUT"}
+                continue
+            handler = getattr(self, f"state_{state}")
+            try:
+                self.journal("EMERGENCY_STATE_STARTED", state,
+                             {"reason": f"session aborted at {failed_state!r}"})
+                result = handler()
+            except BaseException as exc:  # noqa: BLE001 - recorded, not raised
+                record[key] = {"status": "FAILED", "error": repr(exc)}
+                try:
+                    self.journal("EMERGENCY_STATE_FAILED", state,
+                                 {"error": repr(exc)})
+                except BaseException:  # noqa: BLE001 - the journal is gone
+                    pass
+                continue
+            record[key] = {"status": "COMPLETED", "result": _jsonable(result)}
+            self.state_results.setdefault(state, result)
+            if state not in self.completed:
+                self.completed.append(state)
+            try:
+                self.journal("EMERGENCY_STATE_COMPLETED", state,
+                             {"result": _jsonable(result)})
+            except BaseException:  # noqa: BLE001
+                pass
+        record["policy"] = (
+            "a failed session still transfers what it has (best effort) and "
+            "ALWAYS attempts termination: a rented accelerator keeps billing "
+            "until it is terminated, not until the process exits")
+        return record
+
     def run(self, *, resume: bool = True) -> dict:
         started = self.clock.monotonic()
         self._t0 = self._t0 or started
         failed_state = None
         failure = None
-        for state in STATES:
-            if resume and state in self.completed:
-                self.journal("STATE_SKIPPED_RESUMED", state, {})
-                continue
-            handler = getattr(self, f"state_{state}", None)
-            if handler is None:  # pragma: no cover - STATES is closed
-                raise SupervisorError(f"no handler for state {state!r}")
-            self.journal("STATE_STARTED", state, {})
-            try:
-                result = handler()
-            except BaseException as exc:  # noqa: BLE001 - recorded, never swallowed
-                failed_state = state
-                failure = repr(exc)
-                self.journal("STATE_FAILED", state, {"error": failure})
-                break
-            self.state_results[state] = result
-            self.completed.append(state)
-            self.journal("STATE_COMPLETED", state, {"result": _jsonable(result)})
+        if resume and self.completed:
+            self.rebuild_state_results()
+        try:
+            for state in STATES:
+                if resume and state in self.completed:
+                    self.journal("STATE_SKIPPED_RESUMED", state, {})
+                    continue
+                handler = getattr(self, f"state_{state}", None)
+                if handler is None:  # pragma: no cover - STATES is closed
+                    raise SupervisorError(f"no handler for state {state!r}")
+                self.journal("STATE_STARTED", state, {})
+                try:
+                    result = handler()
+                except BaseException as exc:  # noqa: BLE001 - recorded, never swallowed
+                    failed_state = state
+                    failure = repr(exc)
+                    self.journal("STATE_FAILED", state, {"error": failure})
+                    break
+                self.state_results[state] = result
+                self.completed.append(state)
+                self.journal("STATE_COMPLETED", state,
+                             {"result": _jsonable(result)})
+        except BaseException as exc:  # noqa: BLE001 - supervisor-level failure
+            failed_state = failed_state or "SUPERVISOR"
+            failure = failure or repr(exc)
+        finally:
+            self.close_out = self._emergency_close(failed_state)
+
         status = {
             "schema": FINAL_STATUS_SCHEMA,
             "session_id": self.payload.get("session_id"),
@@ -668,11 +812,14 @@ class SessionSupervisor:
             "elapsed_seconds": round(self.clock.monotonic() - started, 6),
             "isolation": self.guard.to_dict(),
             "o1_paths_touched_for_hashing": len(self.custodian.touched),
+            "determinism": self.determinism,
+            "close_out": self.close_out,
         }
         self.guard.write_json(os.path.join(self.out_dir, "SESSION_FINAL_STATUS.json"),
                               status)
         self.journal("SESSION_FINISHED", failed_state or "TERMINATE_ACCELERATOR",
-                     {"outcome": status["outcome"]})
+                     {"outcome": status["outcome"],
+                      "close_out": self.close_out})
         return status
 
 
@@ -704,12 +851,23 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """The pod-side entry point (``deploy/fl_b200_entry.sh`` execs this).
+
+    It builds the supervisor and then wires the PRODUCTION campaign entry onto
+    it (``campaign.entry.attach_to_supervisor``), which applies the §22
+    determinism configuration and supplies the real ``StageContext`` factory
+    and ladder runner.  Before this existed, a pod-side run reached
+    ``RUN_FL_LADDER`` and refused for want of a context factory (R-C1).
+    """
     args = build_parser().parse_args(argv)
     config = SessionConfig.load(args.config)
     supervisor = SessionSupervisor(config=config, out_dir=args.out)
     if supervisor.rehearsal:
         print(f"*** {REHEARSAL_LABEL}: this session is NOT a scientific run ***",
               file=sys.stderr)
+    from . import entry as campaign_entry
+
+    campaign_entry.attach_to_supervisor(supervisor)
     status = supervisor.run(resume=not args.no_resume)
     print(json.dumps({"outcome": status["outcome"],
                       "states_completed": status["states_completed"]},

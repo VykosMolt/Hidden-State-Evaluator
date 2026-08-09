@@ -51,7 +51,9 @@ def test_every_poison_condition_is_leak_free(family):
         record = family.feedback_record(rule, instance, attempt, rng)
         for condition in POISON_CONDITIONS:
             local = make_rng(derive_seed(1, condition))
-            text = hint_for_condition(record, condition, local)
+            text = hint_for_condition(
+                record, condition, local,
+                answer_canonical=instance.answer_canonical)
             assert not answer_leak(text, instance.answer_canonical), text
             assert not any(ch.isdigit() for ch in text), text
 
