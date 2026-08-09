@@ -171,6 +171,8 @@ Never "recursive self-improvement"; never "generally self-improving system".
    counts per stage (frozen per-stage maxima in stage_definitions).
 6. `o1_entry_command` — operator-bound (the sealed O1 package's pod
    entrypoint is currently a refusing stub; recorded, out of FL scope).
+7. Container registry digest reference — operator-bound until the GHCR
+   push (see §13.11).
 
 No conceptual decision is left open for the accelerator session.
 
