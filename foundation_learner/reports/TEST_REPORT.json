@@ -1,38 +1,24 @@
 {
-  "fast_mode": true,
+  "fast_mode": false,
   "schema": "flb200.test_report.v1",
   "scope_note": "Hardware-independent local validation only: the tiny NONSCIENTIFIC Ouro model, tiny pools, a stub O1 command, a mocked clock and CPU execution. No B200 hardware claim, no throughput claim, and no scientific claim is made or implied. The real checkpoint is touched only by scripts/local_smoke_test.py, which is reported separately and is also nonscientific.",
-  "seconds": 228.13,
+  "seconds": 2280.0,
   "suites": [
     {
-      "command": "-m pytest /home/moloch/ouro_worktrees/foundation-learner-b200-v0/foundation_learner/tests -q --no-header -p no:cacheprovider --ignore /home/moloch/ouro_worktrees/foundation-learner-b200-v0/foundation_learner/tests/test_training_trainer.py --ignore /home/moloch/ouro_worktrees/foundation-learner-b200-v0/foundation_learner/tests/test_training_checkpointing.py --ignore /home/moloch/ouro_worktrees/foundation-learner-b200-v0/foundation_learner/tests/test_evaluation_fl0_base.py --ignore /home/moloch/ouro_worktrees/foundation-learner-b200-v0/foundation_learner/tests/test_evaluation_learning_curve.py --ignore /home/moloch/ouro_worktrees/foundation-learner-b200-v0/foundation_learner/tests/test_evaluation_context_reset.py --ignore /home/moloch/ouro_worktrees/foundation-learner-b200-v0/foundation_learner/tests/test_evaluation_interference.py --ignore /home/moloch/ouro_worktrees/foundation-learner-b200-v0/foundation_learner/tests/test_evaluation_poison_eval.py --ignore /home/moloch/ouro_worktrees/foundation-learner-b200-v0/foundation_learner/tests/test_evaluation_remap_eval.py --ignore /home/moloch/ouro_worktrees/foundation-learner-b200-v0/foundation_learner/tests/test_evaluation_generation.py --ignore /home/moloch/ouro_worktrees/foundation-learner-b200-v0/foundation_learner/tests/test_mechanisms_integration.py --ignore /home/moloch/ouro_worktrees/foundation-learner-b200-v0/foundation_learner/tests/test_mechanisms_value_head.py --ignore /home/moloch/ouro_worktrees/foundation-learner-b200-v0/foundation_learner/tests/test_mechanisms_fl5_training.py --ignore /home/moloch/ouro_worktrees/foundation-learner-b200-v0/foundation_learner/tests/test_mechanisms_fast_adapter.py",
+      "command": "-m pytest /home/moloch/ouro_worktrees/foundation-learner-b200-v0/foundation_learner/tests -q --no-header -p no:cacheprovider",
       "counts": {
         "deselected": 0,
         "errors": 0,
         "failed": 0,
-        "passed": 1358,
+        "passed": 1646,
         "skipped": 8
       },
       "failures": [],
       "returncode": 0,
-      "seconds": 68.65,
-      "skipped_modules": [
-        "tests/test_training_trainer.py",
-        "tests/test_training_checkpointing.py",
-        "tests/test_evaluation_fl0_base.py",
-        "tests/test_evaluation_learning_curve.py",
-        "tests/test_evaluation_context_reset.py",
-        "tests/test_evaluation_interference.py",
-        "tests/test_evaluation_poison_eval.py",
-        "tests/test_evaluation_remap_eval.py",
-        "tests/test_evaluation_generation.py",
-        "tests/test_mechanisms_integration.py",
-        "tests/test_mechanisms_value_head.py",
-        "tests/test_mechanisms_fl5_training.py",
-        "tests/test_mechanisms_fast_adapter.py"
-      ],
+      "seconds": 1737.6,
+      "skipped_modules": [],
       "suite": "unit_and_hostile",
-      "tail": "........................................................................ [  5%]\n........................................................................ [ 10%]\n........................................................................ [ 15%]\n........................................................................ [ 21%]\n........................................................................ [ 26%]\n........................................................................ [ 31%]\n........................................................................ [ 36%]\n........................................................................ [ 42%]\n........................................................................ [ 47%]\n.......sssssss.s........................................................ [ 52%]\n........................................................................ [ 57%]\n........................................................................ [ 63%]\n........................................................................ [ 68%]\n........................................................................ [ 73%]\n........................................................................ [ 79%]\n........................................................................ [ 84%]\n........................................................................ [ 89%]\n........................................................................ [ 94%]\n......................................................................   [100%]\n=============================== warnings summary ===============================\nfoundation_learner/tests/test_training_lora.py: 14 warnings\n  /home/moloch/ouro_project/venv/lib/python3.14/site-packages/torch/jit/_script.py:359: DeprecationWarning: `torch.jit.script_method` is not supported in Python 3.14+ and may break. Please switch to `torch.compile` or `torch.export`.\n    warnings.warn(\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n1358 passed, 8 skipped, 14 warnings in 66.16s (0:01:06)\n",
+      "tail": "........................................................................ [  4%]\n........................................................................ [  8%]\n........................................................................ [ 13%]\n........................................................................ [ 17%]\n........................................................................ [ 21%]\n........................................................................ [ 26%]\n........................................................................ [ 30%]\n........................................................................ [ 34%]\n........................................................................ [ 39%]\n........................................................................ [ 43%]\n.....................................sssssss.s.......................... [ 47%]\n........................................................................ [ 52%]\n........................................................................ [ 56%]\n........................................................................ [ 60%]\n........................................................................ [ 65%]\n........................................................................ [ 69%]\n........................................................................ [ 74%]\n........................................................................ [ 78%]\n........................................................................ [ 82%]\n........................................................................ [ 87%]\n........................................................................ [ 91%]\n........................................................................ [ 95%]\n......................................................................   [100%]\n=============================== warnings summary ===============================\nfoundation_learner/tests/test_training_lora.py: 14 warnings\n  /home/moloch/ouro_project/venv/lib/python3.14/site-packages/torch/jit/_script.py:359: DeprecationWarning: `torch.jit.script_method` is not supported in Python 3.14+ and may break. Please switch to `torch.compile` or `torch.export`.\n    warnings.warn(\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n1646 passed, 8 skipped, 14 warnings in 1734.89s (0:28:54)\n",
       "verdict": "PASS"
     },
     {
@@ -40,8 +26,11 @@
         "all_supervisor_states_walked": true,
         "bench_completed": true,
         "core_arms_completed": true,
+        "core_matching_completed": true,
+        "determinism_configured": true,
         "dev_decisions_frozen_exists": true,
         "dev_grid_completed": true,
+        "diagnostics_completed": true,
         "fl0_completed": true,
         "fl_started_only_after_o1_transfer": true,
         "outcome_complete": true,
@@ -54,6 +43,7 @@
       "error": null,
       "ladder_states": {
         "BENCH": "COMPLETE",
+        "CORE_MATCHING": "COMPLETE",
         "DEV_GRID": "COMPLETE",
         "FL0": "COMPLETE",
         "FL1": "COMPLETE",
@@ -64,11 +54,14 @@
         "FL6": "SKIPPED_ENTRY_CONDITION",
         "FL7": "SKIPPED_ENTRY_CONDITION",
         "FL8": "SKIPPED_ENTRY_CONDITION",
+        "INTERFERENCE_DIAG": "COMPLETE",
+        "POISON_DIAG": "COMPLETE",
+        "REMAP_DIAG": "COMPLETE",
         "SEALED_EVAL": "COMPLETE",
         "SECOND_SEED": "COMPLETE"
       },
       "report_path": "/home/moloch/ouro_worktrees/foundation-learner-b200-v0/foundation_learner/reports/local_runs/dress_rehearsal/REHEARSAL_REPORT.json",
-      "seconds": 159.33,
+      "seconds": 541.84,
       "states_walked": [
         "START_SESSION",
         "RUN_O1_CALIBRATION",
@@ -87,11 +80,20 @@
       "verdict": "PASS"
     },
     {
-      "reason": "SHA256SUMS does not exist; the release has not been built yet",
+      "coverage": {
+        "listed": 255,
+        "mismatched": [],
+        "missing": [],
+        "ok": true,
+        "present": 255,
+        "unlisted": []
+      },
+      "include_pregen": true,
+      "seconds": 0.39,
       "suite": "package_checksums",
-      "verdict": "SKIPPED"
+      "verdict": "PASS"
     }
   ],
-  "utc": "2026-08-09T14:38:02Z",
+  "utc": "2026-08-09T20:57:05Z",
   "verdict": "ALL FOUNDATION LEARNER LOCAL CHECKS PASSED"
 }
