@@ -34,6 +34,7 @@
   },
   "b200_derived_unresolved": {
     "available_foundation_learner_seconds": "UNRESOLVED_SESSION_TIME_AFTER_O1_CLOSE",
+    "container_registry_digest_ref": "UNRESOLVED_OPERATOR_BOUND_REGISTRY_PUSH",
     "eval_batch_size_post_equivalence_gate": "UNRESOLVED_B200_GATE",
     "measured_throughput_tokens_per_second": "UNRESOLVED_B200_BENCH",
     "o1_entry_command": "UNRESOLVED_OPERATOR_BOUND",
@@ -65,11 +66,11 @@
     "family_count": 12,
     "generator_source_hashes": {
       "boolean_rule": "f54b9a347204b1cd3efe530d4089130d444555abfe0cff8ea84b3afec089dc03",
-      "constraint_rules": "aa6169d1822c6a053fac7236bb9fff6722a3cb55116ba79377862dec6ac8e978",
+      "constraint_rules": "e9f22f846b82bad835b584a14e6fd817c410f4c40a2ebf8456af65990665d7d9",
       "dsl_execution": "b588a787b4e47ebf623d4dc97c1e14bebde79abf6ee1a40e3dba9912883fa187",
       "finite_state_transducer": "609c6cd65bbd97167a4e48176a37a4a818b155fa2866bb63ae23a8b4c1c6833a",
-      "grammar_classification": "b80bdb522fa11c20cbfe9cdc4b07719d57e7598d1b11ba8c34101bdf51d8ffb2",
-      "graph_edge_semantics": "718631028a4d585f7296b2d9763f74a815ada5cf3621d4b3940d97dded751c57",
+      "grammar_classification": "fb6f3ddfdeeb235ff55a97a4557f215ac314575c62a01eef193470ada7ef86d3",
+      "graph_edge_semantics": "8371fab910c79c409bd26fcb52da8cddb1a8fc9515468559d7f62568f20ea685",
       "modular_arithmetic": "fa66f4841c0552f0e503d30453d08a7e70d6700c8e291e0b7e3c588318194aeb",
       "permutation_composition": "b1d8fd41e52264c434bfe862baacefb5805323f6b768fd325022dd816e56d635",
       "propositional_transform": "ca8f0038ef0779faa967a6bc837cb8f6e410d8ca84c924410d34dcf0346681a2",
@@ -83,7 +84,7 @@
       "train_per_family": 2000
     },
     "pregen_files": 60,
-    "pregen_manifest_sha256": "b197eb474d66e61eddf982dfb4d4b82abe348e5296f3934040e759c8ee3e6b07",
+    "pregen_manifest_sha256": "eb4d4a76bbd438b296d9602e550a281996c26a01423623022bdefd4acd254aa7",
     "pregen_root_basename": "pregen",
     "pregen_root_seed": 20260809,
     "sealed_test_families": [
@@ -91,8 +92,8 @@
       "permutation_composition",
       "propositional_transform"
     ],
-    "shard_sums_sha256": "b0ba0b69c6f5d1c0780c251ad3e86bd099fe9902e3f1fc3039a92e78dfa5959d",
-    "split_manifest_sha256": "983c4ed1fc4ea240108af02b56003dfb780e1cee34c4278492c0bf79c5084212",
+    "shard_sums_sha256": "5ec3b4244967cbee6c8b65658c65e5b8bdd7aa77c98c4b7aaed8bde2b1677d05",
+    "split_manifest_sha256": "6cf330b47af9406edf8022564ea330f3f164fbaef22618710a11fa3b2f40d9b5",
     "split_rule_domain": "FOUNDATION_LEARNER_V0_FAMILY_SPLIT",
     "train_families": [
       "grammar_classification",
@@ -134,9 +135,9 @@
   },
   "package": {
     "branch": "foundation-learner-b200-v0",
-    "source_commit": "5a27217e2d0596f3957581294b20c4f83bbadbfa",
+    "source_commit": "5eb48c5f142563562c678b1dd90b46d7c18e25bf",
     "zip_name": "FOUNDATION_LEARNER_B200_V0.1.0.zip",
-    "zip_sha256": "ae44c60136597402002cc35edfd2f58ea906d08211598c920eedce477786101c"
+    "zip_sha256": "439fe91545b5de26429149eaf433b368274df3bf4a4b1eeca3a51bea6265bbd9"
   },
   "package_version": "0.1.0",
   "provenance": {
