@@ -1,0 +1,121 @@
+{
+  "budget_seconds": 900,
+  "checks": {
+    "forward_logits_finite": true,
+    "forward_shape_ok": true,
+    "generation_returned_text": true,
+    "grad_norm_finite": true,
+    "loss_finite": true,
+    "optimizer_step_taken": true,
+    "parse_round_trip": true,
+    "transformers_exactly_4_54_1": true,
+    "tree_hash_verified": true,
+    "verifier_accepts_the_true_answer": true
+  },
+  "classification": "NONSCIENTIFIC",
+  "device": "cuda",
+  "elapsed_seconds": 22.87,
+  "forward_tokens": 59,
+  "generation_preview": "\nStep 1: The string is bcbabcbc.\nStep 2: The string has 8 characters.\nStep 3: The string has 4 a's, 2 b's, and 2 c's.\nStep 4: The hidden language requires that the number of a",
+  "identity": {
+    "architecture": "OuroForCausalLM",
+    "checkpoint_dir": "/home/moloch/ouro_project/models/ouro_rltt_local",
+    "checkpoint_tree_sha256": "a701f7a75300ddf57098572fef3894bef59d5179580ec7eae7cd561a36056889",
+    "config_digest": "ff0997a852f46dec3aea6beb3a9d446fc52c831e25d47ea60f7e3a1e2f1da487",
+    "device": "cuda",
+    "dtype": "bfloat16",
+    "early_exit_threshold": 1.0,
+    "environment": {
+      "cuda": "12.8",
+      "cudnn": 92000,
+      "digest": "4c6b5dd435dd96bebb6e547d55cb4904a2d53431d9fdc4d35998caf52cf46f43",
+      "numpy": "2.4.4",
+      "platform": "Linux-7.1.6-1-cachyos-x86_64-with-glibc2.44",
+      "python": "3.14.6",
+      "torch": "2.12.0.dev20260407+cu128",
+      "transformers": "4.54.1"
+    },
+    "files_verified": true,
+    "hidden_size": 2048,
+    "identity_hash": "81daa259942a334391bac1c4c44336bb8e1fedf67f226a06a9bdbc2bc4b10758",
+    "kind": "FROZEN_BACKBONE",
+    "loading_recipe": "FL_V0_FROZEN_RECIPE_S22",
+    "model_type": "ouro",
+    "num_attention_heads": 16,
+    "num_hidden_layers": 48,
+    "schema": "flb200.model_identity.v1",
+    "scientific": true,
+    "torch_version": "2.12.0.dev20260407+cu128",
+    "total_ut_steps": 4,
+    "transformers_version": "4.54.1",
+    "tree_hash_verified": true,
+    "vocab_size": 49152
+  },
+  "label": "LOCAL_NONSCIENTIFIC_OURO_SMOKE_TEST",
+  "memory": {
+    "max_allocated_bytes": 5973990400,
+    "max_reserved_bytes": 6639583232
+  },
+  "mode": "REAL_CHECKPOINT",
+  "schema": "flb200.smoke_report.v1",
+  "scientific_result": null,
+  "scope_note": "NONSCIENTIFIC: a mechanics check on a throwaway TRAIN-family instance from a scratch seed. It is not a training arm, produces no scientific result, and says nothing about the research question.",
+  "scratch_family_id": "grammar_classification",
+  "scratch_seed": 990001,
+  "scratch_tag": "NONSCIENTIFIC_SMOKE",
+  "timings": [
+    {
+      "elapsed_seconds": 0.418,
+      "step": "assert_transformers_version"
+    },
+    {
+      "elapsed_seconds": 10.973,
+      "step": "load"
+    },
+    {
+      "elapsed_seconds": 12.051,
+      "step": "forward"
+    },
+    {
+      "elapsed_seconds": 19.405,
+      "step": "generation"
+    },
+    {
+      "elapsed_seconds": 19.405,
+      "step": "parse_round_trip"
+    },
+    {
+      "elapsed_seconds": 22.87,
+      "step": "peft_optimizer_step"
+    }
+  ],
+  "training": {
+    "final_loss": 0.26446476578712463,
+    "grad_norm": 6.40625,
+    "ledger": {
+      "arm_id": "FL3",
+      "backward_tokens": 667,
+      "batches": 1,
+      "device": "cuda",
+      "episodes": 1,
+      "examples": 1,
+      "forward_tokens": 667,
+      "forward_tokens_unpadded": 667,
+      "gpu_seconds": 2.476457451004535,
+      "loss_tokens": 35,
+      "max_tokens_per_batch": 2048,
+      "notes": [],
+      "optimizer_updates": 1,
+      "planned_updates": 1,
+      "schema": "flb200.compute_ledger.v1",
+      "skipped_updates": 0,
+      "stage": "SMOKE",
+      "tokens_per_second": 269.2625700234646,
+      "wall_time_s": 2.477135978988372,
+      "weighted_loss_mass": 27.5
+    },
+    "steps": 1
+  },
+  "utc": "2026-08-09T14:49:18Z",
+  "verdict": "PASS"
+}

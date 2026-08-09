@@ -1,0 +1,71 @@
+{
+  "schema": "flb200.environment_lock.v1",
+  "package": "FOUNDATION_LEARNER_B200_V0",
+  "package_version": "0.1.0",
+  "frozen_utc": "2026-08-09",
+  "assert_at_runtime": {
+    "transformers": "4.54.1",
+    "rule": "training/model_loading.assert_transformers_version() hard-fails on any other transformers version; torch is RECORDED, not asserted (see torch_pin_drift)"
+  },
+  "python": {
+    "local_venv": "3.14.6",
+    "b200_container": "3.14 (base image python:3.14-slim-bookworm, pinned by digest)"
+  },
+  "torch_pin_drift": {
+    "local_venv": "2.12.0.dev20260407+cu128",
+    "local_role": "canonical LOCAL development / tiny-model tests / local nonscientific smoke test",
+    "b200_image": "2.12.0.dev20260408+cu128",
+    "b200_role": "the version the campaign actually executes on the accelerator",
+    "note": "Contract 22 records the O1 pin drift: the 0407 nightly is no longer downloadable upstream and the O1 container ships 0408. FL asserts transformers EXACTLY and RECORDS torch, tolerating the 0407/0408 split. Both builds are listed here with their roles so no report can silently claim one when the other ran."
+  },
+  "packages": {
+    "numpy": "2.4.4",
+    "accelerate": "1.13.0",
+    "safetensors": "0.7.0 (B200 lock)",
+    "tokenizers": "0.21.4 (B200 lock)",
+    "triton": "3.7.0 (B200 image, bundled with the torch cu128 wheel install)",
+    "peft": "0.19.1 LOCAL ONLY"
+  },
+  "no_peft_on_b200": {
+    "fact": "peft is NOT in o1_b200/deploy/requirements.b200.lock and is therefore absent from the B200 container",
+    "consequence": "all low-rank adapter functionality (PEFT_MODE core arms, FL7 fast adapter, FL8 slow bank) is implemented in foundation_learner/training/lora.py (custom, tested)",
+    "peft_local_role": "numerical oracle in a local unit test only; lazily imported and skipped when absent",
+    "amendment": "CONTRACT_AMENDMENTS.md Amendment 3"
+  },
+  "cuda": {
+    "toolkit": "12.8",
+    "source": "the torch cu128 wheel's bundled CUDA 12.8 / cuDNN 9 / NCCL runtime libraries",
+    "gpu": "B200 (sm_100, compute capability 10.0); host driver R570+ supplied by the provider host",
+    "local_gpu_for_smoke_test": "RTX 5070 Ti 12 GB (local, nonscientific smoke test only)"
+  },
+  "container": {
+    "image_name": "o1-b200-runner:v0.2.0",
+    "image_id_local": "sha256:75582fe45ddaed41a6150adf01fb6fc62c1511828913e5e37e37e43b415e7f1b",
+    "base_image": "python:3.14-slim-bookworm",
+    "base_image_digest": "python@sha256:86f975aca15cf04a40b399eebede9aea7c82eae084d1f1a0a6ef6bcaae871a30",
+    "registry_digest_ref": "UNRESOLVED_UNTIL_O1_REGISTRY_PUSH",
+    "venv": "/opt/venv",
+    "fl_changes_to_the_image": "NONE — the FL package RUNS IN the existing O1 container and adds no image change, no package installation, and no Dockerfile edit",
+    "reference": "o1_b200/deploy/Dockerfile.b200 and o1_b200/provider/runpod/CONTAINER_IMAGE_RECORD.json (READ-ONLY reference; never modified by this campaign)"
+  },
+  "container_environment": {
+    "TRANSFORMERS_OFFLINE": "1",
+    "HF_HUB_OFFLINE": "1",
+    "CUBLAS_WORKSPACE_CONFIG": ":4096:8",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "open_ports": "none",
+    "container_disk_gb": 60
+  },
+  "checkpoint": {
+    "pod_mount": "/artifacts/ouro_rltt_local",
+    "local_canonical": "/home/moloch/ouro_project/models/ouro_rltt_local",
+    "tree_sha256": "a701f7a75300ddf57098572fef3894bef59d5179580ec7eae7cd561a36056889",
+    "baked_into_image": false,
+    "shared_with_o1": "READ-ONLY; byte-identical base shared with the O1 programme"
+  },
+  "notes": [
+    "This lock records facts; it installs nothing and changes nothing.",
+    "No new third-party dependency is introduced by the FL package: stdlib + numpy + torch + transformers + safetensors only at runtime.",
+    "Cloud spend for the task that produced this package: USD 0.00."
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "arm_id": "FL3",
+  "backward_tokens": 667,
+  "batches": 1,
+  "device": "cuda",
+  "episodes": 1,
+  "examples": 1,
+  "forward_tokens": 667,
+  "forward_tokens_unpadded": 667,
+  "gpu_seconds": 2.476457451004535,
+  "loss_tokens": 35,
+  "max_tokens_per_batch": 2048,
+  "notes": [],
+  "optimizer_updates": 1,
+  "planned_updates": 1,
+  "schema": "flb200.compute_ledger.v1",
+  "skipped_updates": 0,
+  "stage": "SMOKE",
+  "tokens_per_second": 269.2625700234646,
+  "wall_time_s": 2.477135978988372,
+  "weighted_loss_mass": 27.5
+}

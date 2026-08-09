@@ -5,3 +5,12 @@ __pycache__/
 checkpoints/
 *.pt
 *.bin
+
+# --- Foundation Learner B200 V0 pre-generated data ---------------------------
+# The raw shards are large (~360 MB) and BITWISE REPRODUCIBLE from
+# foundation_learner/scripts/pregenerate_all.py, so they are not tracked.
+# Their manifests must stay findable for packaging and review, so the
+# MANIFESTS/ mirror written by scripts/package_release.py IS tracked.
+/artifacts_fl/pregen*/*
+!/artifacts_fl/pregen*/MANIFESTS/
+/foundation_learner/reports/local_runs/
