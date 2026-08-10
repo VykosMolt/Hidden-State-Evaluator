@@ -194,6 +194,7 @@ def run_smoke(*, tiny: bool, out_dir: str, device: str | None = None,
                 checkpoint_dir or ml.FROZEN_CHECKPOINT_DIR, device=device,
                 verify_tree_hash=True)
             checks["tree_hash_verified"] = True
+        ml.set_evaluation_mode(bundle.model)
         report["device"] = device
         report["identity"] = dict(bundle.identity)
         log(f"[{SMOKE_LABEL}] loaded ({report['mode']}) on {device}")
