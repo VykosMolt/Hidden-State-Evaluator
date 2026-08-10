@@ -135,9 +135,9 @@
   },
   "package": {
     "branch": "foundation-learner-b200-v0",
-    "source_commit": "f475ee8e7a743e38669e1161b3d92d59bcf65cd3",
+    "source_commit": "90fad00f77fae76cde22e43e47757b305754108e",
     "zip_name": "FOUNDATION_LEARNER_B200_V0.1.0.zip",
-    "zip_sha256": "ce6981d8f0042493d48742d80bb471befca2daa6af57186a4ebe3cd787b3932d"
+    "zip_sha256": "99a66e20d81b43708edefd665f2f06a409e81aa11ca11907fe5b72cf97c22c7b"
   },
   "package_version": "0.1.0",
   "provenance": {
