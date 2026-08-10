@@ -1,5 +1,5 @@
 {
-  "budget_seconds": 900,
+  "budget_seconds": 900.0,
   "checks": {
     "forward_logits_finite": true,
     "forward_shape_ok": true,
@@ -14,7 +14,7 @@
   },
   "classification": "NONSCIENTIFIC",
   "device": "cuda",
-  "elapsed_seconds": 21.267,
+  "elapsed_seconds": 20.985,
   "forward_tokens": 59,
   "generation_preview": "\nStep 1: The string is bcbabcbc.\nStep 2: The string has 8 characters.\nStep 3: The string has 4 a's, 2 b's, and 2 c's.\nStep 4: The hidden language requires that the number of a",
   "identity": {
@@ -65,27 +65,27 @@
   "scratch_tag": "NONSCIENTIFIC_SMOKE",
   "timings": [
     {
-      "elapsed_seconds": 0.419,
+      "elapsed_seconds": 0.416,
       "step": "assert_transformers_version"
     },
     {
-      "elapsed_seconds": 8.934,
+      "elapsed_seconds": 8.949,
       "step": "load"
     },
     {
-      "elapsed_seconds": 9.961,
+      "elapsed_seconds": 9.942,
       "step": "forward"
     },
     {
-      "elapsed_seconds": 17.811,
+      "elapsed_seconds": 17.51,
       "step": "generation"
     },
     {
-      "elapsed_seconds": 17.811,
+      "elapsed_seconds": 17.511,
       "step": "parse_round_trip"
     },
     {
-      "elapsed_seconds": 21.267,
+      "elapsed_seconds": 20.984,
       "step": "peft_optimizer_step"
     }
   ],
@@ -101,7 +101,7 @@
       "examples": 1,
       "forward_tokens": 682,
       "forward_tokens_unpadded": 682,
-      "gpu_seconds": 2.454916531976778,
+      "gpu_seconds": 2.442262935976032,
       "loss_tokens": 35,
       "max_tokens_per_batch": 2048,
       "notes": [],
@@ -110,12 +110,12 @@
       "schema": "flb200.compute_ledger.v1",
       "skipped_updates": 0,
       "stage": "SMOKE",
-      "tokens_per_second": 277.73360204858835,
-      "wall_time_s": 2.455590519006364,
+      "tokens_per_second": 279.16663919945086,
+      "wall_time_s": 2.4429853149922565,
       "weighted_loss_mass": 27.5
     },
     "steps": 1
   },
-  "utc": "2026-08-10T01:31:34Z",
+  "utc": "2026-08-10T04:53:05Z",
   "verdict": "PASS"
 }

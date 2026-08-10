@@ -65,7 +65,7 @@
   "base_identity_hash": "81daa259942a334391bac1c4c44336bb8e1fedf67f226a06a9bdbc2bc4b10758",
   "code_commit": {
     "branch": "foundation-learner-b200-v0",
-    "commit": "6bd0a18ffbe9e74c1308396714d4f3b62fb659bd",
+    "commit": "37d50732af5504a04f8729eb11e9b65ae01d648f",
     "dirty": true
   },
   "environment": {
@@ -80,9 +80,9 @@
   },
   "family_split_hash": null,
   "loss_tokens": 35,
-  "manifest_hash": "19668f50a4f13d283a38a7095607e73f0d9d94db6f6ba66057825d8a3c38907e",
+  "manifest_hash": "7a587587723fbfa8baaf9e25aa6a93b77513c03c56896f536510048cfa758d31",
   "payload_file": "ckpt_final.pt",
-  "payload_sha256": "5cff86f9b5e3fc1bf94c2269c4febe21a13740fe1073be31c04d423eb9119777",
+  "payload_sha256": "fceaa015693abff4410bfc0c58437de8b1cf23ed128669b0749281a36d9c934a",
   "schema": "flb200.checkpoint_manifest.v1",
   "shard_hashes": null,
   "stage": "SMOKE",

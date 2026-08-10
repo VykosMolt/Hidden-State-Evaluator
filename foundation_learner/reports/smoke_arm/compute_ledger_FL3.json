@@ -7,7 +7,7 @@
   "examples": 1,
   "forward_tokens": 682,
   "forward_tokens_unpadded": 682,
-  "gpu_seconds": 2.454916531976778,
+  "gpu_seconds": 2.442262935976032,
   "loss_tokens": 35,
   "max_tokens_per_batch": 2048,
   "notes": [],
@@ -16,7 +16,7 @@
   "schema": "flb200.compute_ledger.v1",
   "skipped_updates": 0,
   "stage": "SMOKE",
-  "tokens_per_second": 277.73360204858835,
-  "wall_time_s": 2.455590519006364,
+  "tokens_per_second": 279.16663919945086,
+  "wall_time_s": 2.4429853149922565,
   "weighted_loss_mass": 27.5
 }
