@@ -59,6 +59,7 @@ __all__ = [
     "finish_stage",
     "generation_config",
     "env_factory",
+    "prepare_for_evaluation",
     "load_split_episodes",
     "dev_episodes",
     "train_episodes",
@@ -110,6 +111,17 @@ def generation_config(ctx: Any):
 def env_factory(episode: Any):
     """The campaign's exact-verifier environment factory (W4 API)."""
     return _stage_definitions().env_factory(episode)
+
+
+def prepare_for_evaluation(bundle: Any) -> dict:
+    """Force a bundle into the only state a decode is valid in (Amend. 16).
+
+    ``model.eval()`` + layer-level gradient checkpointing off.  A mechanism
+    rung that has just trained a module or run a fast-adaptation inner loop
+    would otherwise decode with ``use_cache``/``past_key_values`` silently
+    dropped by transformers' ``GradientCheckpointingLayer``.
+    """
+    return _stage_definitions().prepare_bundle_for_evaluation(bundle)
 
 
 def load_split_episodes(ctx: Any, split: str, mode: str = "scripted", *,
@@ -254,10 +266,19 @@ def dev_records(bundle: Any, episodes: Sequence[Any], *, ctx: Any, arm_tag: str,
                 callbacks_factory: Callable[[Any], Any] | None = None,
                 context_mode: str = "history",
                 reset_from_index: int = 4) -> list[dict]:
-    """Online DEV evaluation, tagged ``split="DEVELOPMENT"`` for promotion."""
+    """Online DEV evaluation, tagged ``split="DEVELOPMENT"`` for promotion.
+
+    The bundle is forced into evaluation state first (eval mode, layer-level
+    gradient checkpointing off).  A mechanism rung that has just trained a
+    module would otherwise decode with ``use_cache``/``past_key_values``
+    silently dropped by transformers' ``GradientCheckpointingLayer`` and
+    produce different text than the same weights evaluated normally
+    (Amendment 16).
+    """
     from foundation_learner.evaluation.learning_curve import (
         LearningCurveConfig, annotate_records, run_episodes)
 
+    _stage_definitions().prepare_bundle_for_evaluation(bundle)
     cfg = LearningCurveConfig(arm_tag=arm_tag, context_mode=context_mode,
                               reset_from_index=int(reset_from_index),
                               generation=generation_config(ctx))

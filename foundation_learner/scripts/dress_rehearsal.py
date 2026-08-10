@@ -67,16 +67,45 @@ TINY_PREGEN = os.path.join(_PKG_PARENT, "artifacts_fl", "pregen_tiny")
 REHEARSAL_UPDATE_LADDER = (2,)
 REHEARSAL_AUTHORIZED_SECONDS = 3600.0
 #: Contract §18 fixes no rehearsal wall-clock number; this is the rehearsal's
-#: own bound on itself.  It was 600 s when the miniature ladder was BENCH, FL0,
-#: the grid, three core arms and the sealed opening.  Amendment 12 adds four
-#: stages (CORE_MATCHING and the three unconditional §9 diagnostics) and makes
-#: every evaluation set family-balanced, which triples the episode walks of the
-#: existing stages.  Measured breakdown of the added work on a 24-core CPU:
-#: REMAP_DIAG 218 s, POISON_DIAG 188 s, INTERFERENCE_DIAG 33 s, CORE_MATCHING
-#: 0.002 s; total run 673 s.  The bound is raised to 1200 s to cover the larger
-#: rehearsal rather than shrinking the mechanics it walks; it remains a bound,
-#: and `run_all_tests.py` reports the measured value either way.
+#: own ADVISORY bound on itself (Amendment 16).  It was 600 s when the
+#: miniature ladder was BENCH, FL0, the grid, three core arms and the sealed
+#: opening.  Amendment 12 adds four stages (CORE_MATCHING and the three
+#: unconditional §9 diagnostics) and makes every evaluation set
+#: family-balanced, which triples the episode walks of the existing stages.
+#: Measured breakdown of the added work on an idle 24-core CPU: REMAP_DIAG
+#: 218 s, POISON_DIAG 188 s, INTERFERENCE_DIAG 33 s, CORE_MATCHING 0.002 s.
+#:
+#: It is ADVISORY because it is a property of the HOST, not of the package: the
+#: same rehearsal measured 673 s and 813 s on the same machine depending on
+#: what else was running, so a hard wall-clock gate turns another process into
+#: a failed validation.  The measured time is always reported, and the bound is
+#: scaled by a measured single-core reference so a slow or loaded host is
+#: judged against itself.  The fifteen SUBSTANTIVE checks stay hard.
 REHEARSAL_WALL_CLOCK_LIMIT = 1200.0
+#: Seconds the reference micro-benchmark takes on the machine this bound was
+#: measured on; the advisory budget is scaled by (measured / reference).
+REHEARSAL_HOST_REFERENCE_SECONDS = 0.35
+ADVISORY_CHECKS: tuple[str, ...] = ("within_wall_clock_limit",)
+
+
+def measure_host_speed(repeats: int = 3) -> float:
+    """A tiny deterministic CPU benchmark: seconds for a fixed matmul chain.
+
+    Used ONLY to scale the advisory wall-clock budget to the host actually
+    running the rehearsal.  No scientific path reads it.
+    """
+    import torch
+
+    gen = torch.Generator().manual_seed(20260809)
+    a = torch.randn(512, 512, generator=gen)
+    b = torch.randn(512, 512, generator=gen)
+    best = float("inf")
+    for _ in range(max(1, repeats)):
+        t0 = time.monotonic()
+        for _ in range(20):
+            a = torch.mm(a, b) / 32.0
+        best = min(best, time.monotonic() - t0)
+    return float(best)
 
 
 # --------------------------------------------------------------------------
@@ -273,6 +302,19 @@ def run_rehearsal(out_dir: str, *, keep: bool = True, log=print) -> dict:
     status = supervisor.run(resume=False)
     elapsed = time.monotonic() - t0
 
+    # advisory wall-clock budget, scaled to THIS host (Amendment 16, N3)
+    reference = measure_host_speed()
+    host_factor = max(1.0, reference / REHEARSAL_HOST_REFERENCE_SECONDS)
+    advisory_budget = REHEARSAL_WALL_CLOCK_LIMIT * host_factor
+    host_speed = {
+        "reference_seconds": REHEARSAL_HOST_REFERENCE_SECONDS,
+        "measured_seconds": round(reference, 4),
+        "factor": round(host_factor, 3),
+        "note": ("the wall-clock budget is scaled by a measured single-core "
+                 "benchmark so a loaded or slow host is judged against itself; "
+                 "it is ADVISORY and never fails the rehearsal"),
+    }
+
     ladder_summary = supervisor.state_results.get("RUN_FL_LADDER") or {}
     states_walked = list(status["states_completed"])
     missing_states = [s for s in STATES if s not in states_walked]
@@ -302,7 +344,7 @@ def run_rehearsal(out_dir: str, *, keep: bool = True, log=print) -> dict:
         "result_manifest_verified": bool(
             (supervisor.state_results.get("CHECKPOINT_AND_VERIFY") or {})
             .get("verification", {}).get("ok")),
-        "within_wall_clock_limit": elapsed <= REHEARSAL_WALL_CLOCK_LIMIT,
+        "within_wall_clock_limit": elapsed <= advisory_budget,
         "outcome_complete": status["outcome"] == "COMPLETE",
         "determinism_configured": bool(
             determinism.get("deterministic_algorithms")),
@@ -335,6 +377,9 @@ def run_rehearsal(out_dir: str, *, keep: bool = True, log=print) -> dict:
         "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "elapsed_seconds": round(elapsed, 3),
         "wall_clock_limit_seconds": REHEARSAL_WALL_CLOCK_LIMIT,
+        "wall_clock_advisory_budget_seconds": round(advisory_budget, 1),
+        "host_speed": host_speed,
+        "advisory_checks": list(ADVISORY_CHECKS),
         "out_dir": session_dir,
         "supervisor": {
             "outcome": status["outcome"],
@@ -355,7 +400,9 @@ def run_rehearsal(out_dir: str, *, keep: bool = True, log=print) -> dict:
         "mechanism_states": mechanism_states,
         "mechanism_note": mechanism_note,
         "checks": checks,
-        "verdict": "PASS" if all(checks.values()) else "FAIL",
+        "verdict": ("PASS" if all(v for k, v in checks.items()
+                                  if k not in ADVISORY_CHECKS) else "FAIL"),
+        "advisory_warnings": [k for k in ADVISORY_CHECKS if not checks.get(k, True)],
         "miniature": {
             "update_ladder": list(REHEARSAL_UPDATE_LADDER),
             "frozen_ladder": [600, 1200, 2400, 4800],
@@ -377,7 +424,12 @@ def run_rehearsal(out_dir: str, *, keep: bool = True, log=print) -> dict:
     report["report_path"] = report_path
     log(f"[rehearsal] {report['verdict']} in {elapsed:.1f}s -> {report_path}")
     for name, ok in sorted(checks.items()):
-        if not ok:
+        if ok:
+            continue
+        if name in ADVISORY_CHECKS:
+            log(f"[rehearsal]   ADVISORY (not a failure): {name} "
+                f"({elapsed:.0f}s > {advisory_budget:.0f}s on this host)")
+        else:
             log(f"[rehearsal]   FAILED CHECK: {name}")
     return report
 

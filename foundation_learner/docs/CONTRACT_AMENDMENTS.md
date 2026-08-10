@@ -1415,3 +1415,142 @@ family id changed).
 now printed next to its results by metric 18 rather than being invisible. No
 other family's item sampler is touched, and no frozen threshold, weight, pool
 size, promotion rule or split moves.
+
+## Amendment 16 — train-mode decoding, and a correction to Amendment 12 item 16 (2026-08-09, W6)
+
+Recorded by W6 after the reviewer's confirmation pass, which verified the
+Amendment 12 repairs and found one CRITICAL defect that the batch itself had
+hardened. Frozen before any accelerator use, before any training run, with the
+sealed set unopened. Nothing here changes an objective, a weight, a metric, a
+threshold, the split, or the sealed-test policy.
+
+1. **CORRECTION of Amendment 12 item 16 (do not read that item as current).**
+   Amendment 12 item 16 stated that layer-level gradient checkpointing is a
+   NO-OP on this architecture and recorded
+   `layer_level_checkpointing_detection = NOT_CONSULTED_BY_FORWARD`. **That was
+   wrong.** `OuroDecoderLayer` inherits
+   `transformers.modeling_layers.GradientCheckpointingLayer`, whose `__call__`
+   reads the flag:
+
+       if self.gradient_checkpointing and self.training:
+           ... kwargs["use_cache"] = False; kwargs["past_key_values"] = None
+           return self._gradient_checkpointing_func(...)
+
+   The detector had inspected only each concrete class's own source
+   (`modeling_ouro.py`) and never its base classes, so it missed the one place
+   the flag is actually read. Layer-level checkpointing is therefore ACTIVE
+   during training on this backbone. `layer_checkpointing_is_consulted` now
+   walks the whole MRO; verified on the tiny model: the detector returns
+   `True`, and the record says `CONSULTED_BY_FORWARD`.
+
+1b. **Two independent gates converged on this.** The adversarial reviewer's
+   confirmation pass raised it as N1 and the independent verifier raised the
+   same defect as its Defect A, having measured **1,600** "Caching is
+   incompatible with gradient checkpointing" warnings in a single rehearsal at
+   the pristine commit — one per decoded layer-call in train mode. The verifier
+   independently confirmed the detector blind spot (Defect B) that Amendment 12
+   item 16 rested on. Two independent gates reaching the same conclusion from
+   different evidence is why this is recorded as a correction rather than as a
+   judgement call.
+
+2. **The defect the correction exposes (CRITICAL).** The same base-class branch
+   DROPS `use_cache` and `past_key_values` in train mode. The package's
+   evaluation decoder is a manual greedy loop that maintains its OWN KV cache
+   (§22), so a model left in train mode with the flag set silently recomputes
+   from scratch and emits DIFFERENT text. Measured on the tiny model with
+   identical weights and prompts: eval-mode decode
+   `[' eclipse eclipse eclipse …', 'itization gaining embry …']` versus
+   train-mode decode
+   `[' eclipseimore quantum Cambridge …', 'itization voila Coin topsoil …']`.
+   Nothing raised; the only trace was the log line "Caching is incompatible
+   with gradient checkpointing", of which the rehearsal log was full. Every
+   trained arm is dev-evaluated immediately after training, so this affected
+   the FL1/FL2/FL3 development metrics, the grid selection that consumes them,
+   and every mechanism rung's evaluation.
+
+3. **Repairs, defence in depth.**
+   * `training/trainer.py` — `run_training_arm` now RESTORES eval mode and
+     disables layer-level checkpointing before returning, and records the
+     transition in `result.trainable["post_training_mode"]`. The post-condition
+     is documented in its docstring: the returned model is valid to decode.
+   * `mechanisms/fl5_training.py` — the same post-condition for FL5's own
+     training loop (its arms are evaluated immediately afterwards).
+   * `campaign/stage_definitions.py` — `prepare_bundle_for_evaluation()` is
+     applied at every evaluation boundary: `_run_dev_eval`, `fl0_work`,
+     `promoted_arm_bundle` (which restores trained weights and is used by the
+     sealed evaluation and all three diagnostics), and the BENCH evaluation
+     probe, so the MEASURED evaluation cost is measured in the state evaluation
+     really runs in.
+   * `mechanisms/stage_support.py` — `dev_records` enforces the same state,
+     and `prepare_for_evaluation()` exposes it to the rungs.
+   * `mechanisms/consolidation.py` + `mechanisms/fast_adapter.py` — the guard
+     immediately caught a SECOND live instance: FL8 walks its A->B->A chains
+     through `run_interference_eval` directly (not through `dev_records`) after
+     the fast-adaptation inner loop has put the model in train mode, and
+     `FastAdapter.inner_update` restored "whatever the mode was" rather than
+     the evaluation state — which preserves an invalid state whenever the
+     bundle arrived in train mode (every fresh tiny bundle does). The inner
+     loop now ALWAYS returns to eval, and the FL8 stage prepares the bundle
+     before the interference walk. This is what a structural refusal is for:
+     the defect was found by the guard, not by a reviewer.
+   * `evaluation/generation.py` — `assert_decodable(model)` at the decode entry
+     (`_decode_group`, i.e. on every path through `greedy_generate` and
+     `greedy_generate_detailed`) REFUSES a train-mode model and refuses a model
+     with layer-level checkpointing still enabled. This is what makes the
+     invariant structural rather than a convention: a missed `eval()` is now
+     impossible to ignore instead of invisible in the numbers.
+   * `training/model_loading.py` — `set_evaluation_mode()` /
+     `disable_gradient_checkpointing_()` are the single implementation every
+     caller uses, and the identity record now states
+     `cache_disabled_while_training: true` plus
+     `evaluation_requires_eval_mode`, instead of denying the mechanism.
+
+4. **Permanent regression fixture.**
+   `tests/hostile/test_hostile_train_mode_decode.py` pins the defect itself
+   (bypassing the guard to show train-mode decoding still differs — so the
+   guard can never be "simplified" away on the belief that it guards nothing),
+   the refusals, and the end-to-end property: a trained arm's generations are
+   IDENTICAL to those of a fresh eval-mode bundle carrying the same weights.
+
+5. **N2 — a timing abort may not consume a sealed attempt.**
+   `ctx.checkpoint("sealed:walk")` sat INSIDE the
+   `with sealed_gate.sealed_opening(...)` block, so a stage-watchdog overrun
+   raised there would have been recorded as one of the two permanent opening
+   attempts for a reason unrelated to the sealed evaluation. The watchdog
+   checkpoint is now `sealed:before_opening`, immediately before the opening;
+   no watchdog check remains inside the opened block.
+
+6. **N3 — the dress rehearsal's wall-clock bound is ADVISORY and host-scaled.**
+   The same rehearsal measured 673 s and 813 s on the same machine depending on
+   what else was running, so a hard wall-clock gate makes an unrelated process
+   a failed validation. `within_wall_clock_limit` is now listed in
+   `ADVISORY_CHECKS`: it is measured, reported, and printed as an advisory, but
+   it no longer decides the verdict. The budget is additionally scaled by a
+   measured single-core benchmark (`measure_host_speed`) so a slow host is
+   judged against itself. The FIFTEEN substantive checks (states walked, O1
+   ordering, every stage's outcome, dev decisions frozen, sealed ledger,
+   transfer archive, result-manifest verification, determinism configured,
+   core matching, diagnostics, outcome complete) remain HARD.
+
+7. **Defect C — a fresh clone must not fail on absent DATA.**
+   `tests/test_campaign_entry.py::test_build_stage_context_binds_the_session_configuration`
+   builds a real `StageContext`, which refuses a missing pre-generation root
+   (that refusal is itself a test, with an explicitly nonexistent path). In a
+   fresh clone, where `artifacts_fl/pregen_tiny` has not been staged yet, it
+   therefore HARD-FAILED while its siblings correctly skipped. Both tests that
+   need the staged data now carry the same `requires_tiny_pregen` marker.
+   Verified by pointing the module at a nonexistent pregeneration root:
+   `7 passed, 2 skipped`, no failures. Absent data is a skip; absent behaviour
+   is a failure.
+
+8. **RESIDUAL RISK, recorded rather than repaired (N4).** The two-phase sealed
+   opening leaves a crash window between `commit()` (the `SEALED_OPENED` entry)
+   and the immutable result writes. A crash inside that window consumes the
+   opening while leaving the results unwritten, and the retry budget does not
+   apply because the seal is committed. This is inherent to "evidence commits
+   the seal": the alternative — committing after the writes — reopens the
+   larger hole that a write failure leaves an unrecorded read of sealed data.
+   The window is now milliseconds of local file writes rather than the entire
+   evaluation, the records exist in memory at that point, and the ledger's
+   `records_read` / `evaluation` payload documents what was read even if the
+   result files are missing. Not repaired; recorded.

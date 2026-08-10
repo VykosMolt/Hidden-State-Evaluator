@@ -435,59 +435,112 @@ def layer_checkpointing_is_consulted(model) -> bool | None:
     ``PreTrainedModel.gradient_checkpointing_enable()`` sets
     ``module.gradient_checkpointing = True`` (and installs
     ``_gradient_checkpointing_func``) on every submodule that declares support.
-    Whether that has any EFFECT depends on the modelling code: a decoder loop
-    that never consults the flag makes the call a no-op.
+    Whether that has an EFFECT depends on whether anything reads the flag.
 
-    This inspects the source of every concrete module class that carries the
-    flag and reports whether the flag (or the checkpointing function) is read
-    anywhere outside its own assignment.  Returns ``None`` when the source is
-    unavailable, which is recorded as UNKNOWN rather than assumed either way.
+    IMPORTANT (Amendment 16, correcting Amendment 12 item 16): the read is NOT
+    in ``modeling_ouro.py``.  ``OuroDecoderLayer`` inherits
+    ``transformers.modeling_layers.GradientCheckpointingLayer``, whose
+    ``__call__`` does ``if self.gradient_checkpointing and self.training``.  An
+    earlier version of this detector inspected only the concrete class's own
+    source and therefore concluded, wrongly, that the flag was never consulted.
+    The whole MRO is inspected now.
+
+    Returns ``None`` when no source is available at all, which is recorded as
+    UNKNOWN rather than assumed either way.
     """
     import inspect
     import re
 
     assignment = re.compile(r"self\.gradient_checkpointing\s*=(?!=)")
     seen_flag = False
-    unknown = False
+    saw_source = False
     for module in model.modules():
         if not hasattr(module, "gradient_checkpointing"):
             continue
         seen_flag = True
-        try:
-            source = inspect.getsource(type(module))
-        except (OSError, TypeError):  # pragma: no cover - source-less class
-            unknown = True
-            continue
-        # strip the flag's own assignments; anything left is a READ
-        remainder = assignment.sub("", source)
-        if ("self.gradient_checkpointing" in remainder
-                or "_gradient_checkpointing_func" in remainder):
-            return True
-    if not seen_flag or unknown:
+        for klass in type(module).__mro__:
+            if klass is object:
+                continue
+            try:
+                source = inspect.getsource(klass)
+            except (OSError, TypeError):  # pragma: no cover - source-less class
+                continue
+            saw_source = True
+            # strip the flag's own assignments; anything left is a READ
+            remainder = assignment.sub("", source)
+            if ("self.gradient_checkpointing" in remainder
+                    or "_gradient_checkpointing_func" in remainder):
+                return True
+    if not seen_flag or not saw_source:
         return None
     return False
+
+
+def disable_gradient_checkpointing_(model) -> dict[str, Any]:
+    """Turn layer-level checkpointing OFF and report what changed.
+
+    Evaluation decodes with a KV cache.  While a module is in TRAIN mode with
+    the checkpointing flag set, ``GradientCheckpointingLayer.__call__`` silently
+    drops ``use_cache`` and ``past_key_values``, so a manual greedy decode
+    recomputes from scratch every step and produces DIFFERENT text.  Disabling
+    the flag (and calling ``model.eval()``) is therefore a correctness
+    requirement of the evaluation path, not a performance nicety.
+    """
+    before = any(getattr(m, "gradient_checkpointing", False)
+                 for m in model.modules())
+    if before and hasattr(model, "gradient_checkpointing_disable"):
+        model.gradient_checkpointing_disable()
+    still_on = [type(m).__name__ for m in model.modules()
+                if getattr(m, "gradient_checkpointing", False)]
+    return {"was_enabled": bool(before), "still_enabled": sorted(set(still_on))}
+
+
+def set_evaluation_mode(model) -> dict[str, Any]:
+    """Put a model into the ONLY state in which evaluation is valid.
+
+    ``model.eval()`` plus layer-level gradient checkpointing OFF.  Idempotent,
+    cheap, and safe to call again on an already-evaluating model; every
+    evaluation entry point in the package calls it (Amendment 16).
+    """
+    state = disable_gradient_checkpointing_(model)
+    was_training = bool(getattr(model, "training", False))
+    model.eval()
+    state.update({"was_training": was_training,
+                  "training": bool(getattr(model, "training", False))})
+    if state["still_enabled"]:      # pragma: no cover - defensive
+        raise FrozenBindingError(
+            "gradient checkpointing is still enabled on "
+            f"{state['still_enabled']} after gradient_checkpointing_disable(); "
+            "evaluation would decode without a KV cache and produce different "
+            "text than the same weights in eval mode")
+    return state
 
 
 def enable_training_memory_savings(model) -> dict[str, Any]:
     """Gradient checkpointing + input grads (contract §22, training path).
 
-    Two independent mechanisms could apply to this backbone:
+    Two independent mechanisms apply to this backbone, and BOTH are real:
 
     * **loop-level** checkpointing inside ``OuroModel.forward``, driven by
       ``config.rltt_loop_level_checkpointing`` and active while training with
-      ``use_cache=False``.  This one is REAL on the frozen checkpoint: the
-      forward wraps ``_run_single_ut_loop`` in ``torch.utils.checkpoint``;
+      ``use_cache=False``: the forward wraps ``_run_single_ut_loop`` in
+      ``torch.utils.checkpoint``;
     * **layer-level** checkpointing through the standard transformers API.
-      ``OuroModel`` declares ``supports_gradient_checkpointing = True`` and
-      initialises ``self.gradient_checkpointing = False``, but its decoder path
-      never consults the flag, so ``gradient_checkpointing_enable()`` is a
-      NO-OP on this architecture.
+      ``OuroDecoderLayer`` inherits
+      ``transformers.modeling_layers.GradientCheckpointingLayer``, whose
+      ``__call__`` checkpoints the layer whenever the flag is set AND the
+      module is in TRAIN mode.
 
-    The record therefore separates what was REQUESTED from what is ACTIVE, and
-    the active value is DETECTED (:func:`layer_checkpointing_is_consulted`)
-    rather than inferred from the API call succeeding.  Recording a no-op as an
-    active memory-saving path would have put a false statement into every arm
-    result and into the campaign manifest (review finding, minor (d)).
+    Amendment 12 item 16 claimed the layer-level path was a no-op on this
+    architecture.  That was WRONG (Amendment 16): the consultation lives in the
+    transformers base class, not in ``modeling_ouro.py``, and the earlier
+    detector only inspected the concrete class's own source.
+
+    The correction matters beyond bookkeeping: in train mode the same base
+    class silently drops ``use_cache`` and ``past_key_values``, so a model left
+    in train mode with the flag set DECODES DIFFERENTLY.  The record therefore
+    states the mode-dependence explicitly, and every evaluation entry point
+    calls :func:`set_evaluation_mode` first.
     """
     consulted = layer_checkpointing_is_consulted(model)
     state: dict[str, Any] = {
@@ -511,12 +564,29 @@ def enable_training_memory_savings(model) -> dict[str, Any]:
     #: kept for consumers that read the old key; it now carries the ACTIVE
     #: value, never the merely requested one.
     state["layer_level_checkpointing"] = state["layer_level_checkpointing_active"]
-    if not state["layer_level_checkpointing_active"]:
+    if state["layer_level_checkpointing_active"]:
         state["layer_level_checkpointing_note"] = (
-            "gradient_checkpointing_enable() was called but this architecture's "
-            "forward never consults the flag; only the loop-level RLTT "
-            "checkpointing above is a real memory saving"
+            "active through transformers' GradientCheckpointingLayer base "
+            "class, which checkpoints a layer while the flag is set AND the "
+            "module is in TRAIN mode"
         )
+        # The SAME base class drops use_cache/past_key_values in that state, so
+        # a train-mode model cannot be decoded correctly.  Say so where the
+        # record is read (arm results, manifests) rather than leaving it to be
+        # rediscovered from mismatched generations.
+        state["cache_disabled_while_training"] = True
+        state["evaluation_requires_eval_mode"] = (
+            "run_training_arm returns the model in EVAL mode with layer-level "
+            "checkpointing DISABLED; every evaluation entry point additionally "
+            "calls model_loading.set_evaluation_mode() (Amendment 16)"
+        )
+    else:
+        state["layer_level_checkpointing_note"] = (
+            "gradient_checkpointing_enable() was called but no module consults "
+            "the flag anywhere in its MRO; only the loop-level RLTT "
+            "checkpointing above is a real memory saving here"
+        )
+        state["cache_disabled_while_training"] = False
     if hasattr(model, "enable_input_require_grads"):
         model.enable_input_require_grads()
         state["input_require_grads"] = True

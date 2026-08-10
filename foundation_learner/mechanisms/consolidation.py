@@ -457,6 +457,11 @@ def run_fl8_stage(ctx: Any, stage: Any) -> dict:
                 consolidator.record(delta)
                 adapted.append(delta.to_record())
         report = consolidator.consolidate()
+        # the inner loop trains IN the model, and the evaluation that follows
+        # is a greedy decode: force the evaluation state first (Amendment 16).
+        # `dev_records` does this for the unrelated probes; the interference
+        # walk calls the evaluator directly, so it needs it here.
+        _s.prepare_for_evaluation(bundle)
         interference = run_interference_eval(
             bundle, plan["chains"], _s.env_factory,
             cfg=_lc_config(ctx, f"FL8_{mode}"), require_balanced=False)

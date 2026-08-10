@@ -710,4 +710,13 @@ def run_fast_state_arm(
     if result.stopped_reason != "STOPPED_BY_STABILITY":
         _save("final", result.steps)
     ledger.write(f"{out_dir}/compute_ledger_{cfg.arm_id}.json")
+    # POST-CONDITION (Amendment 16): hand the backbone back in EVAL mode with
+    # layer-level gradient checkpointing OFF, exactly as
+    # ``training.trainer.run_training_arm`` does.  FL5's arms are evaluated
+    # immediately afterwards, and a train-mode model with the checkpointing
+    # flag set decodes with use_cache/past_key_values silently dropped by
+    # transformers' GradientCheckpointingLayer.
+    from foundation_learner.training.model_loading import set_evaluation_mode
+
+    set_evaluation_mode(model)
     return result

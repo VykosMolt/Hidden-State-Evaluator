@@ -26,6 +26,7 @@ from foundation_learner.campaign import stage_definitions as sd
 from foundation_learner.ecology.base import sha256_tree
 
 
+
 def _pregeneration_matches_the_generators() -> bool:
     """Is the tiny pre-generation current with respect to the generators?
 
@@ -49,6 +50,15 @@ def _pregeneration_matches_the_generators() -> bool:
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))))
 TINY = os.path.join(REPO, "artifacts_fl", "pregen_tiny")
+#: Several tests build a real StageContext, which REFUSES a missing
+#: pre-generation root (that refusal is itself tested below with an explicitly
+#: nonexistent path).  In a fresh clone the tiny pre-generation is not staged
+#: yet, so those tests skip exactly like their siblings instead of hard-failing
+#: on absent DATA (Amendment 16, Defect C).
+requires_tiny_pregen = pytest.mark.skipif(
+    not os.path.isfile(os.path.join(TINY, "PREGEN_MANIFEST.json")),
+    reason="no tiny pregeneration present (stage artifacts_fl/pregen_tiny)")
+
 
 STUB = (
     "import hashlib,json,os,sys;"
@@ -172,6 +182,7 @@ def test_an_injected_factory_is_left_alone(tmp_path):
 
 # ---------------- the context the production path builds ----------------
 
+@requires_tiny_pregen
 def test_build_stage_context_binds_the_session_configuration(tmp_path):
     path, payload = write_config(tmp_path)
     sup = supervisor_for(tmp_path, path)
@@ -226,9 +237,7 @@ def test_a_missing_pregen_root_refuses(tmp_path):
 
 # ---------------- main(): the pod entry, no injection at all --------------
 
-@pytest.mark.skipif(not os.path.isfile(os.path.join(TINY,
-                                                    "PREGEN_MANIFEST.json")),
-                    reason="no tiny pregeneration present")
+@requires_tiny_pregen
 def test_main_runs_the_ladder_with_no_injected_factory(tmp_path):
     """R-C1: the pod entry must be able to run the ladder by itself."""
     path, _ = write_config(tmp_path)

@@ -49,6 +49,7 @@ from foundation_learner.training.model_loading import (
     ModelBundle,
     derive_seed,
     enable_training_memory_savings,
+    set_evaluation_mode,
 )
 from foundation_learner.training.objectives import weighted_nll
 from foundation_learner.training.peft_modes import TrainableParams, apply_mode
@@ -263,6 +264,13 @@ def run_training_arm(
 ) -> ArmResult:
     """Contract §23: ``run_training_arm(cfg, bundle, examples_iter, out_dir, hooks)``.
 
+    POST-CONDITION (Amendment 16): ``bundle.model`` is returned in **eval mode
+    with layer-level gradient checkpointing disabled**, and the state change is
+    recorded in ``result.trainable["post_training_mode"]``.  A model left in
+    train mode with checkpointing on cannot be decoded correctly: transformers'
+    ``GradientCheckpointingLayer.__call__`` drops ``use_cache`` and
+    ``past_key_values`` in exactly that state.
+
     ``examples_iter`` may be any iterable of tokenised examples; it is
     materialised into a list so that the frozen data-order policy (uniform
     without replacement per epoch, reshuffled by a derived seed) can be applied
@@ -442,6 +450,15 @@ def run_training_arm(
     if result.stopped_reason != STOP_STABILITY:
         _save(TAG_FINAL, result.steps)
     ledger.write(os.path.join(out_dir, f"compute_ledger_{cfg.arm_id}.json"))
+    # POST-CONDITION (Amendment 16): the arm's model is handed back in EVAL
+    # mode with layer-level gradient checkpointing DISABLED.  While a module is
+    # in train mode with that flag set, transformers'
+    # GradientCheckpointingLayer.__call__ drops use_cache/past_key_values, so a
+    # manual greedy decode silently produces DIFFERENT text than the same
+    # weights evaluated normally.  Every caller that evaluates a trained arm
+    # therefore receives a model that is already valid to decode with.
+    result.trainable = dict(result.trainable or {})
+    result.trainable["post_training_mode"] = set_evaluation_mode(model)
     return result
 
 

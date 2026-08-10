@@ -265,8 +265,13 @@ class FastAdapter:
             loss.backward()
             optimizer.step()
             losses.append(float(loss.detach()))
-        if not was_training:
-            self.model.eval()
+        # ALWAYS return to evaluation state, never merely to whatever the mode
+        # happened to be.  The fast adapter runs INSIDE an online evaluation
+        # walk, so the operation right after an inner update is a greedy
+        # decode, which requires eval mode (Amendment 16); `was_training` is
+        # kept only for the record.
+        del was_training
+        self.model.eval()
         pre = clip_lora_frobenius_(self.handles, self.max_frobenius)
         record = InnerUpdateRecord(
             item_id=str(item_id), episode_id=episode.episode_id, applied=True,

@@ -1121,12 +1121,31 @@ def run_episodes(
 ) -> list[dict[str, Any]]:
     """Run ONLINE learning-curve episodes; returns ``episode_record.v1`` dicts.
 
+    This is the public ONLINE evaluation boundary (Amendment 16): direct
+    walker callers need the same eval-mode guarantee as campaign/mechanism
+    callers before any callback or decode work begins.
+
     Episodes advance in lockstep so that the attempt slots pending at any
     moment are decoded in ONE batched greedy call (subject to
     ``cfg.generation``).  Batch composition never changes a row's numerics
     (left padding + per-row position ids + non-compacting slots), and the
     equivalence gate in ``generation.py`` is what licenses batching at all.
     """
+    try:
+        model = getattr(bundle, "model")
+    except AttributeError as exc:
+        raise AttributeError(
+            "run_episodes requires an evaluation bundle with a .model attribute"
+        ) from exc
+    if model is None:
+        raise AttributeError(
+            "run_episodes requires an evaluation bundle with a non-None .model"
+        )
+    # Keep the import lazy: evaluation helpers are also imported by training and
+    # mechanism modules, while this boundary is entered only for ONLINE runs.
+    from foundation_learner.training.model_loading import set_evaluation_mode
+
+    set_evaluation_mode(model)
     cfg = cfg or LearningCurveConfig()
     render_module = resolve_renderer(render_module)
     if parser is None:

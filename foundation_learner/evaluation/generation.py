@@ -234,6 +234,46 @@ def _positions_from_mask(mask: torch.Tensor) -> torch.Tensor:
 # --------------------------------------------------------------------------
 # core decode loop
 # --------------------------------------------------------------------------
+def assert_decodable(model: Any) -> None:
+    """Refuse to decode a model that cannot be decoded correctly.
+
+    THE hazard (Amendment 16): transformers'
+    ``GradientCheckpointingLayer.__call__`` does
+    ``if self.gradient_checkpointing and self.training`` and then DROPS
+    ``use_cache`` and ``past_key_values``.  This manual greedy loop carries its
+    own KV cache, so a model left in train mode with layer-level checkpointing
+    enabled silently recomputes from scratch and emits DIFFERENT text than the
+    same weights in eval mode.  Every trained arm is evaluated right after
+    training, so this is not a hypothetical.
+
+    Making the decode entry point REFUSE is what turns "remember to call
+    model.eval()" into a structural guarantee: the callers restore eval mode
+    (``training.trainer.run_training_arm``,
+    ``campaign.stage_definitions.prepare_bundle_for_evaluation``,
+    ``mechanisms.stage_support.dev_records``), and this assert makes a missed
+    call impossible to ignore rather than invisible in the numbers.
+    """
+    if getattr(model, "training", False):
+        checkpointed = sorted({type(m).__name__ for m in model.modules()
+                               if getattr(m, "gradient_checkpointing", False)})
+        raise GenerationError(
+            "REFUSED: greedy decoding was asked to run on a model in TRAIN "
+            "mode. Evaluation requires eval mode: with layer-level gradient "
+            "checkpointing active in train mode, transformers drops "
+            "use_cache/past_key_values and this decoder's KV cache is silently "
+            "discarded, producing different text than the same weights in eval "
+            "mode. Call training.model_loading.set_evaluation_mode(model) "
+            f"first. (checkpointed modules: {checkpointed or 'none'})")
+    still_on = sorted({type(m).__name__ for m in model.modules()
+                       if getattr(m, "gradient_checkpointing", False)})
+    if still_on:
+        raise GenerationError(
+            "REFUSED: greedy decoding was asked to run with layer-level "
+            f"gradient checkpointing still enabled on {still_on}. It is "
+            "incompatible with the KV cache this decoder maintains; call "
+            "training.model_loading.set_evaluation_mode(model) first.")
+
+
 def _decode_group(
     model: Any,
     tokenizer: Any,
@@ -243,6 +283,7 @@ def _decode_group(
     cfg: GenerationConfig,
     parser: Callable[[str], str | None],
 ) -> list[GenerationRecord]:
+    assert_decodable(model)
     n = len(prompts)
     pad_id = _pad_id(tokenizer)
     token_lists = [encode_prompt(tokenizer, p) for p in prompts]
@@ -535,6 +576,7 @@ __all__ = [
     "complete_answer_line_end",
     "encode_prompt",
     "normalize_prefix_embeds",
+    "assert_decodable",
     "greedy_generate",
     "greedy_generate_detailed",
     "build_gate_prefix",

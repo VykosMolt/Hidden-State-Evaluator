@@ -60,6 +60,7 @@ __all__ = [
     "eval_split_for",
     "eval_plan",
     "assert_eval_family_coverage",
+    "prepare_bundle_for_evaluation",
     "project_stage_seconds",
     "stages_in_priority_order",
 ]
@@ -1083,6 +1084,9 @@ def bench_work(ctx: StageContext, stage: StageDefinition) -> dict:
     t_load = time.monotonic()
     eval_bundle = ctx.bundle_factory()
     model_load_seconds = time.monotonic() - t_load
+    # measure the EVALUATION cost in the state evaluation really runs in
+    # (eval mode, no layer-level checkpointing) - Amendment 16
+    prepare_bundle_for_evaluation(eval_bundle)
     if probe_episodes:
         from ..evaluation.learning_curve import LearningCurveConfig, run_episodes
 
@@ -1182,11 +1186,32 @@ def _dev_metrics(records: Sequence[Mapping[str, Any]], stage: str,
         records, stage=stage, stability_events=stability_events)
 
 
+def prepare_bundle_for_evaluation(bundle: Any) -> dict:
+    """Put a bundle into the ONLY state in which a decode is valid (Amend. 16).
+
+    ``model.eval()`` + layer-level gradient checkpointing OFF.  A model left in
+    TRAIN mode with the checkpointing flag set decodes DIFFERENTLY: transformers'
+    ``GradientCheckpointingLayer.__call__`` drops ``use_cache`` and
+    ``past_key_values`` in exactly that state, so the manual greedy decode
+    recomputes from scratch and yields different text.  ``run_training_arm``
+    already returns an eval-mode model; this is the idempotent belt-and-braces
+    at the evaluation boundary, because a trained arm is not the only thing the
+    campaign evaluates.
+    """
+    from ..training.model_loading import set_evaluation_mode
+
+    model = getattr(bundle, "model", None)
+    if model is None:
+        return {"skipped": "bundle carries no model"}
+    return set_evaluation_mode(model)
+
+
 def _run_dev_eval(ctx: StageContext, bundle: Any, episodes: Sequence[Any],
                   arm_tag: str) -> list[dict]:
     from ..evaluation.learning_curve import (LearningCurveConfig,
                                              annotate_records, run_episodes)
 
+    prepare_bundle_for_evaluation(bundle)
     records = run_episodes(bundle, episodes, env_factory,
                            cfg=LearningCurveConfig(
                                arm_tag=arm_tag,
@@ -1201,6 +1226,7 @@ def fl0_work(ctx: StageContext, stage: StageDefinition) -> dict:
     episodes = _dev_episodes(ctx, stage)
     ctx.checkpoint("fl0:model_load")
     bundle = ctx.bundle_factory()
+    prepare_bundle_for_evaluation(bundle)
     # Contract §9 reports UNSEEN-INSTANCE and UNSEEN-FAMILY separately, which
     # is only computable against the frozen TRAIN family list.  FL0 is
     # untrained, so every DEVELOPMENT family is an unseen FAMILY here; passing
@@ -1460,6 +1486,10 @@ def promoted_arm_bundle(ctx: StageContext, *, require: bool) -> tuple[Any, dict]
         ) from exc
 
     record = dict(arm_checkpoint_state(ctx, bundle, arm_id, tag="final"))
+    # restoring trained weights can leave the module in whatever mode the
+    # restoring path used; evaluation is only valid in eval mode with
+    # layer-level checkpointing off (Amendment 16)
+    record["evaluation_mode"] = prepare_bundle_for_evaluation(bundle)
     record["promoted_arm"] = arm_id
     record["rule"] = ("the frozen core treatment, or the core arm pinned in the "
                       "development decisions; never selected from a sealed "
@@ -1709,6 +1739,11 @@ def sealed_eval_work(ctx: StageContext, stage: StageDefinition) -> dict:
     out_dir = ctx.stage_dir(stage.stage_id)
     ctx.checkpoint("sealed:promoted_arm")
     bundle, model_record = promoted_arm_bundle(ctx, require=True)
+    # The LAST watchdog checkpoint before the seal.  Nothing inside the opening
+    # may raise StageAbortedOverrun: a timing abort there would consume one of
+    # the two permanent opening attempts for a reason that has nothing to do
+    # with the sealed evaluation (Amendment 16, N2).
+    ctx.checkpoint("sealed:before_opening")
 
     with sealed_gate.sealed_opening(
             ledger_path=os.path.join(ctx.out_dir, sealed_gate.LEDGER_NAME),
@@ -1720,7 +1755,6 @@ def sealed_eval_work(ctx: StageContext, stage: StageDefinition) -> dict:
             guard=ctx.guard,
             opened_by=f"{ctx.label}:SEALED_EVAL") as unlock:
         episodes = _sealed_episodes(ctx, stage, unlock)
-        ctx.checkpoint("sealed:walk")
         records = run_episodes(bundle, episodes, env_factory,
                                cfg=LearningCurveConfig(
                                    arm_tag=f"SEALED_EVAL_{model_record['promoted_arm']}",
