@@ -1,36 +1,45 @@
-# O1_B200_RUNNER v0.1.0
+# O1_B300_RUNNER v0.3.0
 
-Status: **B200_SOFTWARE_COMPLETE_HARDWARE_UNVALIDATED**
+Status: **B300 PREEMPTIBLE SOFTWARE COMPLETE / HARDWARE UNVALIDATED**
 
 The complete hardware-independent execution stack for running the sealed
-O1 v2.1 calibration on a future, separately authorized single-B200 session.
-Built on the verified scientific package `O1_oracle_reachability_v2.1.0`
-(imported byte-hash-verified, never modified). This package is development
+O1 v2.1 calibration on a future, separately authorized single-GPU RunPod
+Secure Cloud INTERRUPTIBLE (spot) session. Primary accelerator profile:
+NVIDIA B300 SXM6 AC (Blackwell Ultra, sm_103, compute capability 10.3,
+288 GB HBM3e); explicit fallback profile NVIDIA B200 (sm_100, CC 10.0,
+180 GB HBM3e), selected only when B300 is refused, with the refusal reason
+recorded in the quote/report — never silent. Built on the verified
+scientific package `O1_oracle_reachability_v2.1.0` (imported
+byte-hash-verified, never modified). This package is development
 infrastructure — it is NOT:
 
-- B200 validated,
-- B200 benchmarked,
+- B300/B200 hardware validated,
+- B300/B200 benchmarked,
 - calibration ready,
 - confirmatory ready,
 - zero-touch production ready.
 
 Those statuses require real hardware and a selected provider. Nothing in this
-package spends money, contacts a cloud provider, runs a B200 benchmark, runs
-real O1 calibration, or runs confirmatory generation. The scientific design
-is frozen and untouched (see `docs/ARCHITECTURE.md`).
+package spends money, contacts a cloud provider, runs a hardware benchmark,
+runs real O1 calibration, or runs confirmatory generation. The scientific
+design is frozen and untouched (see `docs/ARCHITECTURE.md`).
 
 ## Layout
 
-- `runner/` — backends (REFERENCE_SERIAL / B200_REPLICA / B200_BATCHED),
-  batched engine + intervention + transport, records, persistence, RNG,
-  corpus, equivalence + benchmark harnesses, budget watchdog, provider
-  adapters, zero-touch state machine, templates.
+- `runner/` — backends (REFERENCE_SERIAL / B200_REPLICA / B200_BATCHED, dual
+  B300-primary/B200-fallback profile aware), batched engine + intervention +
+  transport, records, persistence, RNG, corpus, equivalence + benchmark
+  harnesses, budget watchdog, provider adapters (pinned GraphQL spot
+  acquisition + pinned REST v2 lifecycle), zero-touch state machine,
+  templates.
 - `policies/` — frozen benchmark order, frozen backend-selection rule, budget
-  policy template (USD 45/40/5), environment-report template, B200
-  calibration-precommit template.
-- `deploy/` — Dockerfile, pinned lock (`transformers==4.54.1` exact),
-  entrypoint, environment/artifact verification, transfer manifest, output
-  packaging, checksums.
+  policy template (USD 45/40/5), environment-report template, calibration-
+  precommit template.
+- `deploy/` — `Dockerfile.b300`, pinned lock (`requirements.b300.lock`,
+  `transformers==4.54.1` exact) + frozen local wheel set
+  (`WHEELS_B300.sha256`), entrypoint `start_b300.sh` ->
+  `runner/production_entry.py`, environment/artifact verification, transfer
+  manifest, output packaging, checksums.
 - `corpus/` — non-O1 validation corpus (mechanically disjoint from all O1
   task populations; outcomes never usable for O1 decisions).
 - `tests/` — full local suite incl. hostile tests

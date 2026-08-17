@@ -45,7 +45,9 @@
     {
       "checks": [
         "reopening a completed store verifies every row",
-        "a partially written row can never appear valid (quarantined)",
+        "a STALE partially written row can never appear valid (quarantined on resume)",
+        "a FRESH tmp (live concurrent worker) is left alone on resume scan",
+        "quarantining a file another worker just completed is a no-op, never a crash",
         "HOSTILE corrupt record is quarantined, not accepted",
         "HOSTILE stale record (edited content) is rejected on resume",
         "HOSTILE duplicate row with different content is refused",
@@ -72,7 +74,7 @@
       "failed": 0,
       "failures": [],
       "module": "test_persistence",
-      "passed": 24
+      "passed": 26
     },
     {
       "checks": [
@@ -128,8 +130,8 @@
         "HOSTILE O1 task inserted into the validation corpus is detected",
         "HOSTILE out-of-population validation task is refused",
         "HOSTILE tampered corpus file is refused by its sealed hash",
-        "benchmark policy: staged order is frozen and deterministic",
-        "benchmark harness refuses any mode but local-synthetic",
+        "benchmark policy: staged order is frozen and deterministic (v2: conditional deep-batch extension)",
+        "benchmark harness refuses unknown modes and unqualified real-hardware runs",
         "HOSTILE ineligible-but-fastest backend can never win; selection is deterministic under input reordering",
         "selection with no eligible configuration refuses",
         "benchmark harness dress rehearsal (serial + replica w2/w4) collects metrics on the corpus"
@@ -195,29 +197,39 @@
     {
       "checks": [
         "pinned OpenAPI snapshot verifies byte-exact with sane surfaces",
-        "1. qualifying Secure single-B200 quote accepted",
-        "2. price above USD 5.89 refused",
-        "3. Community-only availability refused",
-        "4. interruptible offer surface = schema drift, fails closed",
-        "5. cluster/multi-GPU-minimum offer refused (secure maxCount<1)",
-        "6. B200 unavailable (availability NONE) refused",
-        "7. alternate GPU (H100/H200/B300) never substituted",
-        "8. quote expires after the 15-minute validity interval",
-        "9. catalog schema drift (missing pricing) fails closed",
-        "live schema identity check fails closed on enum/path drift",
-        "10. unknown lifecycle state fails closed",
-        "29. transient 429 with Retry-After is retried then succeeds",
-        "30. transient 5xx retried with backoff then succeeds",
-        "malformed JSON fails closed",
-        "28. delayed billing never extends the run; the monotonic watchdog is authoritative",
-        "31. API key never appears in logs or exception strings",
-        "budget arithmetic is decimal with boundary tests at/below/above USD 40 and USD 45",
-        "hf:// result-destination URIs parse strictly; malformed refused"
+        "1. qualifying Secure single-B300 INTERRUPTIBLE quote accepted (primary, live spot bid, no fallback)",
+        "2. B200 fallback is explicit and honest: selected only when B300 is refused, with the exact recorded reason",
+        "3. B300 vanished from the catalog -> explicit fallback, refusal recorded",
+        "4. both profiles unavailable -> refused with both reasons",
+        "5. mechanically unaffordable spot rate refused (no static price cap; budget-derived viability rule)",
+        "6. interruptible capacity vanished (spot rate null) fails closed at quote time",
+        "7. changing interruptible price is re-derived on every fresh quote (no caching)",
+        "8. market minimum bid above spot rate raises the bid (still budget-validated)",
+        "9. Community-only availability refused for both profiles",
+        "10. B300 variant below the 275 GB HBM floor refused",
+        "11. cluster/multi-GPU-minimum offer refused (secure maxCount<1)",
+        "12. H100/H200/GB300/RTX-PRO never substituted under either profile",
+        "13. quote expires after the 15-minute validity interval",
+        "14. catalog schema drift (missing pricing) fails closed",
+        "15. live schema identity check fails closed on enum/path drift",
+        "16. an interruptible field appearing in the REST contract is drift and fails closed (spot stays on the pinned GraphQL surface)",
+        "17. GraphQL spot contract: query surface live-verified, mutation surface pinned fail-closed",
+        "18. GraphQL read-only path refuses every non-query document BEFORE network; mutation requires authorization",
+        "19. unknown lifecycle state fails closed",
+        "20. transient 429 with Retry-After is retried then succeeds",
+        "21. transient 5xx retried with backoff then succeeds",
+        "22. GraphQL transient 5xx retried (queries only) then succeeds",
+        "23. malformed JSON fails closed",
+        "24. delayed billing never extends the run; the monotonic watchdog is authoritative",
+        "25. session spend carries across eviction/reacquisition; a fresh pod can never reset the budget",
+        "26. API key never appears in logs or exception strings",
+        "27. budget arithmetic is decimal with boundary tests at/below/above USD 40 and USD 45",
+        "28. hf:// result-destination URIs parse strictly; malformed refused"
       ],
       "failed": 0,
       "failures": [],
       "module": "test_runpod_adapter",
-      "passed": 19
+      "passed": 29
     },
     {
       "checks": [
@@ -226,6 +238,8 @@
         "32-35. every interlock condition is individually load-bearing",
         "the shipped authorization template is unusable by construction",
         "36. authorization nonce replay refused",
+        "eviction reacquisition is bounded: max_pod_creations slots, then LIVE_MUTATION_NOT_AUTHORIZED",
+        "legacy v1 nonce-ledger entries still refuse replay",
         "40. mutable image tag refused; digest required",
         "zero-touch launcher refuses without --authorization before any network call",
         "39. injected fake secret never lands in the packaged tree"
@@ -233,13 +247,13 @@
       "failed": 0,
       "failures": [],
       "module": "test_runpod_interlock",
-      "passed": 8
+      "passed": 10
     },
     {
       "checks": [
         "provision -> RUNNING -> terminate -> confirmed, with atomic POD_ID record and machine-readable lifecycle report",
         "11. duplicate Pod creation prevented (reconcile by canonical name before creating)",
-        "12. create response lost -> reconcile by nonce+name attaches to the unique remote pod; NO second create request",
+        "12. spot-create response lost -> reconcile by nonce+name attaches to the unique remote pod; NO second create request",
         "13. ambiguous reconciliation terminates all matches and halts",
         "14. startup timeout terminates the pod and fails loudly",
         "15. container failure -> logs collected automatically -> terminate",
@@ -257,7 +271,7 @@
     },
     {
       "checks": [
-        "session without the env flag refuses BEFORE any mutating request (no pod, zero non-GET traffic)",
+        "session without the env flag refuses BEFORE any mutating request (no pod, no rent mutation, no mutating REST)",
         "full mocked zero-touch session: quote -> create -> RUNNING -> completion marker -> results downloaded -> TERMINATED confirmed",
         "failed preflight (B200 unavailable) refuses before create",
         "17-23. any on-pod stage failure (ERROR before completion) -> logs collected, pod terminated, diagnostic package local",
@@ -270,24 +284,66 @@
     },
     {
       "checks": [
+        "qualifying B300 accepted under the B300 profile",
+        "qualifying B200 accepted under the B200 fallback profile",
+        "B200 hardware refused under the B300 profile (no silent profile swap)",
+        "B300 hardware refused under the B200 profile",
+        "two GPUs refused",
+        "wrong compute capability refused",
+        "wrong HBM class refused (180 GB part sold as B300)",
+        "insufficient free HBM refused",
+        "H100 identity refused outright",
+        "pre-CUDA-13 runtime refused",
+        "old driver refused",
+        "missing BF16 refused",
+        "wheel without compatible native SASS refused",
+        "wheel embedding PTX (silent JIT possible) refused",
+        "no CUDA at all refused"
+      ],
+      "failed": 0,
+      "failures": [],
+      "module": "test_hardware_gate",
+      "passed": 15
+    },
+    {
+      "checks": [
+        "eviction while RUNNING -> remnant terminated, fresh spot pod reacquired, session COMPLETE (2 acquisitions)",
+        "eviction during provisioning/startup -> clean reacquisition, session COMPLETE",
+        "EXITED with the completion marker is COMPLETE, not an eviction",
+        "perpetual eviction is bounded by MAX_POD_ACQUISITIONS; every remnant terminated; loud abort",
+        "max_pod_creations exhaustion stops reacquisition with LIVE_MUTATION_NOT_AUTHORIZED semantics",
+        "the hard dollar budget caps eviction/reacquisition regardless of remaining slots",
+        "a repeated interruption with zero durable progress aborts as a container defect instead of thrashing",
+        "reacquisition re-runs profile selection: B300 evicted+gone -> explicit recorded B200 fallback -> COMPLETE",
+        "reacquisition re-quotes: a changed interruptible price is re-derived, never cached",
+        "O1 rows: committed+synced rows survive eviction; unsynced work is regenerated from the next missing row; corrupt mirrors are quarantined",
+        "restore never overwrites a locally committed row",
+        "FL checkpoint: atomic durable round-trip with manifest-last ordering; corrupt archive refused; empty store = pristine start",
+        "every spot rent arms provider-side terminateAfter and pins minCudaVersion 13.0 with no SSH/Jupyter"
+      ],
+      "failed": 0,
+      "failures": [],
+      "module": "test_preemption",
+      "passed": 13
+    },
+    {
+      "checks": [
         "complete local/mock RunPod suite passes IDENTICALLY with no credential vars, fake RUNPOD_API_KEY, fake key+file, and a world-readable key file",
         "the fake live credential appears in no test output and no scratch artifact",
         "transport structurally refuses ambient credentials for any non-production base_url",
         "mock server still 401s any key other than the synthetic mock credential (auth not weakened)",
         "independent watchdog path never sends the operator credential to a non-production host"
       ],
-      "failed": 1,
-      "failures": [
-        "complete local/mock RunPod suite passes IDENTICALLY with no credential vars, fake RUNPOD_API_KEY, fake key+file, and a world-readable key file"
-      ],
+      "failed": 0,
+      "failures": [],
       "module": "test_credential_isolation",
-      "passed": 4
+      "passed": 5
     }
   ],
   "schema": "o1b200.test_report.v1",
   "scope_note": "Hardware-independent local validation only: synthetic runtime + non-O1 corpus + mocked provider/clock. No B200 hardware claim is made or implied.",
-  "total_failed": 1,
-  "total_passed": 160,
-  "utc": "2026-08-17T16:55:01Z",
-  "verdict": "1 FAILURES"
+  "total_failed": 0,
+  "total_passed": 203,
+  "utc": "2026-08-17T21:49:55Z",
+  "verdict": "ALL O1 B200 RUNNER TESTS PASSED"
 }

@@ -13,8 +13,8 @@ import time
 from decimal import ROUND_FLOOR, Decimal
 
 from .policy import (
-    MAX_COMPUTE_USD, MAX_GPU_HOURLY_USD, PolicyViolation, SOFT_STOP_FRACTION,
-    TOTAL_AUTHORIZED_USD,
+    MAX_COMPUTE_USD, MIN_VIABLE_SESSION_SECONDS, PolicyViolation,
+    SOFT_STOP_FRACTION, TOTAL_AUTHORIZED_USD,
 )
 
 
@@ -46,13 +46,20 @@ def hard_compute_seconds(accepted_total_hourly_rate) -> int:
 
 
 def validate_gpu_rate(gpu_hourly) -> Decimal:
+    """Mechanical viability: the committed compute budget must buy at least
+    MIN_VIABLE_SESSION_SECONDS at this rate.  There is no static price
+    assumption; the live quote is authoritative and only the budget-derived
+    viability floor can refuse it."""
     rate = as_money(gpu_hourly)
     if rate <= 0:
         raise PolicyViolation(f"quoted GPU rate {rate} is not positive")
-    if rate > MAX_GPU_HOURLY_USD:
+    affordable = hard_compute_seconds(rate)
+    if affordable < MIN_VIABLE_SESSION_SECONDS:
         raise PolicyViolation(
-            f"quoted GPU rate USD {rate}/h exceeds the frozen maximum "
-            f"USD {MAX_GPU_HOURLY_USD}/h; refusing to provision")
+            f"quoted rate USD {rate}/h buys only {affordable}s of the "
+            f"USD {MAX_COMPUTE_USD} compute allocation; below the "
+            f"{MIN_VIABLE_SESSION_SECONDS}s minimum viable session — "
+            f"refusing to provision")
     return rate
 
 
@@ -72,18 +79,35 @@ def session_fits_policy(total_hourly_rate, projected_seconds: int) -> None:
 
 class SpendTracker:
     """Combines monotonic elapsed time (authoritative), the accepted quote,
-    the Pod start timestamp, and supplementary live billing samples."""
+    the Pod start timestamp, and supplementary live billing samples.
 
-    def __init__(self, total_hourly_rate, clock=time.monotonic):
+    Session-cumulative: spend from earlier pods in the same session
+    (evicted interruptible capacity) is carried over via ``carryover_usd``
+    or ``mark_pod_stopped()`` so reacquisition can never reset the budget.
+    """
+
+    def __init__(self, total_hourly_rate, clock=time.monotonic,
+                 carryover_usd="0"):
         self.rate = as_money(total_hourly_rate)
         self.limit_seconds = hard_compute_seconds(self.rate)
         self.clock = clock
         self.pod_started_monotonic: float | None = None
         self.live_billed_usd: Decimal | None = None
+        self.carryover_usd = as_money(carryover_usd)
+        if self.carryover_usd < 0:
+            raise BudgetViolation("carryover spend cannot be negative")
 
     def mark_pod_started(self) -> None:
         if self.pod_started_monotonic is None:
             self.pod_started_monotonic = self.clock()
+
+    def mark_pod_stopped(self) -> Decimal:
+        """Freeze the current pod's spend into carryover (eviction/stop);
+        returns the cumulative session spend so far."""
+        self.carryover_usd = self.effective_spend()
+        self.pod_started_monotonic = None
+        self.live_billed_usd = None
+        return self.carryover_usd
 
     def record_live_billing(self, billed_usd) -> None:
         self.live_billed_usd = as_money(billed_usd)
@@ -98,12 +122,13 @@ class SpendTracker:
                 ).quantize(Decimal("0.0001"))
 
     def effective_spend(self) -> Decimal:
-        """max(monotonic projection, live billing) — never trust a lagging
-        billing feed to extend the run."""
+        """carryover + max(monotonic projection, live billing) — never trust
+        a lagging billing feed to extend the run, and never let a fresh pod
+        forget what earlier pods in the session already spent."""
         m = self.monotonic_spend()
         if self.live_billed_usd is not None and self.live_billed_usd > m:
-            return self.live_billed_usd
-        return m
+            m = self.live_billed_usd
+        return (self.carryover_usd + m).quantize(Decimal("0.0001"))
 
     def state(self) -> str:
         spend = self.effective_spend()

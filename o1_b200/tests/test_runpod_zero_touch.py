@@ -21,11 +21,10 @@ MOCK_KEY = hermetic_mock_credentials()
 from o1_b200.provider.runpod.authorization import (
     AUTH_SCHEMA, CLI_FLAG, ENV_FLAG, ENV_FLAG_VALUE,
 )
-from o1_b200.provider.runpod.mock_server import MockRunpodServer, Scenario, _b200
-from o1_b200.provider.runpod.pod_request import (
-    build_pod_request, render_canonical_pod_request,
+from o1_b200.provider.runpod.mock_server import (
+    MockRunpodServer, Scenario, _b200, _b300,
 )
-from o1_b200.provider.runpod.zero_touch import run_session
+from o1_b200.provider.runpod.zero_touch import _render_all_profiles, run_session
 
 NOSLEEP = lambda s: None  # noqa: E731
 GOOD_IMAGE = "ghcr.io/x/o1@sha256:" + "a" * 64
@@ -57,11 +56,7 @@ def _session_setup(d, srv):
     }
     with open(config["result_source"], "wb") as fh:
         fh.write(b"results")
-    # the canonical request the driver will render (US-KS-2 sorts first among
-    # non-NONE datacenters in the default scenario? EU-RO-1 sorts first)
-    req = build_pod_request(image_digest_ref=GOOD_IMAGE,
-                            datacenter_id=sorted(["US-KS-2", "EU-RO-1"])[0])
-    rendered = render_canonical_pod_request(req, config["identities"])
+    rendered = _render_all_profiles(config)
     doc = {
         "schema": AUTH_SCHEMA, "project": "O1_B200",
         "package_zip_sha256": "p" * 64, "provider": "runpod",
@@ -71,7 +66,7 @@ def _session_setup(d, srv):
         "launch_nonce": f"nonce-{time.time_ns()}",
         "deployment_spec_sha256": rendered["request_sha256"],
         "allow_create_pod": True, "allow_real_calibration": True,
-        "allow_confirmation": False,
+        "allow_confirmation": False, "max_pod_creations": 4,
     }
     auth_path = os.path.join(d, "auth.json")
     with open(auth_path, "w") as fh:
@@ -97,10 +92,16 @@ def run() -> Runner:
                 spawn_watchdog_fn=_fake_spawn)
             assert status["outcome"] == "LIVE_MUTATION_NOT_AUTHORIZED"
             assert not sc.pods, "a pod was created without authorization!"
-            posts = [p for m, p in sc.requests if m != "GET"]
-            assert not posts, f"mutating requests sent: {posts}"
+            assert not sc.rent_calls, "a spot rent mutation was sent!"
+            other = [p for m, p in sc.requests
+                     if m != "GET" and p != "/graphql"]
+            assert not other, f"mutating REST requests sent: {other}"
+            # /graphql POSTs are read-only query operations by local
+            # transport enforcement (adapter test 18); mutations require the
+            # verified authorization and are counted via rent_calls above
     r.check("session without the env flag refuses BEFORE any mutating "
-            "request (no pod, zero non-GET traffic)", refusal_without_interlock)
+            "request (no pod, no rent mutation, no mutating REST)",
+            refusal_without_interlock)
 
     def full_rehearsal_complete():
         d = fresh_dir("zt_ok")
@@ -133,7 +134,9 @@ def run() -> Runner:
     def preflight_refusal_no_pod():
         d = fresh_dir("zt_nopre")
         sc = Scenario()
-        sc.gpus = [_b200(availability="NONE",
+        sc.gpus = [_b300(availability="NONE",
+                         dcs=[{"id": "EU-NL-1", "availability": "NONE"}]),
+                   _b200(availability="NONE",
                          dcs=[{"id": "US-KS-2", "availability": "NONE"}])]
         with MockRunpodServer(sc) as srv:
             config, auth_path = _session_setup(d, srv)
@@ -147,7 +150,7 @@ def run() -> Runner:
                     spawn_watchdog_fn=_fake_spawn)
             finally:
                 os.environ.pop(ENV_FLAG, None)
-            assert status["outcome"] == "REFUSED_PREFLIGHT"
+            assert status["outcome"] in ("REFUSED_PREFLIGHT", "REFUSED_NO_CAPACITY")
             assert not sc.pods
     r.check("failed preflight (B200 unavailable) refuses before create",
             preflight_refusal_no_pod)

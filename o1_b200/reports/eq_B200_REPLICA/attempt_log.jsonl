@@ -1,0 +1,2 @@
+{"backend":"B200_REPLICA","event":"EXECUTE_ROWS","n_specs":96,"utc":"2026-08-17T18:06:59Z","worker_count":2}
+{"event":"FINALIZED","n_rows":96,"records_sha256":"0494347969dca237f6fb492c38d24db1a441dd85af07f2bf3ea46b39f97d6221","utc":"2026-08-17T18:08:16Z"}

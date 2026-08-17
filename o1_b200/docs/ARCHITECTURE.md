@@ -1,9 +1,14 @@
-# O1 B200 Runner — Architecture
+# O1 B300 Runner — Architecture
 
-Package: `O1_B200_RUNNER_v0.1.0`, status
-`B200_SOFTWARE_COMPLETE_HARDWARE_UNVALIDATED`. Separate from the verified
-scientific package `O1_oracle_reachability_v2.1.0`, which it imports
-byte-hash-verified and never modifies.
+Package: `O1_B300_RUNNER_v0.3.0`, status
+`B300 PREEMPTIBLE SOFTWARE COMPLETE / HARDWARE UNVALIDATED`. Targets a
+RunPod Pod, Secure Cloud, exactly one GPU, purchase mode INTERRUPTIBLE
+(spot): primary profile NVIDIA B300 SXM6 AC (Blackwell Ultra, sm_103, CC
+10.3, 288 GB HBM3e), explicit fallback profile NVIDIA B200 (sm_100, CC 10.0,
+180 GB HBM3e) when B300 is refused, with the refusal reason always recorded.
+Separate from the verified scientific package
+`O1_oracle_reachability_v2.1.0`, which it imports byte-hash-verified and
+never modifies.
 
 ## Layering
 
@@ -35,7 +40,7 @@ o1_b200/runner/
 
 ## Sealed semantics — where they live and how they are preserved
 
-| frozen element | authority | B200-runner treatment |
+| frozen element | authority | runner treatment |
 |---|---|---|
 | generation loop, sampler, stopping | `run_o1_v2_generation.py` (sealed) | REFERENCE_SERIAL and B200_REPLICA call `generate_branch` unmodified; B200_BATCHED replays the identical per-row semantics and imports the sealed `_sample_top_p`, parser, verifier |
 | intervention locus L3/loop-2/layer-24/`layers[23]`, one-shot prefill, final non-padding token | sealed hook | batched hook edits position −1 under a LEFT-padding invariant (asserted), per-row `[1,2048]` slices, identity path for baseline/zero-alpha |
@@ -54,7 +59,9 @@ action→stream map — CRN pairing across arms is the design and is preserved.
 Locally proven: exact stream identity across serial/replica/batched, batch
 sizes 1–32, shuffled scheduling, mixed completion lengths, and resume (on the
 synthetic runtime, which is constructed to be bitwise batch-invariant).
-Cross-GPU token identity is NOT claimed — that is a B200 equivalence question.
+Cross-GPU token identity is NOT claimed — that is a B300/B200 hardware
+equivalence question, addressed on the target profile by the hardware gate
+(`deploy/hardware_gate.py`).
 
 ## Records and persistence
 
@@ -66,9 +73,14 @@ fields, deterministic canonical merge in `exec_index` order that refuses gaps.
 
 ## Deliberate non-claims
 
-- No B200 hardware validation, benchmark, or backend selection has occurred.
+- No B300/B200 hardware validation, benchmark, or backend selection has
+  occurred.
 - The synthetic-runtime equivalence results prove SOFTWARE correctness only.
 - Compaction, torch.compile, CUDA graphs, non-eager attention: ineligible.
-- No production provider adapter exists (interface + mock + local only).
 - Real O1 calibration/confirmation cannot be launched from this package's
   local modes; the state machine hard-refuses O1 bindings and confirmation.
+- The B300 wheel-set embeds no PTX, so silent JIT fallback to a different
+  SASS target is impossible; sm_103 native execution rests on NVIDIA's
+  documented same-major/higher-minor SASS forward-compatibility rule plus 59
+  sm_103a arch-tuned kernels, verified at runtime by the hardware gate
+  (`deploy/hardware_gate.py`), not assumed.

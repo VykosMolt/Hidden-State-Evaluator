@@ -75,32 +75,40 @@ def main() -> int:
     except Exception as exc:  # noqa: BLE001
         record("openapi_schema_pin", False, exc)
 
-    # 4. dry-run Pod-request rendering
+    # 4. dry-run all-profile deployment rendering (B300 primary + B200
+    #    explicit fallback under one authorization hash)
     try:
         from o1_b200.provider.runpod.pod_request import (
-            build_pod_request, render_canonical_pod_request)
-        req = build_pod_request(
-            image_digest_ref="local/o1-b200-runner@sha256:" + "0" * 64,
-            datacenter_id="DRYRUN-DC")
-        rendered = render_canonical_pod_request(req, {"dry_run": True})
-        record("dry_run_pod_request_render", True,
-               rendered["request_sha256"][:16])
+            build_pod_request, render_canonical_deployment)
+        from o1_b200.provider.runpod.policy import PROFILE_PREFERENCE
+        reqs = {p.key: build_pod_request(
+            profile=p,
+            image_digest_ref="local/o1-b300-runner@sha256:" + "0" * 64,
+            datacenter_id="DRYRUN-DC") for p in PROFILE_PREFERENCE}
+        rendered = render_canonical_deployment(reqs, {"dry_run": True})
+        record("dry_run_deployment_render", True,
+               f"profiles={rendered['profile_preference']} "
+               f"{rendered['request_sha256'][:16]}")
     except Exception as exc:  # noqa: BLE001
-        record("dry_run_pod_request_render", False, exc)
+        record("dry_run_deployment_render", False, exc)
 
-    # 5. container image record
+    # 5. container image record (B300/cu130 stack)
     img_record_path = os.path.join(_ROOT, "o1_b200", "provider", "runpod",
                                    "CONTAINER_IMAGE_RECORD.json")
     try:
         with open(img_record_path, encoding="utf-8") as fh:
             img = json.load(fh)
         env = img["environment"]
+        no_ptx = not any(a.startswith("compute_") for a in env["arch_list"])
         ok = (env["transformers"] == "4.54.1"
-              and env["torch"].startswith("2.12.0.dev20260408+cu128")
+              and env["torch"] == "2.12.1+cu130"
+              and env["torch_cuda_runtime"] == "13.0"
               and "sm_100" in env["arch_list"]
-              and img["platform"] == "linux/amd64")
+              and no_ptx
+              and img["platform"] == "linux/amd64"
+              and img["schema"] == "o1b300.container_image_record.v2")
         record("container_image_built_and_asserted", ok,
-               f"torch={env['torch']} sm_100={'sm_100' in env['arch_list']}")
+               f"torch={env['torch']} arch={env['arch_list']} no_ptx={no_ptx}")
     except Exception as exc:  # noqa: BLE001
         record("container_image_built_and_asserted", False, exc)
 
@@ -130,7 +138,7 @@ def main() -> int:
         try:
             LiveMutationAuthorization.verify(
                 path=os.path.join(_ROOT, "o1_b200", "provider", "runpod",
-                                  "B200_RENTAL_AUTHORIZATION.template.json"),
+                                  "B300_RENTAL_AUTHORIZATION.template.json"),
                 expected_identity={k: "x" for k in
                                    ("project", "package_zip_sha256",
                                     "provider", "budget_policy_sha256",

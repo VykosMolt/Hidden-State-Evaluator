@@ -29,21 +29,32 @@ cd /home/moloch/ouro_worktrees/o1-v2-b200-runner
 ./o1_b200/scripts/runpod_pre_rental_readonly_check.sh
 ```
 
-Must confirm live: key works; schema still matches pin `0bbdd828…`; a
-single-B200 Secure offer exists at ≤ USD 5.89/h; no unexpected Pod runs.
+Must confirm live: key works; REST v2 schema still matches its pin; the
+GraphQL spot contract still matches `GRAPHQL_SPOT_CONTRACT.json`; a
+single-GPU Secure INTERRUPTIBLE offer exists for the primary profile (B300)
+or, if refused, the explicit fallback profile (B200) — no static price cap,
+the live quote is authoritative subject to the budget-viability rule; no
+unexpected Pod runs.
+
+Live catalog facts observed 2026-08-17 (read-only, informational only —
+always re-query live, do not hardcode): B300 secure list $7.89/h (community
+$6.94), availability NONE at query time, datacenters EU-NL-1 / EUR-IS-1;
+B200 secure $6.79/h, availability LOW, US-CA-2/US-NC-2/US-NE-1.
 
 ## 2. Remote image publication
 
 Follow `REGISTRY_PUSH_PROCEDURE.md` (3 commands + one visibility click).
-The local image id is `sha256:75582fe4…`; the push prints the REMOTE
-manifest digest — use the immutable reference
-`ghcr.io/vykosmolt/o1-b200-runner@sha256:<remote-manifest-digest>` in
+The B300 image is already built locally as `o1-b300-runner:v0.3.0`, local
+image id `sha256:26dba0ac9ce869449b5fb5d0f7c520f1c72d9ad2d9ab0d0ec4f4b3474963b101`;
+the registry digest is UNRESOLVED until the operator pushes. After pushing,
+use the printed REMOTE manifest digest — the immutable reference
+`ghcr.io/vykosmolt/o1-b300-runner@sha256:<remote-manifest-digest>` — in
 `RUNPOD_SESSION_CONFIG.json` (`image_digest_ref`). Do NOT rely on the
-`v0.2.0` tag after pushing; mutable tags are refused by the adapter.
+`v0.3.0` tag after pushing; mutable tags are refused by the adapter.
 Cross-check that GHCR reports the same digest the push returned:
 
 ```sh
-docker buildx imagetools inspect ghcr.io/vykosmolt/o1-b200-runner:v0.2.0 \
+docker buildx imagetools inspect ghcr.io/vykosmolt/o1-b300-runner:v0.3.0 \
   | grep Digest        # must equal the digest printed by docker push
 ```
 
@@ -87,6 +98,7 @@ this test, `image_digest_ref` is the only unresolved field left.
 
 ## Then, and only then
 
-Add the separately approved credits, create the one-use
-`B200_RENTAL_AUTHORIZATION.json`, and launch
-`./o1_b200/o1_runpod_b200_zero_touch.sh --authorization … --execute-authorized-rental`.
+Add the separately approved credits, create the one-use rental
+authorization (schema `o1b300.rental_authorization.v2`, template
+`B300_RENTAL_AUTHORIZATION.template.json`), and launch
+`./o1_b200/o1_runpod_b300_zero_touch.sh --authorization … --execute-authorized-rental`.

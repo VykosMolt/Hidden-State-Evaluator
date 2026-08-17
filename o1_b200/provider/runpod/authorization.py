@@ -12,7 +12,12 @@ Mutating RunPod operations require ALL of:
   8. allow_create_pod: true;
   9. allow_real_calibration: true;
  10. allow_confirmation: false  (must be literally false);
- 11. the CLI flag --execute-authorized-rental.
+ 11. the CLI flag --execute-authorized-rental;
+ 12. max_pod_creations: a small positive integer bounding how many pod
+     creations (initial acquisition + eviction reacquisitions of
+     INTERRUPTIBLE capacity) this one authorization may perform.  Each
+     creation consumes one ledger slot ("nonce/seq"); exhaustion refuses
+     further creation exactly like a replay.
 
 Anything missing raises AuthorizationError("LIVE_MUTATION_NOT_AUTHORIZED …").
 This module can only be satisfied by a real, deliberately created file — the
@@ -30,14 +35,16 @@ ENV_FLAG = "RUNPOD_ALLOW_BILLABLE_MUTATIONS"
 ENV_FLAG_VALUE = "YES_I_AUTHORIZE_THIS_RUN"
 CLI_FLAG = "--execute-authorized-rental"
 
-AUTH_SCHEMA = "o1b200.rental_authorization.v1"
+AUTH_SCHEMA = "o1b300.rental_authorization.v2"
 
 REQUIRED_FIELDS = (
     "schema", "project", "package_zip_sha256", "provider",
     "budget_policy_sha256", "expires_utc", "launch_nonce",
     "deployment_spec_sha256", "allow_create_pod", "allow_real_calibration",
-    "allow_confirmation",
+    "allow_confirmation", "max_pod_creations",
 )
+
+MAX_ALLOWED_POD_CREATIONS = 8   # absolute ceiling regardless of the file
 
 
 class AuthorizationError(RuntimeError):
@@ -119,21 +126,48 @@ class LiveMutationAuthorization:
         nonce = doc["launch_nonce"]
         if not isinstance(nonce, str) or len(nonce) < 16:
             raise AuthorizationError("launch_nonce must be >= 16 chars")
-        used = set()
-        if os.path.exists(nonce_ledger):
-            with open(nonce_ledger, encoding="utf-8") as fh:
-                used = {ln.strip() for ln in fh if ln.strip()}
-        if nonce in used:
+        maxc = doc["max_pod_creations"]
+        if not isinstance(maxc, int) or isinstance(maxc, bool) \
+                or not 1 <= maxc <= MAX_ALLOWED_POD_CREATIONS:
             raise AuthorizationError(
-                f"launch_nonce already consumed (replay refused)")
+                f"max_pod_creations must be an integer in "
+                f"[1, {MAX_ALLOWED_POD_CREATIONS}]")
+        if cls._consumed_count(nonce_ledger, nonce) >= maxc:
+            raise AuthorizationError(
+                "launch_nonce creation budget exhausted (replay refused)")
         return cls(doc, path, nonce_ledger, now)
 
+    @staticmethod
+    def _consumed_count(nonce_ledger: str, nonce: str) -> int:
+        if not os.path.exists(nonce_ledger):
+            return 0
+        with open(nonce_ledger, encoding="utf-8") as fh:
+            lines = {ln.strip() for ln in fh if ln.strip()}
+        # v1 ledgers recorded the bare nonce; count it as one consumption
+        return sum(1 for ln in lines
+                   if ln == nonce or ln.startswith(nonce + "/"))
+
     def consume_nonce(self) -> None:
-        """Burn the nonce (called exactly once, immediately before create)."""
+        """Burn ONE creation slot (called immediately before each create).
+
+        Refuses beyond max_pod_creations: eviction reacquisition is bounded
+        by this ledger in addition to the hard dollar budget.
+        """
+        nonce = self._doc["launch_nonce"]
+        seq = self._consumed_count(self._nonce_ledger, nonce)
+        if seq >= self._doc["max_pod_creations"]:
+            raise AuthorizationError(
+                f"pod-creation budget exhausted "
+                f"({seq}/{self._doc['max_pod_creations']} consumed); a new "
+                f"deliberate authorization is required")
         with open(self._nonce_ledger, "a", encoding="utf-8") as fh:
-            fh.write(self._doc["launch_nonce"] + "\n")
+            fh.write(f"{nonce}/{seq}\n")
             fh.flush()
             os.fsync(fh.fileno())
+
+    def creations_remaining(self) -> int:
+        return self._doc["max_pod_creations"] - self._consumed_count(
+            self._nonce_ledger, self._doc["launch_nonce"])
 
     def recheck(self) -> None:
         """Re-validated before EVERY mutating request."""

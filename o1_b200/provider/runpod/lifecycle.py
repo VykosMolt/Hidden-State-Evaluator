@@ -67,12 +67,20 @@ class PodLifecycleController:
         self._event("WATCHDOG_ARMED", hard_limit_seconds=limit)
         return pod.id
 
-    def wait_until_running(self, pod_id: str) -> None:
+    def wait_until_running(self, pod_id: str) -> str:
+        """Returns "RUNNING", or "EVICTED" when interruptible capacity was
+        reclaimed before the container came up (normal spot behavior: the
+        remnant is terminated and the session may reacquire)."""
         try:
             pod = self.adapter.wait_for_state(
                 pod_id, "RUNNING", timeout_seconds=self.startup_timeout,
                 sleep=self.sleep)
         except RunpodAdapterError as exc:
+            if "EVICTION_SUSPECTED" in str(exc):
+                self._event("EVICTED_BEFORE_RUNNING", pod_id=pod_id)
+                self.collect_logs(pod_id)
+                self.terminate_and_confirm(pod_id)
+                return "EVICTED"
             self._event("STARTUP_FAILED", error=str(exc))
             self.collect_logs(pod_id)
             self.terminate_and_confirm(pod_id)
@@ -80,6 +88,7 @@ class PodLifecycleController:
         self.adapter.spend.mark_pod_started()
         self._event("POD_RUNNING", pod_id=pod.id,
                     started_at=pod.started_at)
+        return "RUNNING"
 
     def monitor(self, pod_id: str, *, poll_seconds: float = 20.0,
                 until=None) -> str:
@@ -101,7 +110,19 @@ class PodLifecycleController:
                 if self.adapter.spend.state() == "SOFT_STOP":
                     self._event("BUDGET_SOFT_STOP")
                     return "SOFT_STOP"
-            if pod.status in ("EXITED", "ERROR"):
+            if pod.status == "EXITED":
+                # On interruptible capacity, EXITED without the completion
+                # marker is an eviction (spot stop), not a scientific
+                # failure: collect what remains, terminate the remnant, and
+                # let the session decide on bounded reacquisition.
+                if until is not None and until(pod):
+                    return "COMPLETE"
+                self._event("EVICTED", pod_id=pod_id)
+                self.adapter.spend.mark_pod_stopped()
+                self.collect_logs(pod_id)
+                self.terminate_and_confirm(pod_id)
+                return "EVICTED"
+            if pod.status == "ERROR":
                 self._event("CONTAINER_FAILURE", status=pod.status)
                 self.collect_logs(pod_id)
                 self.terminate_and_confirm(pod_id)

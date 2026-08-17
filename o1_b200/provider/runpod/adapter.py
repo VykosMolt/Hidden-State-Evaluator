@@ -1,14 +1,23 @@
-"""Production RunPod API v2 adapter for the O1 B200 session.
+"""Production RunPod adapter for the O1 accelerator session (B300 target).
 
 Layering (each concern separated):
 
   request construction   pod_request.py / quote.py
   request validation     models.py (typed, fail-closed)
-  network transport      transport.py (read-only vs authorized-mutating)
+  REST transport         transport.py (read-only vs authorized-mutating)
+  spot acquisition       graphql_spot.py (the ONLY interruptible surface)
   response validation    models.py + schema_check.py
   lifecycle policy       lifecycle.py
   billing policy         billing.py
   termination confirm    here + watchdog_terminate.py (independent path)
+
+Purchase mode is frozen INTERRUPTIBLE: pods are created through the pinned
+GraphQL podRentInterruptable mutation (the REST v2 contract cannot express
+spot capacity), while status polling, logs, billing and termination stay
+on the pinned REST v2 surface — a spot pod is a pod.  Profile selection is
+preference-ordered (B300 primary, B200 explicit fallback) and every
+selection is recorded with its reason; nothing outside the two frozen
+profiles is ever accepted.
 
 The adapter is read-only unless constructed WITH a verified
 LiveMutationAuthorization; without it every mutating operation raises
@@ -20,27 +29,35 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import tarfile
 import time
 
 from .authorization import AuthorizationError, LiveMutationAuthorization
 from .billing import SpendTracker, hard_compute_seconds, session_fits_policy
+from .graphql_spot import PRODUCTION_GRAPHQL_URL, RunpodGraphQlClient
 from .identityutil import utcnow_iso
 from .models import (
     CreatePodRequestModel, GpuTypeModel, PodModel, SchemaIncompatibility,
 )
-from .policy import CLOUD, EXPECTED_GPU_ID, GPU_COUNT, QUOTE_VALIDITY_SECONDS
-from .pod_request import build_pod_request, render_canonical_pod_request
+from .policy import (
+    MIN_CUDA_VERSION, PROFILES_BY_KEY, PURCHASE_MODE, QUOTE_VALIDITY_SECONDS,
+)
+from .pod_request import build_pod_request, render_canonical_deployment
 from .quote import (
-    CATALOG_PATH, QuoteError, build_quote, check_quote_fresh, find_b200,
-    parse_catalog, validate_offer,
+    CATALOG_PATH, QuoteError, build_quote, check_quote_fresh, parse_catalog,
+    select_offer,
 )
 from .redaction import redact
 from .schema_check import check_live_identity, pinned_schema_sha256, verify_pinned_schema
 from .transport import (
     AmbiguousMutation, ApiHttpError, MutatingTransport, ReadOnlyTransport,
 )
+
+REST_PRODUCTION_URL = "https://api.runpod.io"
+
+# Safety margin added to the provider-side terminateAfter auto-terminate
+# beyond the locally enforced hard budget deadline.
+TERMINATE_AFTER_MARGIN_SECONDS = 30 * 60
 
 
 class RunpodAdapterError(RuntimeError):
@@ -60,13 +77,20 @@ def parse_hf_uri(uri: str) -> tuple[str, str]:
 
 
 class RunpodV2Adapter:
-    def __init__(self, *, base_url: str = "https://api.runpod.io",
+    def __init__(self, *, base_url: str = REST_PRODUCTION_URL,
                  authorization: LiveMutationAuthorization | None = None,
                  api_key: str | None = None, opener=None,
-                 sleep=time.sleep, clock=time.time):
+                 sleep=time.sleep, clock=time.time,
+                 spend_clock=time.monotonic):
         verify_pinned_schema()
         self.readonly = ReadOnlyTransport(base_url=base_url, api_key=api_key,
                                           opener=opener, sleep=sleep)
+        graphql_url = (PRODUCTION_GRAPHQL_URL
+                       if base_url.rstrip("/") == REST_PRODUCTION_URL
+                       else base_url.rstrip("/") + "/graphql")
+        self.graphql = RunpodGraphQlClient(
+            url=graphql_url, api_key=api_key, authorization=authorization,
+            opener=opener, sleep=sleep)
         self.authorization = authorization
         self.mutating = None
         if authorization is not None:
@@ -74,6 +98,7 @@ class RunpodV2Adapter:
                 authorization, base_url=base_url, api_key=api_key,
                 opener=opener, sleep=sleep)
         self.clock = clock
+        self.spend_clock = spend_clock
         self.accepted_quote: dict | None = None
         self.spend: SpendTracker | None = None
 
@@ -96,26 +121,37 @@ class RunpodV2Adapter:
     def list_gpu_types(self) -> list[GpuTypeModel]:
         return parse_catalog(self.readonly.get(CATALOG_PATH))
 
-    def get_b200_offer(self) -> GpuTypeModel:
-        return find_b200(self.list_gpu_types())
+    def get_offer_selection(self) -> dict:
+        """Preference-ordered profile selection against the live catalog."""
+        return select_offer(self.list_gpu_types())
 
-    def get_b200_availability(self) -> dict:
-        gpu = self.get_b200_offer()
-        v = validate_offer(gpu)
-        return {"gpu_id": gpu.id, "availability": gpu.availability,
-                "secure_rate_usd": str(v["rate"]),
-                "datacenters": v["datacenters"]}
+    def get_availability(self) -> dict:
+        """Availability + live spot pricing for the selected profile, with
+        the full per-profile refusal record (fallbacks are never silent)."""
+        sel = self.get_offer_selection()
+        profile, gpu = sel["profile"], sel["gpu"]
+        spot = self.graphql.spot_pricing(profile.gpu_type_id)
+        return {"profile": profile.key,
+                "profile_role": profile.role,
+                "fallback_reason": sel["fallback_reason"],
+                "profile_refusals": sel["refusals"],
+                "gpu_id": gpu.id, "availability": gpu.availability,
+                "purchase_mode": PURCHASE_MODE,
+                "secure_list_usd": str(spot.get("secure_list_usd")),
+                "secure_spot_usd": str(spot.get("secure_spot_usd")),
+                "spot_stock_status": spot.get("stock_status"),
+                "datacenters": sel["datacenters"]}
 
     def list_compatible_datacenters(self) -> list[str]:
-        return self.get_b200_availability()["datacenters"]
+        return self.get_offer_selection()["datacenters"]
 
     def quote_instance(self, *, disk_hourly_usd="0.0000",
                        adapter_commit: str = "UNKNOWN") -> dict:
-        gpu = self.get_b200_offer()
-        v = validate_offer(gpu)
-        dc = sorted(v["datacenters"])[0]
+        sel = self.get_offer_selection()
+        spot = self.graphql.spot_pricing(sel["profile"].gpu_type_id)
+        dc = sorted(sel["datacenters"])[0]
         quote = build_quote(
-            gpu, datacenter_id=dc, disk_gb=60,
+            sel, spot, datacenter_id=dc, disk_gb=60,
             disk_hourly_usd=disk_hourly_usd,
             schema_sha256=pinned_schema_sha256(),
             adapter_commit=adapter_commit, now=self.clock)
@@ -165,20 +201,21 @@ class RunpodV2Adapter:
 
     # ---------------- request construction (no submission) ----------------
 
-    def build_pod_request(self, *, image_digest_ref: str,
+    def build_pod_request(self, *, profile_key: str, image_digest_ref: str,
                           datacenter_id: str,
                           env_values: dict | None = None) -> CreatePodRequestModel:
-        return build_pod_request(image_digest_ref=image_digest_ref,
+        return build_pod_request(profile=PROFILES_BY_KEY[profile_key],
+                                 image_digest_ref=image_digest_ref,
                                  datacenter_id=datacenter_id,
                                  env_values=env_values)
 
-    def render_canonical_pod_request(self, req: CreatePodRequestModel,
-                                     identities: dict) -> dict:
-        return render_canonical_pod_request(req, identities)
+    def render_canonical_deployment(self, reqs_by_profile: dict,
+                                    identities: dict) -> dict:
+        return render_canonical_deployment(reqs_by_profile, identities)
 
     # ---------------- mutating operations (interlocked) ----------------
 
-    def _require_mutating(self) -> MutatingTransport:
+    def _require_authorized(self) -> MutatingTransport:
         if self.mutating is None:
             raise AuthorizationError(
                 "adapter constructed without a live-mutation authorization")
@@ -186,16 +223,37 @@ class RunpodV2Adapter:
 
     def create_instance(self, req: CreatePodRequestModel,
                         rendered: dict) -> PodModel:
-        m = self._require_mutating()
+        """Create ONE interruptible pod via the pinned GraphQL surface."""
+        self._require_authorized()
         req.validate()
         if self.accepted_quote is None:
             raise QuoteError("no accepted quote; quote_instance first")
         check_quote_fresh(self.accepted_quote, now=self.clock)
+        if self.accepted_quote["gpu_type_id"] != req.gpu_type_id:
+            raise RunpodAdapterError(
+                f"quote is for {self.accepted_quote['gpu_type_id']!r} but "
+                f"the request pins {req.gpu_type_id!r}; re-quote for the "
+                f"selected profile")
         if rendered.get("request_sha256") != \
                 self.authorization.deployment_spec_sha256:
             raise AuthorizationError(
                 "deployment specification hash does not match the "
                 "authorization's committed deployment_spec_sha256")
+        profile_key = self.accepted_quote["profile"]
+        body = rendered.get("create_pod_bodies", {}).get(profile_key)
+
+        def _identity_body(b: dict) -> dict:
+            # launch-time facts are not deployment identity: the datacenter
+            # comes from the fresh quote, and env VALUES are injected at
+            # launch (the canonical rendering pins the env NAME set only,
+            # and never contains secret values)
+            out = {k: v for k, v in b.items() if k != "dataCenterIds"}
+            out["env"] = sorted(b.get("env", {}))
+            return out
+        if body is None or _identity_body(body) != _identity_body(req.to_json()):
+            raise AuthorizationError(
+                f"the request for profile {profile_key} is not the "
+                f"authorized canonical body; refusing")
         # duplicate protection: reconcile by canonical name + nonce first
         existing = self._reconcile_by_identity(req.name)
         if existing is not None:
@@ -203,28 +261,66 @@ class RunpodV2Adapter:
                 f"a pod named {req.name!r} already exists "
                 f"({existing.id}); refusing duplicate creation")
         self.authorization.consume_nonce()
-        body = req.to_json()
-        body["env"] = dict(body.get("env", {}))
-        body["env"]["O1_LAUNCH_NONCE"] = self.authorization.launch_nonce
+        limit = hard_compute_seconds(
+            self.accepted_quote["total_projected_hourly_usd"])
+        terminate_after = time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ",
+            time.gmtime(self.clock() + limit + TERMINATE_AFTER_MARGIN_SECONDS))
+        env = dict(req.env)
+        env["O1_LAUNCH_NONCE"] = self.authorization.launch_nonce
+        req_with_nonce = CreatePodRequestModel(
+            name=req.name, image=req.image, cloud=req.cloud,
+            gpu_type_id=req.gpu_type_id, gpu_count=req.gpu_count,
+            container_disk_gb=req.container_disk_gb, env=env,
+            purchase_mode=req.purchase_mode, ports=req.ports,
+            args=req.args, datacenter_ids=req.datacenter_ids)
+        rent_input = req_with_nonce.to_rent_input(
+            self.accepted_quote["bid_per_gpu_usd"],
+            min_cuda_version=MIN_CUDA_VERSION,
+            terminate_after_utc=terminate_after)
         try:
-            created = m.mutate("POST", "/v2/pods", body)
+            created = self.graphql.rent_interruptable(rent_input)
         except AmbiguousMutation:
             pod = self._reconcile_by_identity(req.name,
                                               self.authorization.launch_nonce)
             if pod is None:
                 raise RunpodAdapterError(
-                    "create response lost and no matching pod found; NOT "
-                    "retrying create — operator-visible halt")
+                    "spot create response lost and no matching pod found; "
+                    "NOT retrying create — operator-visible halt")
+            self._arm_spend()
             return pod
-        pod = PodModel.parse(created)
+        pod_id = created.get("id")
+        if not pod_id:
+            raise RunpodAdapterError("spot create returned no pod id")
+        self._arm_spend()
+        # authoritative state comes from the REST surface
+        return self.get_instance(pod_id)
+
+    def _arm_spend(self) -> None:
+        carry = self.spend.effective_spend() if self.spend is not None else "0"
         self.spend = SpendTracker(
-            self.accepted_quote["total_projected_hourly_usd"])
-        return pod
+            self.accepted_quote["total_projected_hourly_usd"],
+            clock=self.spend_clock, carryover_usd=carry)
 
     def _reconcile_by_identity(self, name: str,
                                nonce: str | None = None) -> PodModel | None:
-        matches = []
+        """Reconcile owned pods by canonical name (+ launch nonce) across
+        BOTH surfaces: REST /v2/pods and GraphQL myself.pods.  REST
+        visibility of spot pods is a live-hardware-unvalidated assumption,
+        so the GraphQL listing is consulted as a redundant second witness.
+        """
+        by_id: dict[str, PodModel] = {}
         for pod in self.list_owned_instances():
+            by_id[pod.id] = pod
+        try:
+            for p in self.graphql.myself_pods():
+                if p["id"] not in by_id and p.get("name") == name:
+                    if p.get("desiredStatus") != "TERMINATED":
+                        by_id[p["id"]] = self.get_instance(p["id"])
+        except Exception:  # noqa: BLE001 - redundant surface; REST rules
+            pass
+        matches = []
+        for pod in by_id.values():
             if pod.name != name:
                 continue
             if nonce is not None:
@@ -246,6 +342,15 @@ class RunpodV2Adapter:
                 f"{name!r}; all were sent terminate; halting")
         return matches[0] if matches else None
 
+    def classify_exit(self, pod: PodModel) -> str:
+        """EXITED on interruptible capacity without completion is treated as
+        eviction (SIGTERM/SIGKILL stop); ERROR is a container failure."""
+        if pod.status == "ERROR":
+            return "CONTAINER_FAILURE"
+        if pod.status == "EXITED":
+            return "EVICTION_SUSPECTED"
+        return pod.status
+
     def wait_for_state(self, pod_id: str, target: str, *,
                        timeout_seconds: float, poll_seconds: float = 5.0,
                        sleep=None) -> PodModel:
@@ -259,7 +364,8 @@ class RunpodV2Adapter:
                 return pod
             if pod.status in ("ERROR", "EXITED") and target == "RUNNING":
                 raise RunpodAdapterError(
-                    f"pod {pod_id} reached {pod.status} before RUNNING")
+                    f"pod {pod_id} reached {pod.status} before RUNNING "
+                    f"({self.classify_exit(pod)})")
             if pod.status == "TERMINATED" and target != "TERMINATED":
                 raise RunpodAdapterError(f"pod {pod_id} terminated unexpectedly")
             sleep(poll_seconds)
@@ -275,12 +381,12 @@ class RunpodV2Adapter:
         return {"job_id": f"zero-touch@{pod_id}", "job": job}
 
     def stop_instance(self, pod_id: str) -> None:
-        m = self._require_mutating()
+        m = self._require_authorized()
         m.mutate("POST", f"/v2/pods/{pod_id}/action", {"action": "stop"})
 
     def terminate_instance(self, pod_id: str) -> None:
         """Primary termination: permanent delete, never merely stop."""
-        m = self._require_mutating()
+        m = self._require_authorized()
         try:
             m.mutate("POST", f"/v2/pods/{pod_id}/action",
                      {"action": "terminate"})
@@ -313,7 +419,6 @@ class RunpodV2Adapter:
     # ---------------- results ----------------
 
     def package_results(self, out_dir: str, archive_path: str) -> dict:
-        from .redaction import redact as _r
         with tarfile.open(archive_path, "w:gz") as tar:
             tar.add(out_dir, arcname=".")
         import hashlib

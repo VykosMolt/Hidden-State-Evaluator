@@ -1,16 +1,22 @@
-# O1 B200 Runner — Deployment Environment
+# O1 B300 Runner — Deployment Environment
 
-Status: **B200_SOFTWARE_COMPLETE_HARDWARE_UNVALIDATED**. Nothing here has run
-on a B200. No provider is selected. No spend is authorized by this directory.
+Release: **O1_B300_RUNNER v0.3.0**. Status: **B300 PREEMPTIBLE SOFTWARE
+COMPLETE / HARDWARE UNVALIDATED**. Nothing here has run on real hardware yet.
+Target is a RunPod Pod, Secure Cloud, exactly one GPU, purchase mode
+INTERRUPTIBLE (spot): primary profile NVIDIA B300 SXM6 AC (Blackwell Ultra,
+sm_103, CC 10.3, 288 GB HBM3e), explicit fallback profile NVIDIA B200
+(sm_100, CC 10.0, 180 GB HBM3e) when B300 is refused, refusal reason always
+recorded. No spend is authorized by this directory.
 
 ## Contents
 
 | file | purpose |
 |---|---|
-| `Dockerfile` | reproducible image: CUDA 12.8 runtime, Python 3.14, pinned deps, sealed package + runner + axis package + cohort manifests baked in (checkpoint mounted, never baked) |
-| `requirements.lock` | exact pins; `transformers==4.54.1` asserted at build AND at runtime |
-| `start_b200.sh` | provider-neutral entrypoint: env validation → artifact verification → refuses to proceed until the selected provider adapter exists |
-| `validate_environment.py` | asserts the pinned stack + deterministic flags; collects the runtime report (never claims B200) |
+| `Dockerfile.b300` | reproducible image: CUDA 13.0 runtime (cuDNN 9.20.0.48, NCCL 2.29.7, triton 3.7.1), Python 3.14, pinned deps, sealed package + runner + axis package + cohort manifests baked in (checkpoint mounted, never baked); built by `scripts/build_b300_image.sh` as `o1-b300-runner:v0.3.0` |
+| `requirements.b300.lock` + `WHEELS_B300.sha256` | exact pins (`torch==2.12.1+cu130`, `numpy==2.4.4`, `transformers==4.54.1` EXACT) plus a frozen local wheel set hash, asserted at build AND at runtime |
+| `start_b300.sh` | entrypoint -> `runner/production_entry.py`: env validation → artifact verification → hardware gate before anything scientific |
+| `hardware_gate.py` | enforces identity/CC/HBM/BF16/driver/arch and runs representative real workloads (BF16 GEMM, Ouro-RLTT forward/generation, backward+optimizer, O1 intervention hook + transport capture, checkpoint save/load) before anything scientific |
+| `validate_environment.py` | asserts the pinned stack + deterministic flags; collects the runtime report (never claims a specific GPU profile) |
 | `verify_artifacts.py` | hash-verifies every TRANSFER_MANIFEST artifact, including the out-of-band checkpoint tree |
 | `package_outputs.sh` | deterministic, secret-refusing output archive + checksums |
 | `checksums.sh` | package SHA256SUMS write/verify |
@@ -28,13 +34,21 @@ Optional performance modes (`torch_compile`, `cuda_graphs`,
 `attention_override`, batched `compaction`) exist behind RuntimeConfig flags
 that **default OFF**; `RuntimeConfig.validate()` refuses the first three
 outright, and every one of them remains scientifically ineligible until a
-future, separately committed B200 equivalence pass authorizes it.
+future, separately committed hardware equivalence pass authorizes it.
 
-## What the future B200 session must still do
+sm_103 (B300) native execution rests on NVIDIA's documented
+same-major/higher-minor SASS forward-compatibility rule: the cu130 wheel's
+sm_100 cubins run natively on sm_103, plus 59 sm_103a arch-tuned kernels; the
+wheel embeds NO PTX, so silent JIT fallback is impossible.
 
-See `docs/B200_ACCESS_RUNBOOK.md`. In short: choose provider → implement/test
-its adapter → verify rate against the USD 45 policy → stage artifacts →
-provision exactly one B200 → validate GPU/env/artifacts → non-O1 equivalence
-→ bounded non-O1 benchmark → frozen backend selection → populate + externally
-commit the final precommit → affordability gate → calibration → verify +
-transfer → terminate.
+## What the future GPU session must still do
+
+See `docs/B200_ACCESS_RUNBOOK.md`. In short: obtain a live secure spot quote
+(B300 first, B200 fallback only if refused, reason recorded) → verify
+budget-viability → stage artifacts → provision exactly one GPU → validate
+GPU/env/artifacts via the hardware gate → non-O1 equivalence → bounded non-O1
+benchmark → frozen backend selection → populate + externally commit the
+final precommit → affordability gate → calibration (surviving eviction by
+terminating the remnant, carrying spend forward, re-quoting, and reacquiring
+up to `MAX_POD_ACQUISITIONS=4`, resuming from the next missing canonical row)
+→ verify + transfer → terminate.
