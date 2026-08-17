@@ -20,6 +20,21 @@ os.makedirs(SCRATCH, exist_ok=True)
 
 CORPUS_DIR = os.path.join(_ROOT, "o1_b200", "corpus")
 
+
+def hermetic_mock_credentials() -> str:
+    """Force synthetic provider credentials for local mock tests.
+
+    Hard-sets RUNPOD_API_KEY to the mock server's synthetic key (never
+    setdefault: an exported real operator key must not survive into a mock
+    test process) and removes RUNPOD_API_KEY_FILE so no code path can read
+    a real key from disk.  Returns the synthetic key so tests can pass it
+    explicitly to adapters/transports.
+    """
+    from o1_b200.provider.runpod.mock_server import MOCK_API_KEY
+    os.environ["RUNPOD_API_KEY"] = MOCK_API_KEY
+    os.environ.pop("RUNPOD_API_KEY_FILE", None)
+    return MOCK_API_KEY
+
 FAST_SUBSET = [
     "b200val-000-commit_a", "b200val-004-malformed_eos",
     "b200val-008-stoch_commit", "b200val-010-stoch_eos",

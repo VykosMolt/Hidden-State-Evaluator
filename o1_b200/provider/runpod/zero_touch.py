@@ -60,6 +60,7 @@ def load_session_config(root: str) -> dict:
 
 def run_session(*, authorization_path: str, out_dir: str,
                 cli_args: list[str], base_url: str = "https://api.runpod.io",
+                api_key: str | None = None,
                 root: str | None = None, sleep=time.sleep,
                 config: dict | None = None,
                 spawn_watchdog_fn=None) -> dict:
@@ -92,13 +93,13 @@ def run_session(*, authorization_path: str, out_dir: str,
         "deployment_spec_sha256": None,  # bound after render below
     }
     # 2. read-only preflight first (no authorization needed)
-    pre = run_preflight(base_url=base_url)
+    pre = run_preflight(base_url=base_url, api_key=api_key)
     step("READONLY_PREFLIGHT", pre["verdict"])
     if pre["verdict"] != "PASS":
         return finish("REFUSED_PREFLIGHT", preflight=pre)
 
     # 3. fresh quote + canonical request + hash binding
-    probe = RunpodV2Adapter(base_url=base_url, sleep=sleep)
+    probe = RunpodV2Adapter(base_url=base_url, api_key=api_key, sleep=sleep)
     quote = probe.quote_instance(adapter_commit=config.get("adapter_commit",
                                                            "UNKNOWN"))
     step("QUOTE", f"{quote['gpu_type_id']} @ {quote['hourly_gpu_rate_usd']}/h "
@@ -117,8 +118,8 @@ def run_session(*, authorization_path: str, out_dir: str,
         return finish("LIVE_MUTATION_NOT_AUTHORIZED", error=str(exc))
     step("AUTHORIZED", "interlock satisfied")
 
-    adapter = RunpodV2Adapter(base_url=base_url, authorization=auth,
-                              sleep=sleep)
+    adapter = RunpodV2Adapter(base_url=base_url, api_key=api_key,
+                              authorization=auth, sleep=sleep)
     adapter.accepted_quote = quote
     controller_kw = {}
     if spawn_watchdog_fn is not None:

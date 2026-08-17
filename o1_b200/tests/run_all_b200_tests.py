@@ -26,6 +26,7 @@ MODULES = [
     "test_runpod_interlock",
     "test_runpod_lifecycle",
     "test_runpod_zero_touch",
+    "test_credential_isolation",
 ]
 
 

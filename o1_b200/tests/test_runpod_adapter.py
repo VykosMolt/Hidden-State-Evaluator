@@ -4,9 +4,9 @@ from __future__ import annotations
 import json
 import os
 
-from _h import Runner, fresh_dir
+from _h import Runner, fresh_dir, hermetic_mock_credentials
 
-os.environ.setdefault("RUNPOD_API_KEY", "rpa_MOCKKEY_1234567890abcdef")
+MOCK_KEY = hermetic_mock_credentials()
 
 from o1_b200.provider.runpod import redaction
 from o1_b200.provider.runpod.adapter import RunpodV2Adapter
@@ -22,6 +22,7 @@ NOSLEEP = lambda s: None  # noqa: E731
 
 
 def _adapter(srv, **kw):
+    kw.setdefault("api_key", MOCK_KEY)
     return RunpodV2Adapter(base_url=srv.base_url, sleep=NOSLEEP, **kw)
 
 
@@ -125,7 +126,7 @@ def run() -> Runner:
         clock = {"t": 1000.0}
         with MockRunpodServer() as srv:
             ad = RunpodV2Adapter(base_url=srv.base_url, sleep=NOSLEEP,
-                                 clock=lambda: clock["t"])
+                                 api_key=MOCK_KEY, clock=lambda: clock["t"])
             ad.quote_instance()
             ad.validate_quote()
             clock["t"] += 15 * 60 + 1
@@ -247,7 +248,7 @@ def run() -> Runner:
                 assert fake not in redaction.redact(
                     f"Authorization: Bearer {fake}")
         finally:
-            os.environ["RUNPOD_API_KEY"] = "rpa_MOCKKEY_1234567890abcdef"
+            os.environ["RUNPOD_API_KEY"] = MOCK_KEY
     r.check("31. API key never appears in logs or exception strings",
             redaction_everywhere)
 

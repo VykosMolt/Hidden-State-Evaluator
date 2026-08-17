@@ -21,7 +21,7 @@ from .transport import ApiHttpError, TransportError
 
 
 def run_preflight(*, base_url: str = "https://api.runpod.io",
-                  opener=None) -> dict:
+                  api_key: str | None = None, opener=None) -> dict:
     report = {
         "schema": "o1b200.runpod_readonly_preflight.v1",
         "utc": utcnow_iso(),
@@ -29,7 +29,7 @@ def run_preflight(*, base_url: str = "https://api.runpod.io",
         "mutations_possible": False,
         "checks": {},
     }
-    key = load_api_key()
+    key = api_key if api_key is not None else load_api_key()
     if not key:
         report["verdict"] = "SKIPPED_NO_CREDENTIAL"
         report["note"] = ("READONLY_LIVE_PREFLIGHT: SKIPPED_NO_CREDENTIAL — "
@@ -39,7 +39,7 @@ def run_preflight(*, base_url: str = "https://api.runpod.io",
         report["report_sha256"] = canonical_sha256(
             "o1b200.runpod_preflight.v1", report)
         return report
-    adapter = RunpodV2Adapter(base_url=base_url, opener=opener)
+    adapter = RunpodV2Adapter(base_url=base_url, api_key=key, opener=opener)
     checks = report["checks"]
     failures = []
 

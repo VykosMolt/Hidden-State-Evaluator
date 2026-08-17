@@ -17,6 +17,12 @@ import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+# The one synthetic credential local mock tests use.  The mock server
+# validates it strictly; it is never a real RunPod key, and real operator
+# credentials must never replace it (transport.CredentialIsolationError
+# enforces that at the transport layer).
+MOCK_API_KEY = "rpa_MOCKKEY_1234567890abcdef"
+
 
 def _b200(price_secure=5.49, availability="HIGH", secure=True,
           community=True, max_secure=8, gpu_id="NVIDIA B200",
@@ -42,7 +48,7 @@ class Scenario:
     def __init__(self):
         self.gpus = [_b200()]
         self.auth_required = True
-        self.api_key = "rpa_MOCKKEY_1234567890abcdef"
+        self.api_key = MOCK_API_KEY
         self.pods: dict[str, dict] = {}
         self.lifecycle_plan = ["PROVISIONING", "STARTING", "RUNNING"]
         self.lifecycle_step_per_poll = True

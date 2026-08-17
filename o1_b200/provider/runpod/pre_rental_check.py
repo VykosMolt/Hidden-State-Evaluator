@@ -18,11 +18,15 @@ _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."
 PY = sys.executable
 
 
-def _run(cmd, cwd=None, timeout=3600):
+def _run(cmd, cwd=None, timeout=3600, live_credentials=False):
+    env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "PYTHONPATH": _ROOT}
+    if not live_credentials:
+        # local phases are hermetic: the operator credential never enters
+        # a local/mock test process
+        env.pop("RUNPOD_API_KEY", None)
+        env.pop("RUNPOD_API_KEY_FILE", None)
     proc = subprocess.run(cmd, cwd=cwd or _ROOT, capture_output=True,
-                          text=True, timeout=timeout,
-                          env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1",
-                               "PYTHONPATH": _ROOT})
+                          text=True, timeout=timeout, env=env)
     return proc.returncode, (proc.stdout + proc.stderr)[-4000:]
 
 
@@ -147,7 +151,8 @@ def main() -> int:
     if load_api_key():
         rc, out = _run([PY, "-m", "o1_b200.provider.runpod.preflight",
                         "--out", os.path.join(a.out_dir,
-                                              "RUNPOD_READONLY_PREFLIGHT.json")])
+                                              "RUNPOD_READONLY_PREFLIGHT.json")],
+                       live_credentials=True)
         live_verdict = "PASS" if rc == 0 else "FAIL"
         record("readonly_live_preflight", rc == 0, out.strip()[-200:])
     else:

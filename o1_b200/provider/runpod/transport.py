@@ -53,6 +53,10 @@ class ApiHttpError(TransportError):
         self.status = status
 
 
+class CredentialIsolationError(TransportError):
+    """Ambient operator credentials were about to reach a non-production host."""
+
+
 class AmbiguousMutation(TransportError):
     """A mutating request's outcome is unknown; reconcile before retrying."""
 
@@ -67,6 +71,15 @@ class _BaseTransport:
                  sleep=time.sleep, rng=random.random,
                  opener=None):
         self.base_url = base_url.rstrip("/")
+        if api_key is None and self.base_url != DEFAULT_BASE_URL:
+            # Hermetic-isolation invariant: the ambient operator credential
+            # (RUNPOD_API_KEY / RUNPOD_API_KEY_FILE) may only ever be attached
+            # to the production API host.  Any other base_url (mock servers,
+            # local test fixtures) must receive an explicit synthetic key.
+            raise CredentialIsolationError(
+                f"transport for non-production base_url {self.base_url!r} "
+                f"requires an explicit api_key; ambient operator credentials "
+                f"are never sent to non-production hosts")
         self._api_key = api_key if api_key is not None else load_api_key()
         self._sleep = sleep
         self._rng = rng

@@ -211,12 +211,13 @@
         "malformed JSON fails closed",
         "28. delayed billing never extends the run; the monotonic watchdog is authoritative",
         "31. API key never appears in logs or exception strings",
-        "budget arithmetic is decimal with boundary tests at/below/above USD 40 and USD 45"
+        "budget arithmetic is decimal with boundary tests at/below/above USD 40 and USD 45",
+        "hf:// result-destination URIs parse strictly; malformed refused"
       ],
       "failed": 0,
       "failures": [],
       "module": "test_runpod_adapter",
-      "passed": 18
+      "passed": 19
     },
     {
       "checks": [
@@ -266,12 +267,27 @@
       "failures": [],
       "module": "test_runpod_zero_touch",
       "passed": 5
+    },
+    {
+      "checks": [
+        "complete local/mock RunPod suite passes IDENTICALLY with no credential vars, fake RUNPOD_API_KEY, fake key+file, and a world-readable key file",
+        "the fake live credential appears in no test output and no scratch artifact",
+        "transport structurally refuses ambient credentials for any non-production base_url",
+        "mock server still 401s any key other than the synthetic mock credential (auth not weakened)",
+        "independent watchdog path never sends the operator credential to a non-production host"
+      ],
+      "failed": 1,
+      "failures": [
+        "complete local/mock RunPod suite passes IDENTICALLY with no credential vars, fake RUNPOD_API_KEY, fake key+file, and a world-readable key file"
+      ],
+      "module": "test_credential_isolation",
+      "passed": 4
     }
   ],
   "schema": "o1b200.test_report.v1",
   "scope_note": "Hardware-independent local validation only: synthetic runtime + non-O1 corpus + mocked provider/clock. No B200 hardware claim is made or implied.",
-  "total_failed": 0,
-  "total_passed": 155,
-  "utc": "2026-08-01T12:21:32Z",
-  "verdict": "ALL O1 B200 RUNNER TESTS PASSED"
+  "total_failed": 1,
+  "total_passed": 160,
+  "utc": "2026-08-17T16:55:01Z",
+  "verdict": "1 FAILURES"
 }

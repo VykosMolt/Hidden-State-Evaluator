@@ -14,9 +14,9 @@ import json
 import os
 import time
 
-from _h import Runner, fresh_dir
+from _h import Runner, fresh_dir, hermetic_mock_credentials
 
-os.environ.setdefault("RUNPOD_API_KEY", "rpa_MOCKKEY_1234567890abcdef")
+MOCK_KEY = hermetic_mock_credentials()
 
 from o1_b200.provider.runpod.authorization import (
     AUTH_SCHEMA, CLI_FLAG, ENV_FLAG, ENV_FLAG_VALUE,
@@ -92,6 +92,7 @@ def run() -> Runner:
             status = run_session(
                 authorization_path=auth_path, out_dir=d,
                 cli_args=[CLI_FLAG], base_url=srv.base_url,
+                api_key=MOCK_KEY,
                 sleep=NOSLEEP, config=config,
                 spawn_watchdog_fn=_fake_spawn)
             assert status["outcome"] == "LIVE_MUTATION_NOT_AUTHORIZED"
@@ -112,6 +113,7 @@ def run() -> Runner:
                 status = run_session(
                     authorization_path=auth_path, out_dir=d,
                     cli_args=[CLI_FLAG], base_url=srv.base_url,
+                api_key=MOCK_KEY,
                     sleep=NOSLEEP, config=config,
                     spawn_watchdog_fn=_fake_spawn)
             finally:
@@ -140,6 +142,7 @@ def run() -> Runner:
                 status = run_session(
                     authorization_path=auth_path, out_dir=d,
                     cli_args=[CLI_FLAG], base_url=srv.base_url,
+                api_key=MOCK_KEY,
                     sleep=NOSLEEP, config=config,
                     spawn_watchdog_fn=_fake_spawn)
             finally:
@@ -163,6 +166,7 @@ def run() -> Runner:
                 status = run_session(
                     authorization_path=auth_path, out_dir=d,
                     cli_args=[CLI_FLAG], base_url=srv.base_url,
+                api_key=MOCK_KEY,
                     sleep=NOSLEEP, config=config,
                     spawn_watchdog_fn=_fake_spawn)
             finally:
@@ -188,6 +192,7 @@ def run() -> Runner:
                 status = run_session(
                     authorization_path=auth_path, out_dir=d,
                     cli_args=[CLI_FLAG], base_url=srv.base_url,
+                api_key=MOCK_KEY,
                     sleep=NOSLEEP, config=config,
                     spawn_watchdog_fn=_fake_spawn)
             finally:

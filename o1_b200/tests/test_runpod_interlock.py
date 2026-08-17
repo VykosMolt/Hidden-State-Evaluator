@@ -5,9 +5,9 @@ import json
 import os
 import time
 
-from _h import Runner, fresh_dir
+from _h import Runner, fresh_dir, hermetic_mock_credentials
 
-os.environ.setdefault("RUNPOD_API_KEY", "rpa_MOCKKEY_1234567890abcdef")
+MOCK_KEY = hermetic_mock_credentials()
 
 from o1_b200.provider.runpod.adapter import RunpodV2Adapter
 from o1_b200.provider.runpod.authorization import (
@@ -84,7 +84,8 @@ def run() -> Runner:
 
     def unauthorized_adapter_cannot_mutate():
         with MockRunpodServer() as srv:
-            ad = RunpodV2Adapter(base_url=srv.base_url, sleep=NOSLEEP)
+            ad = RunpodV2Adapter(base_url=srv.base_url, sleep=NOSLEEP,
+                                 api_key=MOCK_KEY)
             for fn in (lambda: ad.create_instance(req, rendered),
                        lambda: ad.stop_instance("x"),
                        lambda: ad.terminate_instance("x")):

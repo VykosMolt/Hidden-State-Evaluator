@@ -26,17 +26,30 @@ import sys
 import time
 
 
+PRODUCTION_HOST = "api.runpod.io"
+
+
 def _redact(text: str) -> str:
-    key = os.environ.get("RUNPOD_API_KEY", "")
-    if key:
-        text = text.replace(key, "[REDACTED]")
+    for var in ("RUNPOD_API_KEY", "RUNPOD_MOCK_API_KEY"):
+        key = os.environ.get(var, "")
+        if key:
+            text = text.replace(key, "[REDACTED]")
     return text
+
+
+def _load_key(host: str) -> str | None:
+    # Same isolation invariant as transport.py: the operator credential is
+    # only ever sent to the production host.  Non-production hosts (mock
+    # servers in tests) require the separate synthetic RUNPOD_MOCK_API_KEY.
+    if host != PRODUCTION_HOST:
+        return os.environ.get("RUNPOD_MOCK_API_KEY")
+    return os.environ.get("RUNPOD_API_KEY")
 
 
 def _request(method: str, path: str, body: dict | None = None,
              host: str = "api.runpod.io", port: int | None = None,
              scheme: str = "https") -> tuple[int, str]:
-    key = os.environ.get("RUNPOD_API_KEY")
+    key = _load_key(host)
     if not key:
         return -1, "no credential"
     if scheme == "http":

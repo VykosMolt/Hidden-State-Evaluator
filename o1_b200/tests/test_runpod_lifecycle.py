@@ -6,9 +6,9 @@ import json
 import os
 import time
 
-from _h import Runner, fresh_dir
+from _h import Runner, fresh_dir, hermetic_mock_credentials
 
-os.environ.setdefault("RUNPOD_API_KEY", "rpa_MOCKKEY_1234567890abcdef")
+MOCK_KEY = hermetic_mock_credentials()
 
 from o1_b200.provider.runpod.adapter import RunpodAdapterError, RunpodV2Adapter
 from o1_b200.provider.runpod.artifact_store import (
@@ -70,7 +70,7 @@ def _authorized_adapter(srv, d, *, clock=None):
         cli_args=[CLI_FLAG], nonce_ledger=os.path.join(d, "nonces.txt"))
     kw = {"clock": clock} if clock else {}
     ad = RunpodV2Adapter(base_url=srv.base_url, authorization=auth,
-                         sleep=NOSLEEP, **kw)
+                         sleep=NOSLEEP, api_key=MOCK_KEY, **kw)
     ad.quote_instance(adapter_commit="test")
     return ad, req, rendered
 
@@ -244,7 +244,8 @@ def run() -> Runner:
         sc = Scenario()
         sc.api_key = "rpa_DIFFERENT_KEY_9999999999"
         with MockRunpodServer(sc) as srv:
-            ad2 = RunpodV2Adapter(base_url=srv.base_url, sleep=NOSLEEP)
+            ad2 = RunpodV2Adapter(base_url=srv.base_url, sleep=NOSLEEP,
+                                  api_key=MOCK_KEY)
             try:
                 ad2.get_instance("any")
             except ApiHttpError as exc:
