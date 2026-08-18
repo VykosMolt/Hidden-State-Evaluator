@@ -57,6 +57,7 @@ from .redaction import redact
 from .schema_check import check_live_identity, pinned_schema_sha256, verify_pinned_schema
 from .transport import (
     AmbiguousMutation, ApiHttpError, MutatingTransport, ReadOnlyTransport,
+    TransportError,
 )
 
 REST_PRODUCTION_URL = "https://api.runpod.io"
@@ -267,17 +268,20 @@ class RunpodV2Adapter:
             raise RunpodAdapterError(
                 f"a pod named {req.name!r} already exists "
                 f"({existing.id}); refusing duplicate creation")
-        self.authorization.consume_nonce()
-        # provider-side auto-terminate: a redundant backstop derived from the
-        # REMAINING allocation (never the full one), so the sum of all pods'
-        # unattended horizons can never exceed the compute budget even if
-        # this orchestrator dies mid-session
+        # Budget FIRST, then burn the slot: a refusal here creates no pod,
+        # so consuming an authorization slot for it would permanently spend
+        # one of a small, deliberately bounded set for nothing.
         limit = remaining_compute_seconds(
             self.accepted_quote["total_projected_hourly_usd"],
             self.session_spend_usd())
         if limit <= 0:
             raise BudgetViolation(
                 "no compute allocation remains; refusing to create a pod")
+        self.authorization.consume_nonce()
+        # provider-side auto-terminate: a redundant backstop derived from the
+        # REMAINING allocation (never the full one), so the sum of all pods'
+        # unattended horizons can never exceed the compute budget even if
+        # this orchestrator dies mid-session
         terminate_after = time.strftime(
             "%Y-%m-%dT%H:%M:%SZ",
             time.gmtime(self.clock() + limit + TERMINATE_AFTER_MARGIN_SECONDS))
@@ -295,13 +299,22 @@ class RunpodV2Adapter:
             terminate_after_utc=terminate_after)
         try:
             created = self.graphql.rent_interruptable(rent_input)
-        except AmbiguousMutation:
+        except (AmbiguousMutation, TransportError, SchemaIncompatibility) as exc:
+            # ANY uncertain outcome on a CREATE is ambiguous, not a clean
+            # failure: a 5xx from the provider's gateway can arrive after
+            # the pod was already created, and assuming otherwise leaves a
+            # billing pod whose id nothing recorded.  Reconcile first; never
+            # retry the create blindly.
             pod = self._reconcile_by_identity(req.name,
                                               self.authorization.launch_nonce)
             if pod is None:
                 raise RunpodAdapterError(
-                    "spot create response lost and no matching pod found; "
-                    "NOT retrying create — operator-visible halt")
+                    f"spot create outcome unknown ({type(exc).__name__}) and "
+                    f"no matching pod found; NOT retrying create — "
+                    f"operator-visible halt") from None
+            self._reconciliation_notes.append({
+                "event": "ADOPTED_AFTER_AMBIGUOUS_CREATE",
+                "pod_id": pod.id, "error": str(exc)[:200]})
             self._arm_spend()
             return pod
         pod_id = created.get("id")
@@ -428,21 +441,22 @@ class RunpodV2Adapter:
 
     def stop_instance(self, pod_id: str) -> None:
         m = self._require_authorized()
-        m.mutate("POST", f"/v2/pods/{pod_id}/action", {"action": "stop"})
+        m.mutate("POST", f"/v2/pods/{pod_id}/action", {"action": "stop"},
+                 releasing=True)
 
     def terminate_instance(self, pod_id: str) -> None:
         """Primary termination: permanent delete, never merely stop."""
         m = self._require_authorized()
         try:
             m.mutate("POST", f"/v2/pods/{pod_id}/action",
-                     {"action": "terminate"})
+                     {"action": "terminate"}, releasing=True)
         except ApiHttpError:
             # Deliberately swallowed for EVERY status: termination is
             # redundant by design and the DELETE below is the second,
             # independent path.  A raise here would skip it.
             pass
         try:
-            m.mutate("DELETE", f"/v2/pods/{pod_id}")
+            m.mutate("DELETE", f"/v2/pods/{pod_id}", releasing=True)
         except ApiHttpError as exc:
             if exc.status != 404:
                 raise

@@ -13,6 +13,20 @@ _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
+# The B200_REPLICA backend spawns worker_count processes and each one imports
+# torch fresh, which by default claims every core.  Several workers plus the
+# parent oversubscribe the machine by an order of magnitude and the wall clock
+# collapses (test_backends measured 84s alone versus 2515s under that
+# contention).  The env vars are what the spawned children read; the runtime
+# call fixes this process, whose torch may already be imported.  Safe for the
+# recorded values: the synthetic runtime is deliberately all-elementwise, so
+# no reduction ordering — and therefore no bit — depends on thread count.
+_THREADS = os.environ.setdefault("O1_B200_TEST_THREADS", "2")
+os.environ.setdefault("OMP_NUM_THREADS", _THREADS)
+os.environ.setdefault("MKL_NUM_THREADS", _THREADS)
+if "torch" in sys.modules:
+    sys.modules["torch"].set_num_threads(int(_THREADS))
+
 SCRATCH = os.environ.get(
     "O1_B200_TEST_SCRATCH",
     os.path.join(_ROOT, "o1_b200", "reports", "local_runs", "test_scratch"))

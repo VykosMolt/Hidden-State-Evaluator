@@ -1,6 +1,6 @@
 # O1 B300 Runner — Deployment Environment
 
-Release: **O1_B300_RUNNER v0.3.0**. Status: **B300 PREEMPTIBLE SOFTWARE
+Release: **O1_B300_RUNNER v0.3.1**. Status: **B300 PREEMPTIBLE SOFTWARE
 COMPLETE / HARDWARE UNVALIDATED**. Nothing here has run on real hardware yet.
 Target is a RunPod Pod, Secure Cloud, exactly one GPU, purchase mode
 INTERRUPTIBLE (spot): primary profile NVIDIA B300 SXM6 AC (Blackwell Ultra,
@@ -12,7 +12,7 @@ recorded. No spend is authorized by this directory.
 
 | file | purpose |
 |---|---|
-| `Dockerfile.b300` | reproducible image: CUDA 13.0 runtime (cuDNN 9.20.0.48, NCCL 2.29.7, triton 3.7.1), Python 3.14, pinned deps, sealed package + runner + axis package + cohort manifests baked in (checkpoint mounted, never baked); built by `scripts/build_b300_image.sh` as `o1-b300-runner:v0.3.0`, rebuilt local image id `sha256:13e023bc8b2a3d2cd9732b080fc83d633c34662f0766425ee864303ecbd8e0ef` (registry digest unresolved until pushed) |
+| `Dockerfile.b300` | reproducible image: CUDA 13.0 runtime (cuDNN 9.20.0.48, NCCL 2.29.7, triton 3.7.1), Python 3.14, pinned deps, sealed package + runner + axis package + cohort manifests baked in (checkpoint mounted, never baked); built by `scripts/build_b300_image.sh` as `o1-b300-runner:v0.3.1`, rebuilt local image id `sha256:37f749847fed72456c95a397ccfb9fc60c92223dfe1cee1c59f911481953dd9b` (registry digest unresolved until pushed) |
 | `requirements.b300.lock` + `WHEELS_B300.sha256` | exact pins (`torch==2.12.1+cu130`, `numpy==2.4.4`, `transformers==4.54.1` EXACT) plus a frozen local wheel set hash, asserted at build AND at runtime |
 | `start_b300.sh` | entrypoint -> `runner/production_entry.py`: env validation → artifact verification → hardware gate before anything scientific |
 | `hardware_gate.py` | enforces identity/CC/HBM/BF16/driver/arch and runs representative real workloads (BF16 GEMM, Ouro-RLTT forward/generation, backward+optimizer, O1 intervention hook + transport capture, checkpoint save/load) before anything scientific |

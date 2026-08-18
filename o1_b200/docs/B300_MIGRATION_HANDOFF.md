@@ -1,4 +1,4 @@
-# O1_B300_RUNNER v0.3.0 — pre-rental handoff
+# O1_B300_RUNNER v0.3.1 — pre-rental handoff
 
 **Status: B300 PREEMPTIBLE SOFTWARE COMPLETE / HARDWARE UNVALIDATED**
 

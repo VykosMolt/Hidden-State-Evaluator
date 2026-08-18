@@ -48,6 +48,10 @@ from .preflight import run_preflight
 from .redaction import redact, register_env_secrets
 
 
+class DeterministicPodFailure(RuntimeError):
+    """The pod reported a reproducible failure; reacquiring cannot help."""
+
+
 def load_session_config(root: str) -> dict:
     """Deployment facts resolved before launch (image digest, identities)."""
     path = os.path.join(root, "o1_b200", "provider", "runpod",
@@ -192,6 +196,16 @@ def run_session(*, authorization_path: str, out_dir: str,
     step("READONLY_PREFLIGHT", pre["verdict"])
     if pre["verdict"] != "PASS":
         return finish("REFUSED_PREFLIGHT", preflight=pre)
+    owned = (pre.get("checks") or {}).get("owned_pods") or {}
+    if owned.get("unexpected_active_billable_pod"):
+        # An active pod we did not expect is either a leftover from an
+        # earlier run or someone else's work.  Launching alongside it would
+        # add a second billable resource to an account already spending, so
+        # refuse and name it rather than proceed.
+        return finish("REFUSED_UNEXPECTED_ACTIVE_POD", preflight=pre,
+                      error=f"account already has active pod(s) "
+                            f"{owned.get('active_pods')}; terminate or "
+                            f"account for them before launching")
     if pre.get("capacity_unavailable_now"):
         # market state, not a software failure — but nothing can be rented
         # right now, so refuse cleanly before any authorization/mutation
@@ -261,8 +275,19 @@ def run_session(*, authorization_path: str, out_dir: str,
         """
         for attempt_i in range(retries):
             try:
-                return "ZERO_TOUCH_COMPLETE" in adapter.get_container_logs(
-                    pod.id, tail=50)
+                tail = adapter.get_container_logs(pod.id, tail=50)
+                if "ZERO_TOUCH_ABORTED_AT_" in tail:
+                    # The pod reached a DETERMINISTIC verdict and said so.
+                    # Reacquiring cannot help — a fresh pod runs the same
+                    # gates against the same artifacts and fails identically
+                    # — so this must never be mistaken for an eviction.
+                    marker = tail.split("ZERO_TOUCH_ABORTED_AT_")[-1].split()[0]
+                    raise DeterministicPodFailure(
+                        f"the pod aborted deterministically at {marker}; "
+                        f"reacquisition would repeat it")
+                return "ZERO_TOUCH_COMPLETE" in tail
+            except DeterministicPodFailure:
+                raise
             except Exception:  # noqa: BLE001 - log endpoint may lag
                 if attempt_i + 1 < retries:
                     sleep(2.0)
@@ -411,18 +436,31 @@ def run_session(*, authorization_path: str, out_dir: str,
             status["result_digest_verified"] = witness_state == "VERIFIABLE"
             if witness_state == "ERROR":
                 step("RESULT_WITNESS_UNAVAILABLE", expected)
+        except DeterministicPodFailure as exc:
+            step("DETERMINISTIC_POD_FAILURE", exc)
+            controller.collect_logs(pod_id)
+            confirmed = controller.terminate_and_confirm(pod_id)
+            return finish("ABORTED_DETERMINISTIC_POD_FAILURE",
+                          termination_confirmed=confirmed,
+                          acquisitions_used=attempt, error=redact(str(exc)))
         except BudgetViolation as exc:
             step("BUDGET_STOP", exc)
+            confirmed = True
             if pod_id is not None:
-                controller.terminate_and_confirm(pod_id)
-            return finish("ABORTED_BUDGET", error=redact(str(exc)))
+                confirmed = controller.terminate_and_confirm(pod_id)
+            return finish("ABORTED_BUDGET", error=redact(str(exc)),
+                          termination_confirmed=confirmed,
+                          acquisitions_used=attempt)
         except AuthorizationError as exc:
             # creation-slot exhaustion or expiry mid-session
             step("AUTHORIZATION_STOP", exc)
+            confirmed = True
             if pod_id is not None:
-                controller.terminate_and_confirm(pod_id)
+                confirmed = controller.terminate_and_confirm(pod_id)
             return finish("ABORTED_AUTHORIZATION_EXHAUSTED",
-                          error=redact(str(exc)))
+                          error=redact(str(exc)),
+                          termination_confirmed=confirmed,
+                          acquisitions_used=attempt)
         except (LifecycleError, Exception) as exc:  # noqa: BLE001
             step("SESSION_FAILURE", exc)
             if pod_id is not None:

@@ -209,13 +209,21 @@ class RunpodGraphQlClient:
                 "LIVE_MUTATION_NOT_AUTHORIZED: GraphQL mutation requires a "
                 "verified LiveMutationAuthorization")
         self._authorization.recheck()
+        # _parse MUST be inside the try.  _send_once turns an HTTPError into
+        # a (status, raw) return, so a 5xx or an {"errors": ...} body from a
+        # CREATE mutation surfaces here — and the pod may well exist anyway.
+        # Treating that as a plain failure (rather than ambiguous) skipped
+        # reconciliation entirely and could leave a billing pod whose id was
+        # never recorded.
         try:
             status, raw = self._send_once(document, variables)
+            return self._parse(status, raw)
+        except AmbiguousMutation:
+            raise
         except TransportError as exc:
             raise AmbiguousMutation(
-                f"GraphQL mutation response lost ({exc}); reconcile owned "
+                f"GraphQL mutation outcome unknown ({exc}); reconcile owned "
                 f"resources before any retry") from None
-        return self._parse(status, raw)
 
     # ---------------- pinned operations ----------------
 

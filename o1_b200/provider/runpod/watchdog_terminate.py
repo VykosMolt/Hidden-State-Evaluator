@@ -44,7 +44,23 @@ def _load_key(host: str, scheme: str = "https") -> str | None:
     # requires the separate synthetic RUNPOD_MOCK_API_KEY.
     if (host, scheme) != (PRODUCTION_HOST, "https"):
         return os.environ.get("RUNPOD_MOCK_API_KEY")
-    return os.environ.get("RUNPOD_API_KEY")
+    key = os.environ.get("RUNPOD_API_KEY")
+    if key:
+        return key
+    # RUNPOD_API_KEY_FILE is a documented, supported credential form; a
+    # watchdog that ignored it would arm silently and then be unable to
+    # terminate anything — the independent path dead exactly when needed.
+    path = os.environ.get("RUNPOD_API_KEY_FILE")
+    if path:
+        try:
+            st = os.stat(path)
+            if st.st_mode & 0o077:
+                return None      # not owner-only: refuse, do not weaken
+            with open(path, encoding="utf-8") as fh:
+                return fh.read().strip() or None
+        except OSError:
+            return None
+    return None
 
 
 def _request(method: str, path: str, body: dict | None = None,

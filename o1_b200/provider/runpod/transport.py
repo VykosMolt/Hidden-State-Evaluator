@@ -213,17 +213,26 @@ class MutatingTransport(_BaseTransport):
         super().__init__(**kw)
         self._authorization = authorization
 
-    def mutate(self, method: str, path: str, body: dict | None = None):
-        self._authorization.recheck()   # raises LIVE_MUTATION_NOT_AUTHORIZED
+    def mutate(self, method: str, path: str, body: dict | None = None,
+               *, releasing: bool = False):
+        # releasing=True: a stop/terminate/delete, which an expired
+        # authorization must still permit (see LiveMutationAuthorization
+        # .recheck).  Creation remains strictly gated.
+        self._authorization.recheck(releasing=releasing)
         method = method.upper()
         if method == "GET":
             return self.get(path)
         if method not in ("POST", "PATCH", "DELETE", "PUT"):
             raise TransportError(f"unsupported method {method}")
+        # A lost response is ambiguous: the request may have been applied
+        # remotely.  An HTTP *status* is NOT converted here — terminate
+        # relies on seeing ApiHttpError(404/409) to drive its redundant
+        # DELETE path.  Callers whose mutation CREATES a billable resource
+        # must treat an ApiHttpError as ambiguous too and reconcile; see
+        # adapter.create_instance.
         try:
             status, raw, _ = self._send_once(method, path, body)
         except TransportError as exc:
-            # outcome unknown: the request may have been applied remotely
             raise AmbiguousMutation(
                 f"{method} {path}: response lost ({exc}); reconcile owned "
                 f"resources before any retry") from None

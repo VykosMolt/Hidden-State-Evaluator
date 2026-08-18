@@ -171,15 +171,50 @@ class HfDurableStore(DurableStore):
         return list(out.get("files") or [])
 
 
+class _PrefixedStore(DurableStore):
+    """Scopes every key of an inner store under a session prefix.
+
+    Without this, ``hf://ns/repo/<session>`` silently collapsed to
+    ``ns/repo`` and every key became repo-root-fixed — so a run intended as
+    fresh would reuse the previous session's one-time precommit and restore
+    its rows, with no way to start clean short of purging the repository.
+    """
+
+    def __init__(self, inner: DurableStore, prefix: str):
+        self.inner = inner
+        self.prefix = prefix.strip("/")
+
+    def _k(self, rel: str) -> str:
+        return f"{self.prefix}/{rel.lstrip('/')}" if self.prefix else rel
+
+    def push_file(self, local_path: str, remote_rel: str) -> dict:
+        out = dict(self.inner.push_file(local_path, self._k(remote_rel)))
+        out["remote"] = remote_rel
+        return out
+
+    def fetch_file(self, remote_rel: str, local_path: str) -> dict:
+        return self.inner.fetch_file(self._k(remote_rel), local_path)
+
+    def list_prefix(self, remote_prefix: str) -> list[str]:
+        scoped = self._k(remote_prefix)
+        cut = len(self.prefix) + 1 if self.prefix else 0
+        return [rel[cut:] for rel in self.inner.list_prefix(scoped)]
+
+
 def store_for_destination(destination: str) -> DurableStore:
-    """hf://<ns>/<repo>/<prefix-ignored> -> HfDurableStore; else local dir."""
+    """hf://<ns>/<repo>[/<session-prefix>] -> HfDurableStore; else local dir.
+
+    A trailing path is a SESSION SCOPE and is honoured, not discarded.
+    """
     if destination.startswith("hf://"):
         body = destination[len("hf://"):]
-        parts = body.split("/")
-        if len(parts) < 2 or not all(parts[:2]):
+        parts = [p for p in body.split("/") if p]
+        if len(parts) < 2:
             raise DurabilityError(f"malformed hf destination {destination!r}")
-        return HfDurableStore("/".join(parts[:2]),
-                              token=os.environ.get("HF_TOKEN"))
+        inner = HfDurableStore("/".join(parts[:2]),
+                               token=os.environ.get("HF_TOKEN"))
+        prefix = "/".join(parts[2:])
+        return _PrefixedStore(inner, prefix) if prefix else inner
     return LocalDurableStore(destination)
 
 

@@ -82,7 +82,17 @@ COPY o1_runs/O1_V2_AXIS_BANK_REDESIGN/calibration_seed_matrix.json \
      o1_runs/O1_V2_AXIS_BANK_REDESIGN/FREEZE_MANIFEST.precalibration.json \
      /opt/o1_b200/o1_runs/O1_V2_AXIS_BANK_REDESIGN/
 
-ENV PYTHONPATH=/opt/o1_b200 \
+# Foundation Learner source, staged into build_ctx by scripts/build_b300_image.sh
+# (it lives in a separate worktree, outside this build context).  Without it a
+# combined O1 -> FL rental acquires an accelerator and then refuses at the FL
+# handover.  Only the source is baked: the ~480 MB pregen episode corpus is
+# fetched and hash-verified on the pod by campaign/fetch_pregen.py, exactly as
+# the checkpoint is.  Layout puts the package under /opt/foundation_learner so
+# that root is the import root and deploy/fl_b200_entry.sh resolves it as its
+# own ROOT.
+COPY build_ctx/foundation_learner /opt/foundation_learner/foundation_learner
+
+ENV PYTHONPATH=/opt/o1_b200:/opt/foundation_learner \
     PATH=/opt/venv/bin:$PATH
 
 # The checkpoint mounts at /artifacts/ouro_rltt_local and is tree-hash

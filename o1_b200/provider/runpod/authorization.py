@@ -189,14 +189,23 @@ class LiveMutationAuthorization:
         return self._doc["max_pod_creations"] - self._consumed_count(
             self._nonce_ledger, self._doc["launch_nonce"])
 
-    def recheck(self) -> None:
-        """Re-validated before EVERY mutating request."""
+    def recheck(self, *, releasing: bool = False) -> None:
+        """Re-validated before EVERY mutating request.
+
+        ``releasing=True`` marks a mutation that only ever RELEASES
+        resources (stop/terminate/delete).  Expiry must not disable those:
+        a session that outlives its authorization — routine once eviction
+        and reacquisition stretch a run past a deliberately short expiry —
+        would otherwise lose its primary termination path at exactly the
+        moment it needs to shut a billing pod down, leaving only the
+        watchdog's deadline. Acquisition stays strictly gated.
+        """
         if os.environ.get(ENV_FLAG) != ENV_FLAG_VALUE:
             raise AuthorizationError(f"{ENV_FLAG} unset mid-run")
         import calendar
         expires = calendar.timegm(
             time.strptime(self._doc["expires_utc"], "%Y-%m-%dT%H:%M:%SZ"))
-        if expires <= self._now():
+        if expires <= self._now() and not releasing:
             raise AuthorizationError("authorization expired mid-run")
 
     @property

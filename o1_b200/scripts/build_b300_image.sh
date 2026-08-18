@@ -6,11 +6,41 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WHEELS_SRC="${O1_B300_WHEELS:-/home/moloch/b200_build_cache/wheels_b300}"
 IMAGE_NAME="${1:-o1-b300-runner}"
-VERSION_TAG="${2:-v0.3.0}"
+VERSION_TAG="${2:-v0.3.1}"
 OUT="$ROOT/o1_b200/provider/runpod/CONTAINER_IMAGE_RECORD.json"
 
 cd "$ROOT"
 rm -rf build_ctx && mkdir -p build_ctx/wheels
+
+# Foundation Learner source lives in a separate worktree, outside this build
+# context, so it is staged in.  Refused rather than skipped by default: an
+# image without it acquires an accelerator and then refuses at the FL
+# handover, which is the expensive way to discover a packaging gap.  Set
+# O1_B300_WITHOUT_FL=1 to deliberately build an O1-only image.
+FL_SRC="${O1_B300_FL_SOURCE:-/home/moloch/ouro_worktrees/foundation-learner-b200-v0/foundation_learner}"
+if [[ "${O1_B300_WITHOUT_FL:-0}" == "1" ]]; then
+  FL_TREE_SHA="ABSENT_BY_REQUEST (O1_B300_WITHOUT_FL=1; combined sessions unsupported by this image)"
+  mkdir -p build_ctx/foundation_learner
+else
+  if [[ ! -d "$FL_SRC" ]]; then
+    echo "REFUSED: FL source $FL_SRC is absent; a combined O1 -> FL session" >&2
+    echo "         cannot run from the resulting image.  Set" >&2
+    echo "         O1_B300_FL_SOURCE, or O1_B300_WITHOUT_FL=1 to build an" >&2
+    echo "         O1-only image deliberately." >&2
+    exit 2
+  fi
+  # reports/ is local run output (~0.5 GB) and never belongs in the image;
+  # the pregen corpus is fetched and hash-verified on the pod instead.
+  tar -C "$(dirname "$FL_SRC")" -cf - \
+      --exclude="reports" --exclude="__pycache__" --exclude="*.pyc" \
+      "$(basename "$FL_SRC")" | tar -C build_ctx -xf -
+  if [[ ! -x build_ctx/foundation_learner/deploy/fl_b200_entry.sh ]]; then
+    echo "REFUSED: staged FL source has no executable deploy/fl_b200_entry.sh" >&2
+    exit 2
+  fi
+  FL_TREE_SHA=$(cd build_ctx/foundation_learner && find . -type f -print0 \
+    | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)
+fi
 
 # verify the frozen wheel set against its hash manifest BEFORE building
 ( cd "$WHEELS_SRC" && sha256sum --check --quiet WHEELS_B300.sha256 )
@@ -71,6 +101,8 @@ record = {
   "dockerfile_sha256": "$DOCKERFILE_SHA",
   "dependency_lock_sha256": "$LOCK_SHA",
   "wheelset_manifest_sha256": "$WHEELSET_SHA",
+  "foundation_learner_source_sha256": "$FL_TREE_SHA",
+  "foundation_learner_layout": "/opt/foundation_learner/foundation_learner (import root /opt/foundation_learner); pregen episode corpus NOT baked — campaign/fetch_pregen.py materialises and hash-verifies it on the pod",
   "torch_wheel_sha256": "$TORCH_WHEEL_SHA",
   "triton_wheel_sha256": "$TRITON_WHEEL_SHA",
   "environment": json.loads('''$VERSIONS'''),

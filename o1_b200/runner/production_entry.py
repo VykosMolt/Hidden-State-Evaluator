@@ -97,8 +97,10 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
         # the manifest that describes them; otherwise the image-baked
         # manifest is used.
         staged = os.environ.get("O1_B200_ARTIFACT_SOURCE", "").strip()
+        # the POD manifest: container paths, and the only one whose
+        # entries can resolve inside the image
         baked = os.path.join(ROOT, "o1_b200", "deploy",
-                             "TRANSFER_MANIFEST.json")
+                             "POD_TRANSFER_MANIFEST.json")
         default_manifest = baked
         if staged:
             candidate = (staged if staged.endswith(".json")
@@ -375,8 +377,25 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
                 "key": key, "prior_commitments": len(existing)}
 
     def affordability(ctx):
-        rows_per_hour = float(
-            ctx["selected_backend"]["completed_rows_per_hour"])
+        # The sealed v2.1 orchestrator takes NO backend/worker/batch
+        # parameter — it builds its own single-row serial backend. So the
+        # calibration runs at the REFERENCE_SERIAL rate no matter which
+        # configuration the frozen policy selected, and projecting from the
+        # selected (fastest, batched) rate would under-estimate the time by
+        # the whole batching speed-up and pass a gate that cannot hold.
+        eq_ref = "REFERENCE_SERIAL_w1_b1"
+        serial = next((c for c in ctx.get("benchmark", [])
+                       if c.get("config_id") == eq_ref), None)
+        if serial is None:
+            raise ProductionEntryError(
+                f"no measured {eq_ref} throughput; the affordability gate "
+                f"cannot be projected from an unmeasured rate")
+        rows_per_hour = float(serial["completed_rows_per_hour"])
+        ctx["affordability_rate_basis"] = {
+            "config_id": eq_ref, "rows_per_hour": rows_per_hour,
+            "why": ("the sealed orchestrator generates serially; the "
+                    "selected backend governs the non-O1 benchmark and the "
+                    "precommit record, not calibration throughput")}
         done = _existing_row_count(os.path.join(out_dir, "o1_records.jsonl"))
         projected = (O1_ROWS_TOTAL - done) / max(rows_per_hour, 1e-9) * 3600
         return affordability_gate(
@@ -478,6 +497,46 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
             except Exception as exc:  # noqa: BLE001 - provenance only
                 _log_event(out_dir, "PROGRESS_RESTORE_FAILED",
                            error=str(exc)[:200])
+        # The sealed orchestrator re-generates baseline stream 0 on resume
+        # and demands BITWISE-identical tokens against the stored row.  A
+        # different accelerator architecture (sm_103 vs sm_100) can change
+        # those bits, which would poison the durable dataset permanently,
+        # so the profile that produced the existing rows is binding.
+        profile_key_path = "durable_o1_records/PROFILE.json"
+        if _existing_row_count(records_path) > 0:
+            try:
+                import tempfile as _tf
+                if profile_key_path in store.list_prefix("durable_o1_records"):
+                    with _tf.TemporaryDirectory() as _t:
+                        _p = os.path.join(_t, "PROFILE.json")
+                        store.fetch_file(profile_key_path, _p)
+                        with open(_p, encoding="utf-8") as fh:
+                            bound = json.load(fh).get("profile")
+                    if bound and bound != profile_key:
+                        raise ProductionEntryError(
+                            f"durable rows were generated on {bound} but this "
+                            f"pod is {profile_key}; the sealed resume replays "
+                            f"baselines bitwise, so a different accelerator "
+                            f"architecture would corrupt the dataset. "
+                            f"Reacquire {bound}, or start a new session "
+                            f"prefix for a clean run.")
+            except ProductionEntryError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - absent marker is fine
+                _log_event(out_dir, "PROFILE_BINDING_UNREADABLE",
+                           error=str(exc)[:200])
+        else:
+            marker = os.path.join(out_dir, "PROFILE.json")
+            atomic_write_text(marker, json.dumps(
+                {"profile": profile_key,
+                 "why": "binds the accelerator architecture that produced the "
+                        "first rows; the sealed resume replays baselines "
+                        "bitwise"}, indent=2, sort_keys=True) + "\n")
+            try:
+                store.push_file(marker, profile_key_path)
+            except Exception as exc:  # noqa: BLE001
+                _log_event(out_dir, "PROFILE_BINDING_PUBLISH_FAILED",
+                           error=str(exc)[:200])
         run_root = os.path.join(ROOT, "o1_runs", "O1_V2_AXIS_BANK_REDESIGN")
         # 2. replacement manifest (deployed torch) + pod artifact map +
         #    regenerated sealed-format precommit bound to them
@@ -545,8 +604,12 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
             "--progress", progress_path,
             "--boundary-cache-dir", os.path.join(out_dir, "boundary_cache"),
         ]
+        # binary stdout + explicit decoding: text=True decodes strict UTF-8,
+        # so one stray byte from a CUDA/NCCL/driver message would raise
+        # UnicodeDecodeError inside the drain and strand the child on a full
+        # pipe — the exact hang the drain exists to prevent.
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, text=True,
+                                stderr=subprocess.STDOUT,
                                 env=env, cwd=sealed_import.SEALED_DIR)
         last_mirrored = _existing_row_count(records_path)
         log_path = os.path.join(out_dir, "o1_orchestrator.log")
@@ -568,11 +631,11 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
             """
             log = None
             try:
-                log = open(log_path, "a", encoding="utf-8")
+                log = open(log_path, "ab")
             except Exception as exc:  # noqa: BLE001
                 drain_state["error"] = repr(exc)[:200]
             try:
-                for line in proc.stdout:
+                for line in proc.stdout:          # bytes; never decoded
                     if log is not None:
                         try:
                             log.write(line)
@@ -749,8 +812,15 @@ def main() -> int:
     machine = ZeroTouchStateMachine(provider, out_dir, handlers,
                                     watchdog=watchdog, clock=clock)
     status = machine.run()
-    print("ZERO_TOUCH_COMPLETE" if status["outcome"] == "COMPLETE"
-          else f"ZERO_TOUCH_{status['outcome']}")
+    # The off-pod driver greps these markers.  Both are written literally
+    # (not assembled) so the marker the driver looks for and the marker the
+    # pod emits cannot drift apart: a deterministic abort mistaken for an
+    # eviction costs a full reacquisition cycle.
+    if status["outcome"] == "COMPLETE":
+        print("ZERO_TOUCH_COMPLETE")
+    else:
+        print("ZERO_TOUCH_ABORTED_AT_" + str(
+            status.get("failed_state") or status["outcome"]))
     return 0 if status["outcome"] == "COMPLETE" else 1
 
 

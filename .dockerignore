@@ -1,4 +1,10 @@
-.git
-**/__pycache__
+# Bytecode must never enter the image: it is non-deterministic, it makes
+# tree hashes drift as a side effect of merely importing a module, and the
+# sealed import bridge refuses stale bytecode outright.
+**/__pycache__/
 **/*.pyc
-o1_b200/reports/local_runs
+# Regenerable per-run scratch.  NOTE: build_ctx/ is NOT excluded — the
+# build script stages the frozen wheels there and the image COPYs them.
+o1_b200/reports/local_runs/
+venv/
+.git/

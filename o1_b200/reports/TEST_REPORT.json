@@ -307,6 +307,35 @@
     },
     {
       "checks": [
+        "the pod manifest names CONTAINER paths only (a build-host path here fails every artifact at startup)",
+        "the host manifest is build provenance and says so, so the two cannot be confused again",
+        "every pod artifact is either baked into the image or on the fetch list \u2014 nothing is expected to appear by magic",
+        "the checkpoint \u2014 never in the image, never in Git \u2014 is on the pod's fetch list",
+        "artifact fetch refuses a missing/!hf:// staging source rather than starting a session that cannot verify",
+        "a pod whose artifacts are already mounted needs no staging source and transfers nothing",
+        "the fetch asks the isolated helper for exactly the missing artifacts",
+        "the entrypoint fetches, then verifies the pod manifest, then validates, then hands over",
+        "the FL dispatch target in the entrypoint is where the image actually puts the FL entry script",
+        "the FL source the image COPYs is actually staged by the build script",
+        "the FL import root is on the image PYTHONPATH",
+        "a combined session whose FL entry is absent refuses instead of silently running O1 only",
+        "the scope preflight refuses a token that can read the staging repo but not write the durable destination",
+        "the same repo in both directions is still write-probed",
+        "the scope preflight refuses a session whose durability it cannot verify at all",
+        "a mounted durable destination is proven by actually writing to it",
+        "the scope preflight requires a token only when a hub repo is actually named",
+        "the entrypoint proves the credential scope before fetching anything",
+        "a deterministic pod abort is recognised and stops the session instead of driving reacquisition",
+        "a session prefix in the durable destination scopes every key, so a fresh run cannot silently resume an old one",
+        "an expired authorization still permits TERMINATION while refusing acquisition"
+      ],
+      "failed": 0,
+      "failures": [],
+      "module": "test_launch_path",
+      "passed": 21
+    },
+    {
+      "checks": [
         "eviction while RUNNING -> remnant terminated, fresh spot pod reacquired, session COMPLETE (2 acquisitions)",
         "eviction during provisioning/startup -> clean reacquisition, session COMPLETE",
         "EXITED with the completion marker is COMPLETE, not an eviction",
@@ -383,7 +412,7 @@
   "schema": "o1b200.test_report.v1",
   "scope_note": "Hardware-independent local validation only: synthetic runtime + non-O1 corpus + mocked provider/clock. No B200 hardware claim is made or implied.",
   "total_failed": 0,
-  "total_passed": 235,
-  "utc": "2026-08-18T07:42:37Z",
+  "total_passed": 256,
+  "utc": "2026-08-18T11:24:07Z",
   "verdict": "ALL O1 B200 RUNNER TESTS PASSED"
 }
