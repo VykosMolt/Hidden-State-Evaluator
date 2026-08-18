@@ -27,6 +27,7 @@ import sys
 
 from .hf_transfer import child_env
 from .o1_isolation import MODE_READ, MODE_WRITE, guard_path
+from .redaction import redact
 
 
 class ScopeError(RuntimeError):
@@ -61,9 +62,9 @@ def _run_helper(repo: str, mode: str, timeout: float) -> dict:
         capture_output=True, text=True, timeout=timeout,
         env=child_env(os.environ.get("HF_TOKEN")))
     if proc.returncode != 0:
-        raise ScopeError(
+        raise ScopeError(redact(
             f"{mode.upper()} scope check failed for {repo}: "
-            f"{_helper_error(proc.stdout + proc.stderr)}")
+            f"{_helper_error(proc.stdout + proc.stderr)}"))
     try:
         return json.loads(proc.stdout.strip().splitlines()[-1])
     except (json.JSONDecodeError, IndexError):
@@ -73,8 +74,10 @@ def _run_helper(repo: str, mode: str, timeout: float) -> dict:
 
 def _check_local_write(path: str) -> dict:
     # The durable mirror is FL's own; routing it through the guard means an
-    # operator who points it at an O1 root is refused here rather than
-    # discovering the isolation violation mid-session.
+    # operator who points it at one of the FROZEN O1 roots is refused here
+    # rather than discovering the violation mid-session.  (Roots discovered
+    # later from the O1 manifests are not yet known at this point, so this
+    # is the frozen set only.)
     probe = os.path.join(guard_path(path, MODE_WRITE), ".preflight_write_probe")
     try:
         os.makedirs(path, exist_ok=True)

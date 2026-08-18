@@ -197,3 +197,67 @@ def test_the_fl_entry_checks_scope_before_downloading_the_corpus():
         "the scope check must precede the ~480 MB corpus download")
     assert text.index("fetch_pregen") < text.index("session_supervisor"), (
         "the corpus must be on the pod before the supervisor starts")
+
+
+# --------------------------------------------------- O1 markers must survive
+#
+# The supervisor runs O1's entry with capture_output=True.  O1 prints its
+# completion markers to ITS stdout, and the off-pod driver greps the
+# CONTAINER log for them — so a captured-and-discarded marker turned a
+# successful O1 phase into an "eviction" and bought a redundant, paid
+# reacquisition.
+
+
+def test_the_supervisor_re_emits_the_o1_completion_marker(capsys):
+    from foundation_learner.campaign import session_supervisor as ss
+
+    class Proc:
+        returncode = 0
+        stdout = "some log\nZERO_TOUCH_COMPLETE\n"
+        stderr = ""
+
+    class Sup:
+        payload = {}
+        clock = type("C", (), {"monotonic": staticmethod(lambda: 0.0)})()
+        runner = staticmethod(lambda *a, **k: Proc())
+        _child_env = ss.SessionSupervisor._child_env
+
+    record = ss.SessionSupervisor._run_command(
+        Sup(), ["true"], state="RUN_O1_CALIBRATION")
+    assert "ZERO_TOUCH_COMPLETE" in capsys.readouterr().out, (
+        "the marker never reached the container log, so the driver would "
+        "classify a completed pod as evicted and pay to reacquire")
+    assert "ZERO_TOUCH_COMPLETE" in record["stdout_tail"]
+
+
+def test_the_deterministic_abort_marker_also_survives(capsys):
+    from foundation_learner.campaign import session_supervisor as ss
+
+    class Proc:
+        returncode = 2
+        stdout = "ZERO_TOUCH_ABORTED_AT_ENVIRONMENT_VERIFY\n"
+        stderr = "boom\n"
+
+    class Sup:
+        payload = {}
+        clock = type("C", (), {"monotonic": staticmethod(lambda: 0.0)})()
+        runner = staticmethod(lambda *a, **k: Proc())
+        _child_env = ss.SessionSupervisor._child_env
+
+    ss.SessionSupervisor._run_command(Sup(), ["true"], state="X")
+    captured = capsys.readouterr()
+    assert "ZERO_TOUCH_ABORTED_AT_" in captured.out, (
+        "a reproducible failure would drive reacquisition instead of "
+        "stopping the session")
+    assert "boom" in captured.err
+
+
+def test_termination_is_bounded_by_a_timeout():
+    """A hung terminate blocks the supervisor on a billing accelerator."""
+    from foundation_learner.campaign import session_supervisor as ss
+    import inspect
+
+    assert ss.TERMINATE_TIMEOUT_SECONDS > 0
+    src = inspect.getsource(ss.SessionSupervisor.state_TERMINATE_ACCELERATOR)
+    assert "timeout" in src, (
+        "the single most expensive command in the system runs unbounded")

@@ -9,6 +9,20 @@ import pytest
 
 from foundation_learner.campaign import fetch_pregen as fp
 
+#: The real anchor, captured before the autouse fixture below neutralises it.
+REAL_ANCHOR_DIGESTS = fp.anchor_digests
+
+
+@pytest.fixture(autouse=True)
+def _synthetic_trees_have_no_package_anchor(monkeypatch):
+    """These fixtures build SYNTHETIC corpora, not the frozen one.
+
+    The package anchor pins the digests of the REAL corpus's checksum files,
+    so every synthetic tree here would (correctly) be refused by it.  Tests
+    that exercise the anchor itself re-enable it explicitly.
+    """
+    monkeypatch.setattr(fp, "anchor_digests", lambda *a, **k: {})
+
 
 def _sha(path: str) -> str:
     h = hashlib.sha256()
@@ -43,6 +57,68 @@ def build_tree(root: str, *, sealed_shard: bool = True) -> dict:
               encoding="utf-8") as fh:
         json.dump({"schema": "fl.pregen_manifest.v1"}, fh)
     return {"shards": shards}
+
+
+# ------------------------------------------------------------------- anchoring
+#
+# Verifying shards against a SHARD_SUMS.json taken from the same download
+# proves only internal consistency: whoever controls the staging repo
+# controls the data AND its checksums.  The trust anchor is the digest baked
+# into the committed FL package manifest.
+
+
+def test_the_package_manifest_really_pins_the_corpus_checksums():
+    anchors = REAL_ANCHOR_DIGESTS()
+    assert set(anchors) == {"shard_sums_sha256", "pregen_manifest_sha256"}, (
+        "the FL package no longer pins the corpus checksum files, so a "
+        "re-staged corpus could not be distinguished from the frozen one")
+
+
+def test_a_reseeded_corpus_is_refused_even_though_it_is_self_consistent(
+        tmp_path, monkeypatch):
+    """The exact attack the anchor exists to stop."""
+    root = str(tmp_path / "pregen")
+    build_tree(root)
+    # a corpus regenerated with a different seed: different bytes, and a
+    # SHARD_SUMS.json that agrees with them perfectly
+    path = os.path.join(root, "episodes/TRAIN/family_a.jsonl")
+    with open(path, "wb") as fh:
+        fh.write(b'{"a": 42}\n')
+    sums_path = os.path.join(root, fp.SHARD_SUMS_REL)
+    with open(sums_path, encoding="utf-8") as fh:
+        sums = json.load(fh)
+    for shard in sums["shards"]:
+        if shard["path"].endswith("family_a.jsonl"):
+            shard["sha256"] = _sha(path)
+            shard["plaintext_sha256"] = _sha(path)
+            shard["bytes"] = os.path.getsize(path)
+    with open(sums_path, "w", encoding="utf-8") as fh:
+        json.dump(sums, fh)
+    fp.verify_tree(root)          # self-consistent: passes with no anchor
+    monkeypatch.setattr(fp, "anchor_digests",
+                        lambda *a, **k: {"shard_sums_sha256": "0" * 64})
+    with pytest.raises(fp.PregenFetchError, match="pinned by the FL package"):
+        fp.verify_tree(root)
+
+
+def test_a_shard_path_cannot_escape_the_corpus_root(tmp_path):
+    root = str(tmp_path / "pregen")
+    build_tree(root)
+    sums_path = os.path.join(root, fp.SHARD_SUMS_REL)
+    with open(sums_path, encoding="utf-8") as fh:
+        sums = json.load(fh)
+    sums["shards"][0]["path"] = "../../etc/passwd"
+    with open(sums_path, "w", encoding="utf-8") as fh:
+        json.dump(sums, fh)
+    with pytest.raises(fp.PregenFetchError, match="escapes the corpus root"):
+        fp.verify_tree(root)
+
+
+def test_a_pregen_root_that_is_a_file_refuses_cleanly(tmp_path):
+    root = tmp_path / "pregen"
+    root.write_text("not a directory", encoding="utf-8")
+    with pytest.raises(fp.PregenFetchError, match="not a directory"):
+        fp.fetch("hf://ns/repo", str(root), runner=lambda _a: {})
 
 
 # ---------------------------------------------------------------- verification

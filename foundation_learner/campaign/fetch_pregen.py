@@ -30,11 +30,34 @@ import sys
 
 from .hf_transfer import child_env
 from .o1_isolation import MODE_READ, MODE_WRITE, guard_path
+from .redaction import redact
 
 DEFAULT_PREGEN_ROOT = "/workspace/foundation_learner/artifacts_fl/pregen"
 DEFAULT_REMOTE_PREFIX = "artifacts_fl/pregen"
 SHARD_SUMS_REL = os.path.join("MANIFESTS", "SHARD_SUMS.json")
 PREGEN_MANIFEST_REL = os.path.join("MANIFESTS", "PREGEN_MANIFEST.json")
+
+#: The trust ANCHOR, baked into the image with the FL source.  Verifying the
+#: shards against a SHARD_SUMS.json taken from the same download proves only
+#: internal consistency: whoever controls the staging repo controls the data
+#: AND its checksums, so a corpus regenerated with a different seed or family
+#: split would verify green and the ladder would train on the wrong episodes.
+#: These two digests come from the committed package manifest instead.
+PACKAGE_MANIFEST = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "FOUNDATION_LEARNER_V0_MANIFEST.json")
+
+
+def anchor_digests(manifest_path: str = PACKAGE_MANIFEST) -> dict:
+    """(shard_sums, pregen_manifest) digests pinned by the FL package."""
+    try:
+        with open(guard_path(manifest_path, MODE_READ),
+                  encoding="utf-8") as fh:
+            ecology = json.load(fh).get("ecology") or {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return {k: ecology[k] for k in
+            ("shard_sums_sha256", "pregen_manifest_sha256") if ecology.get(k)}
 
 
 class PregenFetchError(RuntimeError):
@@ -65,10 +88,28 @@ def sha256_file(path: str) -> str:
 def verify_tree(root: str) -> dict:
     """Re-hash every shard the manifest declares.  Raises on any defect."""
     sums_path = os.path.join(root, SHARD_SUMS_REL)
+    manifest_path = os.path.join(root, PREGEN_MANIFEST_REL)
     if not os.path.isfile(sums_path):
         raise PregenFetchError(
             f"{SHARD_SUMS_REL} is absent from {root!r}; an unverifiable "
             f"episode corpus is not usable")
+    if not os.path.isfile(manifest_path):
+        raise PregenFetchError(f"{PREGEN_MANIFEST_REL} is absent from {root!r}")
+    # Anchor FIRST: check the checksum files themselves against the digests
+    # baked into the FL package, before trusting anything they claim.
+    anchors = anchor_digests()
+    for rel, key in ((SHARD_SUMS_REL, "shard_sums_sha256"),
+                     (PREGEN_MANIFEST_REL, "pregen_manifest_sha256")):
+        expected = anchors.get(key)
+        if not expected:
+            continue
+        got = sha256_file(os.path.join(root, rel))
+        if got != expected:
+            raise PregenFetchError(
+                f"{rel} does not match the digest pinned by the FL package "
+                f"manifest ({key}): expected {expected}, got {got}. The "
+                f"staged corpus is not the one this package was frozen "
+                f"against")
     with open(guard_path(sums_path, MODE_READ), encoding="utf-8") as fh:
         sums = json.load(fh)
     if sums.get("schema") != "fl.shard_sums.v1":
@@ -79,8 +120,14 @@ def verify_tree(root: str) -> dict:
     if not shards:
         raise PregenFetchError(f"{SHARD_SUMS_REL} declares no shards")
     missing, mismatched, sealed = [], [], 0
+    root_abs = os.path.abspath(root)
     for shard in shards:
         path = os.path.join(root, shard["path"])
+        # The manifest is untrusted input until the anchor above matched; an
+        # absolute or ../ entry would send the hasher outside the corpus.
+        if not os.path.abspath(path).startswith(root_abs + os.sep):
+            raise PregenFetchError(
+                f"shard path {shard['path']!r} escapes the corpus root")
         if not os.path.isfile(path):
             missing.append(shard["path"])
             continue
@@ -96,9 +143,8 @@ def verify_tree(root: str) -> dict:
             f"pregen verification FAILED in {root!r}: "
             f"{len(missing)} missing {missing[:4]}, "
             f"{len(mismatched)} corrupt {mismatched[:4]}")
-    if not os.path.isfile(os.path.join(root, PREGEN_MANIFEST_REL)):
-        raise PregenFetchError(f"{PREGEN_MANIFEST_REL} is absent from {root!r}")
-    return {"shards_verified": len(shards), "sealed_shards": sealed}
+    return {"shards_verified": len(shards), "sealed_shards": sealed,
+            "anchored": sorted(anchors)}
 
 
 def _helper_error(text: str, limit: int = 400) -> str:
@@ -119,8 +165,9 @@ def _run_helper(args: list[str], timeout: float) -> dict:
         capture_output=True, text=True, timeout=timeout,
         env=child_env(os.environ.get("HF_TOKEN")))
     if proc.returncode != 0:
-        raise PregenFetchError(
-            f"pregen fetch failed: {_helper_error(proc.stdout + proc.stderr)}")
+        raise PregenFetchError(redact(
+            f"pregen fetch failed: "
+            f"{_helper_error(proc.stdout + proc.stderr)}"))
     try:
         return json.loads(proc.stdout.strip().splitlines()[-1])
     except (json.JSONDecodeError, IndexError):
@@ -130,6 +177,10 @@ def _run_helper(args: list[str], timeout: float) -> dict:
 def fetch(source_uri: str, pregen_root: str = DEFAULT_PREGEN_ROOT,
           timeout: float = 7200.0, runner=None) -> dict:
     """Materialise and verify the pregen corpus at ``pregen_root``."""
+    if os.path.exists(pregen_root) and not os.path.isdir(pregen_root):
+        raise PregenFetchError(
+            f"{pregen_root!r} exists but is not a directory; refusing rather "
+            f"than attempting to replace a file with the corpus")
     if os.path.isdir(pregen_root):
         # Already mounted, or a resumed pod: verification still has the last
         # word on whether the bytes are the right ones.

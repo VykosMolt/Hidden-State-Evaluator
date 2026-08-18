@@ -105,12 +105,31 @@ def do_scope(repo_id: str, mode: str) -> dict:
     api.auth_check(repo_id, repo_type="model")
     out["read"] = True
     if mode == "write":
+        # Sweep probes a previous pod left behind.  Eviction between the
+        # upload and the delete strands a .preflight/ entry in the results
+        # repository forever, and nothing else ever removes it.
+        swept = []
+        for name in api.list_repo_files(repo_id):
+            if name.startswith(PREFLIGHT_PREFIX + "/"):
+                try:
+                    api.delete_file(path_in_repo=name, repo_id=repo_id,
+                                    repo_type="model")
+                    swept.append(name)
+                except Exception:  # noqa: BLE001 - best effort cleanup
+                    pass
+        out["swept_stale_probes"] = swept
         rel = f"{PREFLIGHT_PREFIX}/scope_{uuid4().hex}"
         api.upload_file(path_or_fileobj=b"fl-b200 write-scope probe\n",
                         path_in_repo=rel, repo_id=repo_id, repo_type="model")
-        api.delete_file(path_in_repo=rel, repo_id=repo_id, repo_type="model")
         out["write"] = True
         out["probe_path"] = rel
+        # finally: the probe must not survive a failure between here and
+        # the return, or it becomes the litter this sweep exists to remove.
+        try:
+            api.delete_file(path_in_repo=rel, repo_id=repo_id,
+                            repo_type="model")
+        except Exception:  # noqa: BLE001
+            out["probe_cleanup"] = "FAILED (swept on the next acquisition)"
     return out
 
 
@@ -135,6 +154,31 @@ def do_snapshot(repo_id: str, prefix: str, local: str) -> dict:
     return {"local": got, "files": sorted(files), "count": len(files)}
 
 
+def do_upload_folder(repo_id: str, local: str, remote_prefix: str) -> dict:
+    """Stage a whole directory (the pregenerated episode corpus).
+
+    Upload only: nothing here is trusted.  The staged tree is proven by
+    re-downloading it through the pod's own fetch path and re-hashing every
+    shard against SHARD_SUMS.json -- see scripts/stage_pregen_hf.py.
+    """
+    _assert_online_capable()
+    from huggingface_hub import HfApi
+    api = HfApi(token=os.environ.get("HF_TOKEN"))
+    info = api.repo_info(repo_id, repo_type="model")
+    if not getattr(info, "private", False):
+        raise SystemExit(
+            f"hf_transfer: {repo_id} is PUBLIC; refusing to stage campaign "
+            f"artefacts into a public repository")
+    api.upload_folder(folder_path=local, path_in_repo=remote_prefix,
+                      repo_id=repo_id, repo_type="model")
+    files = []
+    for dirpath, _dirs, names in os.walk(local):
+        for name in sorted(names):
+            files.append(os.path.relpath(os.path.join(dirpath, name), local))
+    return {"repo": repo_id, "remote_prefix": remote_prefix,
+            "count": len(files)}
+
+
 def do_list(repo_id: str, prefix: str) -> dict:
     _assert_online_capable()
     from huggingface_hub import HfApi
@@ -145,7 +189,8 @@ def do_list(repo_id: str, prefix: str) -> dict:
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("command",
-                   choices=["push", "fetch", "list", "snapshot", "scope"])
+                   choices=["push", "fetch", "list", "snapshot", "scope",
+                            "upload-folder"])
     p.add_argument("--repo", required=True)
     p.add_argument("--local")
     p.add_argument("--remote-rel")
@@ -160,6 +205,8 @@ def main() -> int:
         out = do_snapshot(a.repo, a.prefix, a.local)
     elif a.command == "scope":
         out = do_scope(a.repo, a.mode)
+    elif a.command == "upload-folder":
+        out = do_upload_folder(a.repo, a.local, a.prefix)
     else:
         out = do_list(a.repo, a.prefix)
     print(json.dumps(out))

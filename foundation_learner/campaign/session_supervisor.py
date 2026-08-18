@@ -108,6 +108,11 @@ FL_PREREQUISITE_STATE = "TRANSFER_O1_RECORDS"
 O1_TRANSFER_RECEIPT = "O1_TRANSFER_RECEIPT.json"
 O1_CLOSE_RECEIPT = "O1_CLOSE_RECEIPT.json"
 
+#: Bound on the configured termination command.  Generous, because a
+#: slow provider API is not a reason to give up on stopping the bill,
+#: but finite, because waiting forever costs money either way.
+TERMINATE_TIMEOUT_SECONDS = 900.0
+
 
 class SupervisorError(RuntimeError):
     """A supervisor invariant refused."""
@@ -572,6 +577,22 @@ class SessionSupervisor:
                            timeout=timeout, env=self._child_env(),
                            cwd=self.payload.get("o1_workdir") or None)
         seconds = self.clock.monotonic() - started
+        # RE-EMIT the child's output on our own streams.  capture_output
+        # swallowed it entirely, and O1's completion markers
+        # (ZERO_TOUCH_COMPLETE / ZERO_TOUCH_ABORTED_AT_<state>) are printed
+        # by the child to ITS stdout.  The off-pod driver greps the
+        # CONTAINER log for exactly those, so with them captured a
+        # successful O1 phase looked like an eviction and bought a
+        # redundant reacquisition, and a deterministic abort lost its
+        # "do not reacquire" guarantee.
+        child_out = getattr(proc, "stdout", "") or ""
+        child_err = getattr(proc, "stderr", "") or ""
+        if child_out:
+            print(child_out, end="" if child_out.endswith("\n") else "\n",
+                  flush=True)
+        if child_err:
+            print(child_err, end="" if child_err.endswith("\n") else "\n",
+                  file=sys.stderr, flush=True)
         record = {
             "command": command if shell else list(command),
             "returncode": int(getattr(proc, "returncode", -1)),
@@ -774,7 +795,15 @@ class SessionSupervisor:
         command = self.payload.get("terminate_command")
         record = None
         if command:
-            record = self._run_command(command, state="TERMINATE_ACCELERATOR")
+            # A hung terminate command blocks the supervisor indefinitely on
+            # an accelerator that is still billing, leaving only RunPod's
+            # provider-side terminateAfter as a backstop.  Every other
+            # configured command already carries a timeout; this one is the
+            # single most expensive place to omit it.
+            record = self._run_command(
+                command, state="TERMINATE_ACCELERATOR",
+                timeout=float(self.payload.get("terminate_timeout_seconds")
+                              or TERMINATE_TIMEOUT_SECONDS))
         return {"terminate_command": record,
                 "note": ("termination is a configured command; this package "
                          "never contacts a provider by itself")}
