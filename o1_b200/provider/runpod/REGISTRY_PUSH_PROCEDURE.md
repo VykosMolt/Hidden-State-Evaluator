@@ -1,8 +1,8 @@
 # Registry Push — the one remaining non-GPU staging action
 
-The B300 production image is built locally as `o1-b300-runner:v0.3.1`
+The B300 production image is built locally as `o1-b300-runner:v0.3.2`
 (identity-recorded in `CONTAINER_IMAGE_RECORD.json`, local image id
-`sha256:37f749847fed72456c95a397ccfb9fc60c92223dfe1cee1c59f911481953dd9b`,
+`sha256:6ddf92b948973f2f3a5368c052b6be188bd7504479deda5d73e7f4664cf4bdc2`,
 built by `scripts/build_b300_image.sh` from `Dockerfile.b300`). The registry
 digest is UNRESOLVED until the operator pushes; it was **not** pushed in the
 pre-rental task because:
@@ -23,8 +23,8 @@ pre-rental task because:
 
 ```sh
 gh auth token | docker login ghcr.io -u VykosMolt --password-stdin
-docker tag o1-b300-runner:v0.3.1 ghcr.io/vykosmolt/o1-b300-runner:v0.3.1
-docker push ghcr.io/vykosmolt/o1-b300-runner:v0.3.1
+docker tag o1-b300-runner:v0.3.2 ghcr.io/vykosmolt/o1-b300-runner:v0.3.2
+docker push ghcr.io/vykosmolt/o1-b300-runner:v0.3.2
 ```
 
 3. Record the **registry digest** printed by the push (`…@sha256:…`) into
