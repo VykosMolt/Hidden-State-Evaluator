@@ -78,6 +78,63 @@ def do_fetch(repo_id: str, remote_rel: str, local: str) -> dict:
     return {"local": local, "sha256": digest}
 
 
+#: Dedicated prefix for the write probe, so it can never collide with a
+#: journal or checkpoint key.
+PREFLIGHT_PREFIX = ".preflight"
+
+
+def do_scope(repo_id: str, mode: str) -> dict:
+    """Prove the token can do what the session is about to depend on.
+
+    One HF_TOKEN covers both the pregen read and the durable-mirror write.
+    A read-only token pulls the corpus, trains for hours, and loses every
+    journal and checkpoint push — under interruptible capacity that means
+    eviction destroys the arm.  Read is proven by auth_check; write can only
+    be proven by writing, so the probe uploads a few bytes and deletes them.
+    """
+    _assert_online_capable()
+    from uuid import uuid4
+    from huggingface_hub import HfApi
+    api = HfApi(token=os.environ.get("HF_TOKEN"))
+    who = api.whoami()
+    auth = (who.get("auth") or {}).get("accessToken") or {}
+    out = {"repo": repo_id, "mode": mode,
+           "identity": who.get("name") or "unknown",
+           "declared_role": auth.get("role") or "unreported",
+           "read": False, "write": False}
+    api.auth_check(repo_id, repo_type="model")
+    out["read"] = True
+    if mode == "write":
+        rel = f"{PREFLIGHT_PREFIX}/scope_{uuid4().hex}"
+        api.upload_file(path_or_fileobj=b"fl-b200 write-scope probe\n",
+                        path_in_repo=rel, repo_id=repo_id, repo_type="model")
+        api.delete_file(path_in_repo=rel, repo_id=repo_id, repo_type="model")
+        out["write"] = True
+        out["probe_path"] = rel
+    return out
+
+
+def do_snapshot(repo_id: str, prefix: str, local: str) -> dict:
+    """Materialise a whole staged directory (the pregenerated episode tree).
+
+    The ~480 MB pregen corpus is neither in Git nor in the container image,
+    so a fresh pod has to pull it before the ladder can start.  Nothing here
+    is trusted: fetch_pregen.py re-hashes every shard against SHARD_SUMS.json
+    afterwards.
+    """
+    _assert_online_capable()
+    from huggingface_hub import snapshot_download
+    patterns = [f"{prefix}/**", prefix] if prefix else None
+    got = snapshot_download(repo_id=repo_id, local_dir=local,
+                            allow_patterns=patterns,
+                            token=os.environ.get("HF_TOKEN"))
+    files = []
+    for dirpath, _dirs, names in os.walk(got):
+        for name in sorted(names):
+            files.append(os.path.relpath(os.path.join(dirpath, name), got))
+    return {"local": got, "files": sorted(files), "count": len(files)}
+
+
 def do_list(repo_id: str, prefix: str) -> dict:
     _assert_online_capable()
     from huggingface_hub import HfApi
@@ -87,16 +144,22 @@ def do_list(repo_id: str, prefix: str) -> dict:
 
 def main() -> int:
     p = argparse.ArgumentParser()
-    p.add_argument("command", choices=["push", "fetch", "list"])
+    p.add_argument("command",
+                   choices=["push", "fetch", "list", "snapshot", "scope"])
     p.add_argument("--repo", required=True)
     p.add_argument("--local")
     p.add_argument("--remote-rel")
     p.add_argument("--prefix", default="")
+    p.add_argument("--mode", choices=["read", "write"], default="read")
     a = p.parse_args()
     if a.command == "push":
         out = do_push(a.repo, a.local, a.remote_rel)
     elif a.command == "fetch":
         out = do_fetch(a.repo, a.remote_rel, a.local)
+    elif a.command == "snapshot":
+        out = do_snapshot(a.repo, a.prefix, a.local)
+    elif a.command == "scope":
+        out = do_scope(a.repo, a.mode)
     else:
         out = do_list(a.repo, a.prefix)
     print(json.dumps(out))

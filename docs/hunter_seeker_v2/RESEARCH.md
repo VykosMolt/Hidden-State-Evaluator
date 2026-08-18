@@ -11,7 +11,13 @@ causal route to behavior, and an ablation that justifies its complexity.
 The governing local sources are:
 
 - `/home/moloch/Documents/Research/kirin2026_erratum/paper.tex`
-- `/home/moloch/Documents/Research/ouro_paper_draft_v6_4(1).md`
+- `/home/moloch/Documents/Research/Operational-Proto-Introspection/latex-v3/paper1.tex`
+- `/home/moloch/Documents/Research/paper2_methodology/paper2.tex`
+
+The `ouro_paper_draft_v6_4(1).md` this rebuild was originally designed against
+no longer exists as a file: it was split into the two papers above (science and
+methodology respectively).  Its corrected claims are unchanged; only the
+location moved.
 
 They change Hunter-Seeker's premise in four decisive ways:
 

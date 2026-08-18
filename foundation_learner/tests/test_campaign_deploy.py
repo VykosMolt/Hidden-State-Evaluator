@@ -53,11 +53,17 @@ def test_the_lock_records_that_peft_is_absent_on_the_b200():
 
 def test_the_lock_binds_the_container_and_changes_nothing_in_it():
     container = lock()["container"]
-    assert container["image_name"] == "o1-b300-runner:v0.3.0"
+    assert container["image_name"] == "o1-b300-runner:v0.3.1"
     assert container["base_image"] == "python:3.14-slim-bookworm"
     assert container["base_image_digest"].startswith("python@sha256:")
     assert container["venv"] == "/opt/venv"
-    assert container["fl_changes_to_the_image"].startswith("NONE")
+    # v0.3.1 bakes the FL SOURCE (the image previously carried none, so a
+    # combined session refused at the handover).  What must still be true is
+    # that FL changes nothing about the runtime it borrows.
+    assert container["fl_changes_to_the_image"].startswith("SOURCE ONLY")
+    assert "no package installation" in container["fl_changes_to_the_image"].lower()
+    assert container["foundation_learner_source_sha256"]
+    assert container["pregen_corpus_baked"].startswith("NO")
     assert lock()["cuda"]["toolkit"] == "13.0"
 
 
@@ -163,7 +169,17 @@ def test_integration_doc_states_the_unresolved_gap_honestly():
     assert "refusing stub" in text
     assert "start_b300.sh" in text
     assert "NOT AUTHORIZED" in text
-    assert "adds no image change" in text or "no image change" in text
+    # From v0.3.1 the image DOES carry the FL source — the doc must say that
+    # plainly rather than keep repeating the old "no image change" claim, and
+    # must still record what stayed unchanged (the borrowed runtime).
+    # Prose wraps, so match against whitespace-normalised text.
+    flat = " ".join(text.split())
+    assert "no package installation" in flat
+    assert "no dependency change" in flat
+    assert "/opt/foundation_learner" in flat
+    assert "exit 78" in flat, (
+        "the doc must record what the pre-v0.3.1 image actually did when a "
+        "combined session was requested")
 
 
 def test_the_isolation_roots_in_the_doc_match_the_code():

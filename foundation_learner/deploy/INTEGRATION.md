@@ -9,8 +9,8 @@ rental, and nothing here spends money.
 
 | item | value |
 |---|---|
-| image | `o1-b300-runner:v0.3.0` (local id `sha256:26dba0ac…`; B300 primary / B200 explicit fallback, INTERRUPTIBLE) |
-| base | `python:3.14-slim-bookworm`, pinned by digest `python@sha256:86f975ac…` |
+| image | `o1-b300-runner:v0.3.1` (local id `sha256:37b76595…`; B300 primary / B200 explicit fallback, INTERRUPTIBLE) |
+| base | `python:3.14-slim-bookworm`, pinned by digest `python@sha256:23c59390…` |
 | venv | `/opt/venv` |
 | torch | `2.12.1+cu130` (stable; identical wheel verified locally on sm_120 incl. the real-checkpoint smoke) |
 | transformers | `4.54.1` — build-asserted in the image, re-asserted at runtime by FL |
@@ -20,9 +20,20 @@ rental, and nothing here spends money.
 | container disk | 60 GB |
 | checkpoint | mounted at `/artifacts/ouro_rltt_local`, never baked into the image |
 
-**The FL package adds no image change.** No Dockerfile edit, no package
-installation at start-up, no new third-party dependency: FL runs on stdlib +
-numpy + torch + transformers + safetensors. `peft` is absent from
+**The FL package changes the image only by being in it.** From v0.3.1 the FL
+source is baked at `/opt/foundation_learner/foundation_learner` (one
+`Dockerfile.b300` COPY, staged from the FL worktree by
+`o1_b200/scripts/build_b300_image.sh`, recorded as
+`foundation_learner_source_sha256`). Up to v0.3.0 the image carried no FL
+package at all, so a combined session refused at the handover with exit 78.
+
+Nothing else changes: no package installation at start-up, no dependency
+change, no venv change, and no new third-party dependency — FL runs on the O1
+container's own `/opt/venv` with stdlib + numpy + torch + transformers +
+safetensors. The ~480 MB `artifacts_fl/pregen` episode corpus is **not** baked
+either; `deploy/fl_b200_entry.sh` materialises it with
+`campaign/fetch_pregen.py` and re-hashes every shard against
+`MANIFESTS/SHARD_SUMS.json` before the ladder starts. `peft` is absent from
 `requirements.b300.lock` and therefore absent from the container, which is why
 every low-rank adapter in this campaign is implemented in
 `foundation_learner/training/lora.py` (Amendment 3). `peft` 0.19.1 is used

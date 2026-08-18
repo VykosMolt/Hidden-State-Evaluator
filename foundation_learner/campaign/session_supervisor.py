@@ -546,6 +546,22 @@ class SessionSupervisor:
 
     # ---------------- helpers ----------------
 
+    def _child_env(self) -> dict:
+        """Environment for a configured subprocess (the O1 phase included).
+
+        O1's pod entrypoint dispatches to THIS supervisor whenever it sees
+        O1_FL_SESSION_CONFIG.  Leaving that variable in the child environment
+        would make the O1 phase start a second combined session, which would
+        run the O1 phase again: unbounded recursion on a paid accelerator.
+        O1's entry carries its own depth marker as an independent guard;
+        either alone is sufficient, and neither depends on the other being
+        correct.
+        """
+        env = {k: v for k, v in os.environ.items()
+               if k != "O1_FL_SESSION_CONFIG"}
+        env["O1_B300_ENTRY_ACTIVE"] = "1"
+        return env
+
     def _run_command(self, command: Sequence[str] | str, *, state: str,
                      timeout: float | None = None) -> dict:
         if not command:
@@ -553,7 +569,7 @@ class SessionSupervisor:
         shell = isinstance(command, str)
         started = self.clock.monotonic()
         proc = self.runner(command, shell=shell, capture_output=True, text=True,
-                           timeout=timeout,
+                           timeout=timeout, env=self._child_env(),
                            cwd=self.payload.get("o1_workdir") or None)
         seconds = self.clock.monotonic() - started
         record = {

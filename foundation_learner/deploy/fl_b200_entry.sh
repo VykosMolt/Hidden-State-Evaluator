@@ -93,8 +93,7 @@ bad = unresolved(cfg)
 if bad and not cfg.get("rehearsal", False):
     raise SystemExit(
         "[fl_b200_entry] REFUSED: unresolved session-config fields "
-        f"{bad}. 'o1_entry_command' is operator-bound (the sealed O1 pod "
-        "entrypoint is a refusing stub); bind it before a real session.")
+        f"{bad}. Bind every one of them before a real session.")
 if bad:
     print("*** DRESS_REHEARSAL: unresolved fields present:", bad, "***",
           file=sys.stderr)
@@ -104,6 +103,22 @@ echo "[fl_b200_entry] O1 has absolute priority; FL runs only after O1 close."
 echo "[fl_b200_entry] config: $CONFIG"
 echo "[fl_b200_entry] out:    $OUT"
 mkdir -p "$OUT"
+
+# Episode-corpus ingestion.  The ~480 MB pregen tree is neither in Git nor in
+# the image, and campaign/entry.py refuses a session whose pregen_root is
+# absent — so this must happen before the supervisor starts, not when the
+# ladder reaches for its first shard.  Every shard is hashed against
+# SHARD_SUMS.json inside the fetch; a failure refuses here, still cheap.
+# Credential scope BEFORE the corpus download: one HF_TOKEN must cover the
+# pregen read and the durable-mirror write.  A read-only token trains for
+# hours and then loses the journal and every checkpoint on eviction.
+echo "[fl_b200_entry] credential scope preflight"
+"$PY" -m foundation_learner.campaign.check_hf_scope \
+  --config "$CONFIG" --out "$OUT/HF_SCOPE_REPORT.json"
+
+echo "[fl_b200_entry] pregen ingestion (the episode corpus is not baked in)"
+"$PY" -m foundation_learner.campaign.fetch_pregen \
+  --config "$CONFIG" --out "$OUT/PREGEN_FETCH_REPORT.json"
 
 exec "$PY" -m foundation_learner.campaign.session_supervisor \
   --config "$CONFIG" --out "$OUT" ${EXTRA[@]+"${EXTRA[@]}"}

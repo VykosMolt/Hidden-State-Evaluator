@@ -683,7 +683,14 @@ internal `SHA256SUMS` over all package files; built by
 `scripts/package_release.py`. Environment lock (`deploy/environment_lock.json`)
 pins transformers 4.54.1, torch, peft, numpy, python, CUDA, and binds the O1
 B200 container reference (Dockerfile.b200 digest) — the FL package RUNS IN
-the existing O1 container; it adds no image changes. Commit on
+the existing O1 container and changes nothing about the runtime it borrows:
+no package installation, no dependency change, no venv change. From image
+`o1-b300-runner:v0.3.1` the FL *source* is baked at
+`/opt/foundation_learner/foundation_learner` (one `Dockerfile.b300` COPY,
+recorded as `foundation_learner_source_sha256`), because an image without it
+refused every combined session at the O1→FL handover with exit 78. The
+~480 MB `artifacts_fl/pregen` corpus is still not baked: `fetch_pregen.py`
+materialises it on the pod and re-hashes every shard first. Commit on
 `foundation-learner-b200-v0`; push to origin; independently verify remote ref
 and package hash from a fresh clone/fetch. No modification of O1/OPI
 artifacts anywhere in history.

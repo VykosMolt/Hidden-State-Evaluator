@@ -29,6 +29,7 @@
     "checkpoint_dir": "/artifacts/ouro_rltt_local",
     "checkpoint_tree_sha256": "a701f7a75300ddf57098572fef3894bef59d5179580ec7eae7cd561a36056889",
     "pregen_root": "/workspace/foundation_learner/artifacts_fl/pregen",
+    "fl_pregen_source": "UNRESOLVED_OPERATOR_BOUND (hf://<ns>/<repo>[/<prefix>] holding artifacts_fl/pregen; the ~480 MB episode corpus is neither in Git nor in the container image, so deploy/fl_b200_entry.sh materialises it with campaign/fetch_pregen.py and re-hashes every shard against MANIFESTS/SHARD_SUMS.json before the ladder starts. Leave unset only when pregen_root is already mounted.)",
     "fl_out_dir": "/workspace/foundation_learner/session",
     "session_authorized_seconds": "UNRESOLVED_SESSION_TIME (authorized runtime for the WHOLE session; FL receives what remains after O1 closes)",
     "fl_transfer_command": "UNRESOLVED_OPERATOR_BOUND (upload FL_ARTIFACTS.zip to the FL results repository — SEPARATE from the O1 results repository)",
