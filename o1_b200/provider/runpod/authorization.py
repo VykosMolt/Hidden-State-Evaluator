@@ -139,10 +139,16 @@ class LiveMutationAuthorization:
 
     @staticmethod
     def _consumed_count(nonce_ledger: str, nonce: str) -> int:
+        """Count consumed slots as LINES, never as set members.
+
+        Each consumption appends a globally unique line, so two concurrent
+        creations can no longer collapse into one charged slot the way
+        identical `nonce/seq` lines did under set-deduplication.
+        """
         if not os.path.exists(nonce_ledger):
             return 0
         with open(nonce_ledger, encoding="utf-8") as fh:
-            lines = {ln.strip() for ln in fh if ln.strip()}
+            lines = [ln.strip() for ln in fh if ln.strip()]
         # v1 ledgers recorded the bare nonce; count it as one consumption
         return sum(1 for ln in lines
                    if ln == nonce or ln.startswith(nonce + "/"))
@@ -151,19 +157,33 @@ class LiveMutationAuthorization:
         """Burn ONE creation slot (called immediately before each create).
 
         Refuses beyond max_pod_creations: eviction reacquisition is bounded
-        by this ledger in addition to the hard dollar budget.
+        by this ledger in addition to the hard dollar budget.  The
+        read-check-append sequence holds an exclusive advisory lock on the
+        ledger so two concurrent session drivers cannot both observe the
+        same remaining count and each create a pod.
         """
+        import fcntl
+        import uuid
         nonce = self._doc["launch_nonce"]
-        seq = self._consumed_count(self._nonce_ledger, nonce)
-        if seq >= self._doc["max_pod_creations"]:
-            raise AuthorizationError(
-                f"pod-creation budget exhausted "
-                f"({seq}/{self._doc['max_pod_creations']} consumed); a new "
-                f"deliberate authorization is required")
-        with open(self._nonce_ledger, "a", encoding="utf-8") as fh:
-            fh.write(f"{nonce}/{seq}\n")
-            fh.flush()
-            os.fsync(fh.fileno())
+        maxc = self._doc["max_pod_creations"]
+        lock_path = self._nonce_ledger + ".lock"
+        os.makedirs(os.path.dirname(os.path.abspath(lock_path)) or ".",
+                    exist_ok=True)
+        with open(lock_path, "a+", encoding="utf-8") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            try:
+                seq = self._consumed_count(self._nonce_ledger, nonce)
+                if seq >= maxc:
+                    raise AuthorizationError(
+                        f"pod-creation budget exhausted "
+                        f"({seq}/{maxc} consumed); a new deliberate "
+                        f"authorization is required")
+                with open(self._nonce_ledger, "a", encoding="utf-8") as fh:
+                    fh.write(f"{nonce}/{seq}/{uuid.uuid4().hex}\n")
+                    fh.flush()
+                    os.fsync(fh.fileno())
+            finally:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
     def creations_remaining(self) -> int:
         return self._doc["max_pod_creations"] - self._consumed_count(

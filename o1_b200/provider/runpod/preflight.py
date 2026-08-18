@@ -15,9 +15,9 @@ import os
 
 from .adapter import RunpodV2Adapter
 from .identityutil import canonical_sha256, utcnow_iso
-from .redaction import load_api_key, redact
+from .redaction import redact
 from .schema_check import verify_pinned_schema
-from .transport import ApiHttpError, TransportError
+from .transport import ApiHttpError, TransportError, resolve_credential
 
 
 def run_preflight(*, base_url: str = "https://api.runpod.io",
@@ -29,7 +29,9 @@ def run_preflight(*, base_url: str = "https://api.runpod.io",
         "mutations_possible": False,
         "checks": {},
     }
-    key = api_key if api_key is not None else load_api_key()
+    # resolve_credential (not load_api_key) so a non-production base_url can
+    # never receive the ambient operator credential
+    key = resolve_credential(base_url, api_key)
     if not key:
         report["verdict"] = "SKIPPED_NO_CREDENTIAL"
         report["note"] = ("READONLY_LIVE_PREFLIGHT: SKIPPED_NO_CREDENTIAL — "

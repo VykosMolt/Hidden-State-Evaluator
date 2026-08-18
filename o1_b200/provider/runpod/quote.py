@@ -83,30 +83,62 @@ def validate_offer(profile: AcceleratorProfile, gpu: GpuTypeModel) -> dict:
     return {"datacenters": compatible_dcs}
 
 
-def select_offer(gpu_types: list[GpuTypeModel]) -> dict:
+def resolve_preference(preference=None) -> tuple:
+    """The profile order to try, defaulting to the frozen preference.
+
+    An operator may reorder the frozen profiles (e.g. put the B200 first
+    when B300 demand makes it unobtainable), but may NOT introduce a
+    profile outside the frozen set, and may not drop one silently: the
+    order is a preference, not a new capability — the rental authorization
+    already covers every frozen profile's canonical body.
+    """
+    if not preference:
+        return PROFILE_PREFERENCE
+    known = {p.key: p for p in PROFILE_PREFERENCE}
+    unknown = [k for k in preference if k not in known]
+    if unknown:
+        raise PolicyViolation(
+            f"unknown accelerator profile(s) {unknown}; the frozen set is "
+            f"{sorted(known)}")
+    duplicates = sorted({k for k in preference if preference.count(k) > 1})
+    if duplicates:
+        raise PolicyViolation(
+            f"duplicate accelerator profile(s) {duplicates} in the "
+            f"preference; the frozen set is a set, not a multiset")
+    ordered = [known[k] for k in preference]
+    ordered += [p for p in PROFILE_PREFERENCE if p.key not in preference]
+    return tuple(ordered)
+
+
+def select_offer(gpu_types: list[GpuTypeModel], preference=None) -> dict:
     """Preference-ordered profile selection with explicit refusal record.
 
     Returns {"profile", "gpu", "datacenters", "fallback_reason",
-    "refusals"}; fallback_reason is None when the primary was selected.
-    Raises QuoteError with the complete per-profile refusal list when no
-    profile qualifies.
+    "refusals"}; fallback_reason is None when the first-preference profile
+    was selected.  Raises QuoteError with the complete per-profile refusal
+    list when no profile qualifies.
     """
     refusals: dict[str, str] = {}
-    for profile in PROFILE_PREFERENCE:
+    for profile in resolve_preference(preference):
         try:
             gpu = find_profile_offer(profile, gpu_types)
             v = validate_offer(profile, gpu)
         except (QuoteError, PolicyViolation) as exc:
             refusals[profile.key] = str(exc)
             continue
+        # "fallback" means something ahead of this profile was REFUSED —
+        # not merely that this profile is the frozen secondary.  With an
+        # operator-reordered preference, a first-choice B200 is a
+        # deliberate selection, and the report must not call it a fallback.
         fallback_reason = None
-        if profile.role != "PRIMARY":
+        if refusals:
             fallback_reason = (
-                f"primary profile refused: "
+                "earlier-preference profile(s) refused: "
                 + "; ".join(f"{k}: {r}" for k, r in refusals.items()))
         return {"profile": profile, "gpu": gpu,
                 "datacenters": v["datacenters"],
                 "fallback_reason": fallback_reason,
+                "operator_preference_applied": bool(preference),
                 "refusals": dict(refusals)}
     raise QuoteError(
         "no accelerator profile qualifies right now — "
@@ -163,6 +195,8 @@ def build_quote(selection: dict, spot: dict, *, datacenter_id: str,
         "validity_seconds": QUOTE_VALIDITY_SECONDS,
         "profile": profile.key,
         "profile_role": profile.role,
+        "operator_preference_applied": selection.get(
+            "operator_preference_applied", False),
         "fallback_reason": selection["fallback_reason"],
         "profile_refusals": selection["refusals"],
         "gpu_type_id": gpu.id,

@@ -16,11 +16,15 @@ fallback).  Two layers:
      asserts the no-PTX property so a future wheel that silently
      reintroduces JIT is detected.
 
-     SASS compatibility basis (NVIDIA Blackwell/CUDA compatibility rule):
-     a cubin built for compute capability X.y runs on X.z, z >= y — the
-     wheel's sm_100 cubins execute natively on sm_103 (B300), which also
-     carries the wheel's 59 sm_103a arch-tuned kernels; sm_100 hardware
-     (B200 fallback) uses the same sm_100 cubins natively.
+     SASS basis, measured from the shipped fatbinary with cuobjdump and
+     recorded in deploy/FATBINARY_ARCH_EVIDENCE.json (448 sm_100 + 59
+     sm_100a + 59 sm_103a cubins, 0 PTX entries):
+       * B200 (sm_100, CC 10.0) — native and DIRECT; no compatibility rule
+         is relied upon.
+       * B300 (sm_103, CC 10.3) — the plain sm_100 cubins run natively
+         under NVIDIA's same-major/higher-minor cubin rule (X.y runs on
+         X.z, z >= y), plus the wheel's own sm_103a arch-tuned kernels.
+     The workload exercises below are what actually prove it on the metal.
 
   2. exercise_workloads(...) — representative REAL workload paths on the
      acquired GPU: BF16 GEMM, Ouro-RLTT forward, Ouro-RLTT generation,
@@ -94,6 +98,32 @@ def gather_facts(torch_mod=None) -> dict:
     }
 
 
+def _version_tuple(value) -> tuple[int, ...] | None:
+    """Parse "13.0"/"13.2.1" into a comparable tuple; None if unparseable."""
+    if value is None:
+        return None
+    parts = str(value).strip().split(".")
+    out = []
+    for part in parts:
+        digits = "".join(c for c in part if c.isdigit())
+        if not digits:
+            return None
+        out.append(int(digits))
+    return tuple(out) or None
+
+
+def _version_at_least(value, minimum: str) -> bool:
+    """Numeric version comparison.
+
+    A lexicographic string compare would accept a single-digit-major
+    runtime: "9.0" >= "13.0" is True for strings but false for versions.
+    """
+    got, want = _version_tuple(value), _version_tuple(minimum)
+    if got is None or want is None:
+        return False
+    return got >= want
+
+
 def validate_facts(profile_key: str, facts: dict) -> dict:
     """PURE fail-closed validation of the acquired machine's identity."""
     profile = PROFILES_BY_KEY[profile_key]
@@ -126,7 +156,8 @@ def validate_facts(profile_key: str, facts: dict) -> dict:
         need(free_frac >= MIN_FREE_HBM_FRACTION,
              f"free HBM fraction {free_frac:.2f} below "
              f"{MIN_FREE_HBM_FRACTION}")
-        need(str(facts.get("torch_cuda_runtime", "")) >= MIN_CUDA_VERSION,
+        need(_version_at_least(facts.get("torch_cuda_runtime"),
+                               MIN_CUDA_VERSION),
              f"torch CUDA runtime {facts.get('torch_cuda_runtime')} below "
              f"{MIN_CUDA_VERSION}")
         drv = str(facts.get("driver_version") or "")

@@ -45,17 +45,23 @@ def _fake_spawn(**_kw):
     return FakeWatchdog()
 
 
-def _session_setup(d, srv):
+def _session_setup(d, srv, result_source=None):
+    # NOTE: result_source/result_destination are DEPLOYMENT IDENTITY (they
+    # decide where the pod publishes), so a test that wants a different one
+    # must pass it here — mutating config after the authorization is bound
+    # is exactly what the identity check refuses.
     config = {
         "project": "O1_B200", "package_zip_sha256": "p" * 64,
         "budget_policy_sha256": "b" * 64,
         "image_digest_ref": GOOD_IMAGE,
         "identities": {"package": "test"},
         "adapter_commit": "test",
-        "result_source": os.path.join(d, "fake_results.tar.gz"),
+        "result_source": result_source or os.path.join(
+            d, "fake_results.tar.gz"),
     }
-    with open(config["result_source"], "wb") as fh:
-        fh.write(b"results")
+    if result_source is None:
+        with open(config["result_source"], "wb") as fh:
+            fh.write(b"results")
     rendered = _render_all_profiles(config)
     doc = {
         "schema": AUTH_SCHEMA, "project": "O1_B200",
@@ -188,8 +194,8 @@ def run() -> Runner:
         sc = Scenario()
         sc.log_text = "ZERO_TOUCH_COMPLETE\n"
         with MockRunpodServer(sc) as srv:
-            config, auth_path = _session_setup(d, srv)
-            config["result_source"] = os.path.join(d, "missing.tar.gz")
+            config, auth_path = _session_setup(
+                d, srv, result_source=os.path.join(d, "missing.tar.gz"))
             os.environ[ENV_FLAG] = ENV_FLAG_VALUE
             try:
                 status = run_session(

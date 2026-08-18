@@ -198,24 +198,143 @@ def run() -> Runner:
             authorization_slots_bound_reacquisition)
 
     def budget_bounds_reacquisition():
+        """The budget — NOT the acquisition ceiling — must stop this run.
+
+        A disjunctive assertion here previously passed via
+        ABORTED_ACQUISITION_LIMIT while session spend stayed 0.00, hiding
+        the fact that pre-RUNNING billing was uncounted.  The outcome is
+        now pinned exactly.
+        """
         d = fresh_dir("pre_budget")
         sc = Scenario()
         sc.evict_after_polls = 2
         clock = {"t": 0.0}
 
         def spend_clock():
-            clock["t"] += 900.0      # every spend sample advances 15 min
+            clock["t"] += 10800.0    # every spend sample advances 3 h
             return clock["t"]
         config, auth_path = _setup(d, max_pod_creations=8)
-        status, sc = _run(d, sc, config, auth_path,
-                          spend_clock=spend_clock)
+        status, sc = _run(d, sc, config, auth_path, spend_clock=spend_clock)
+        assert status["outcome"] == "ABORTED_BUDGET", status["outcome"]
+        assert all(p["terminated"] for p in sc.pods.values()), \
+            "a pod was left alive when the budget stopped the session"
+        from o1_b200.provider.runpod.policy import MAX_POD_ACQUISITIONS
+        assert len(sc.rent_calls) < MAX_POD_ACQUISITIONS, (
+            "the budget must bite BEFORE the acquisition ceiling in this "
+            "scenario, otherwise it is not what stopped the run")
+    r.check("the hard dollar budget — not the slot ceiling — stops a "
+            "reacquisition sequence", budget_bounds_reacquisition)
+
+    def evicted_before_running_pods_are_not_free():
+        """Pods evicted before RUNNING still bill from provisioning."""
+        d = fresh_dir("pre_prerun_billing")
+        sc = Scenario()
+        sc.lifecycle_plan = ["PROVISIONING", "STARTING", "EXITED"]
+        clock = {"t": 0.0}
+
+        def spend_clock():
+            clock["t"] += 600.0
+            return clock["t"]
+        config, auth_path = _setup(d, max_pod_creations=8)
+        status, sc = _run(d, sc, config, auth_path, spend_clock=spend_clock)
         assert status["outcome"] in ("ABORTED_BUDGET",
-                                     "ABORTED_ACQUISITION_LIMIT"), \
-            status["outcome"]
-        if status["outcome"] == "ABORTED_BUDGET":
+                                     "ABORTED_REPEATED_FAILURE_NO_PROGRESS",
+                                     "ABORTED_ACQUISITION_LIMIT")
+        report = json.load(open(os.path.join(d, "LIFECYCLE_REPORT.json")))
+        frozen = [e for e in report["events"] if e["event"] == "SPEND_FROZEN"]
+        assert frozen, "no spend was ever frozen for evicted pods"
+        assert any(float(e["session_spend_usd"]) > 0 for e in frozen), (
+            "pods evicted before RUNNING were recorded as free; RunPod "
+            "bills from provisioning")
+    r.check("a pod evicted before RUNNING is still charged (billing starts "
+            "at provisioning, not at RUNNING)",
+            evicted_before_running_pods_are_not_free)
+
+    def watchdog_deadline_shrinks_with_session_spend():
+        """Each pod's independent watchdog gets the REMAINING allocation."""
+        d = fresh_dir("pre_wdog_budget")
+        sc = Scenario()
+        sc.evict_after_polls = 2
+        clock = {"t": 0.0}
+
+        def spend_clock():
+            clock["t"] += 300.0
+            return clock["t"]
+        armed = []
+
+        def spawn(**kw):
+            armed.append(kw["hard_limit_seconds"])
+            return FakeWatchdog()
+        config, auth_path = _setup(d, max_pod_creations=3)
+        os.environ[ENV_FLAG] = ENV_FLAG_VALUE
+        try:
+            with MockRunpodServer(sc) as srv:
+                run_session(authorization_path=auth_path, out_dir=d,
+                            cli_args=[CLI_FLAG], base_url=srv.base_url,
+                            api_key=MOCK_KEY, sleep=NOSLEEP, config=config,
+                            spawn_watchdog_fn=spawn, spend_clock=spend_clock)
+        finally:
+            os.environ.pop(ENV_FLAG, None)
+        assert len(armed) >= 2, armed
+        assert armed == sorted(armed, reverse=True) and armed[1] < armed[0], (
+            f"later pods were armed at the same or a larger horizon: {armed}")
+        # Only one pod is alive at a time (each remnant is terminated before
+        # the next is created), so the exposure that matters is per pod:
+        # spend-at-arm + horizon must stay inside the allocation.  Since the
+        # horizon IS (allocation - spend)/rate, every individual horizon must
+        # therefore be strictly less than the full allocation once anything
+        # has been spent — which is exactly what the pre-repair code got
+        # wrong by arming every pod at hard_compute_seconds().
+        from o1_b200.provider.runpod.policy import MAX_COMPUTE_USD
+        rate = 7.89
+        full = float(MAX_COMPUTE_USD) / rate * 3600.0
+        for i, horizon in enumerate(armed):
+            assert horizon <= full + 1, (i, horizon, full)
+            if i > 0:
+                assert horizon < full, (
+                    f"pod {i} was armed at the FULL allocation despite "
+                    f"earlier spend: {horizon}s")
+    r.check("each reacquired pod's watchdog is armed at the REMAINING "
+            "allocation, so summed horizons stay inside the budget",
+            watchdog_deadline_shrinks_with_session_spend)
+
+    def transient_log_failure_is_not_an_eviction():
+        """A 500ing log endpoint at exit must not cost a reacquisition."""
+        d = fresh_dir("pre_logfail")
+        sc = Scenario()
+        sc.log_text = "ZERO_TOUCH_COMPLETE\n"
+        sc.lifecycle_plan = ["PROVISIONING", "STARTING", "RUNNING"]
+        sc.fail_next = [(500, 2)]     # the completion probe's first tries
+        config, auth_path = _setup(d)
+        status, sc = _run(d, sc, config, auth_path)
+        assert status["outcome"] == "COMPLETE", status["outcome"]
+        assert len(sc.rent_calls) == 1, (
+            "a transient log-endpoint failure triggered a paid "
+            "reacquisition")
+    r.check("a transient completion-probe failure is retried, not read as "
+            "an eviction", transient_log_failure_is_not_an_eviction)
+
+    def soft_stop_and_external_termination_are_not_complete():
+        """monitor() outcomes other than COMPLETE must never be COMPLETE."""
+        from o1_b200.provider.runpod import lifecycle as lc
+        for forced in ("SOFT_STOP", "TERMINATED"):
+            d = fresh_dir(f"pre_{forced.lower()}")
+            sc = Scenario()
+            sc.log_text = "no marker here\n"
+            config, auth_path = _setup(d)
+            original = lc.PodLifecycleController.monitor
+            lc.PodLifecycleController.monitor = (
+                lambda self, pod_id, **kw: forced)
+            try:
+                status, sc = _run(d, sc, config, auth_path)
+            finally:
+                lc.PodLifecycleController.monitor = original
+            assert status["outcome"] == f"ABORTED_{forced}", (
+                f"{forced} was reported as {status['outcome']}")
             assert all(p["terminated"] for p in sc.pods.values())
-    r.check("the hard dollar budget caps eviction/reacquisition regardless "
-            "of remaining slots", budget_bounds_reacquisition)
+    r.check("budget soft-stop and external termination are reported as "
+            "ABORTED_*, never as COMPLETE",
+            soft_stop_and_external_termination_are_not_complete)
 
     def zero_progress_repeat_aborts():
         d = fresh_dir("pre_noprog")

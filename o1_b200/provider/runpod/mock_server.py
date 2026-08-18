@@ -84,6 +84,8 @@ class Scenario:
         self.graphql_fail_next = 0          # 5xx the next N graphql calls
         self.drop_rent_response = False     # rent succeeds, response lost
         self.rent_calls: list[dict] = []    # every rent input received
+        self.graphql_documents: list[str] = []  # every document received
+        self.pod_json_omit_env = False      # live REST may omit pod env
         self.evict_after_polls: int | None = None   # auto-evict running pods
 
     def spot_for(self, gpu_id: str) -> dict:
@@ -313,6 +315,7 @@ class _Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         body = json.loads(self.rfile.read(length) or b"{}")
         doc = body.get("query", "")
+        s.graphql_documents.append(doc)
         variables = body.get("variables") or {}
         if "podRentInterruptable" in doc:
             self._graphql_rent(variables.get("input") or {})
@@ -391,12 +394,18 @@ class _Handler(BaseHTTPRequestHandler):
     # ---------------- helpers ----------------
 
     def _pod_json(self, pod):
-        return {"id": pod["id"], "name": pod["name"], "status": pod["status"],
-                "cloud": pod["cloud"], "gpu": pod["gpu"],
-                "image": pod["image"], "cost": 5.49,
-                "createdAt": pod["createdAt"],
-                "startedAt": None, "dataCenterId": "US-KS-2",
-                "env": pod["env"]}
+        out = {"id": pod["id"], "name": pod["name"], "status": pod["status"],
+               "cloud": pod["cloud"], "gpu": pod["gpu"],
+               "image": pod["image"], "cost": 5.49,
+               "createdAt": pod["createdAt"],
+               "startedAt": None, "dataCenterId": "US-KS-2",
+               "env": pod["env"]}
+        if self.scenario.pod_json_omit_env:
+            # the pinned REST contract does not REQUIRE env on a Pod; a live
+            # surface that omits it must not silently degrade nonce-based
+            # ownership reconciliation into name-only matching
+            out.pop("env")
+        return out
 
     def _openapi(self):
         # minimal but surface-complete document mirroring the pinned contract

@@ -57,6 +57,26 @@ class CredentialIsolationError(TransportError):
     """Ambient operator credentials were about to reach a non-production host."""
 
 
+def resolve_credential(base_url: str, api_key: str | None, *,
+                       production_url: str = DEFAULT_BASE_URL) -> str | None:
+    """The ONE place the ambient-credential decision is made.
+
+    Callers that need the credential value before constructing a transport
+    (preflight, session drivers) must route through here rather than
+    calling load_api_key() themselves: resolving the operator credential
+    upstream and then passing it in explicitly would satisfy the
+    constructor's guard while defeating its purpose.
+    """
+    if api_key is not None:
+        return api_key
+    if base_url.rstrip("/") != production_url:
+        raise CredentialIsolationError(
+            f"refusing to resolve the ambient operator credential for the "
+            f"non-production base_url {base_url!r}; pass an explicit "
+            f"synthetic api_key for mock/test hosts")
+    return load_api_key()
+
+
 class AmbiguousMutation(TransportError):
     """A mutating request's outcome is unknown; reconcile before retrying."""
 
@@ -71,16 +91,11 @@ class _BaseTransport:
                  sleep=time.sleep, rng=random.random,
                  opener=None):
         self.base_url = base_url.rstrip("/")
-        if api_key is None and self.base_url != DEFAULT_BASE_URL:
-            # Hermetic-isolation invariant: the ambient operator credential
-            # (RUNPOD_API_KEY / RUNPOD_API_KEY_FILE) may only ever be attached
-            # to the production API host.  Any other base_url (mock servers,
-            # local test fixtures) must receive an explicit synthetic key.
-            raise CredentialIsolationError(
-                f"transport for non-production base_url {self.base_url!r} "
-                f"requires an explicit api_key; ambient operator credentials "
-                f"are never sent to non-production hosts")
-        self._api_key = api_key if api_key is not None else load_api_key()
+        # Hermetic-isolation invariant: the ambient operator credential
+        # (RUNPOD_API_KEY / RUNPOD_API_KEY_FILE) may only ever be attached to
+        # the production API host.  Any other base_url (mock servers, local
+        # test fixtures) must receive an explicit synthetic key.
+        self._api_key = resolve_credential(self.base_url, api_key)
         self._sleep = sleep
         self._rng = rng
         self._opener = opener or urllib.request.urlopen

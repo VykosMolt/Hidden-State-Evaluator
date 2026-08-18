@@ -19,7 +19,16 @@ Steps requiring **explicit user authorization** are marked **[USER AUTH]**.
    quote/report — never silent. There is no static price cap; the live
    secure spot quote (bid) is authoritative and is refused only by the
    mechanical budget-viability rule (`MIN_VIABLE_SESSION_SECONDS=7200` at
-   `MAX_COMPUTE_USD=40`). See `provider/runpod/policy.py`.
+   `MAX_COMPUTE_USD=40`, an effective ceiling near $20.00/h — at live rates
+   ~5.07 h of runtime on B300 and ~5.89 h on B200). See
+   `provider/runpod/policy.py`. The session config's `profile_preference`
+   field (default `["B300", "B200"]`) only orders which profile is tried
+   first — both remain committed by the rental authorization regardless of
+   order, so it is not a new capability. Set `["B200", "B300"]` to prefer
+   the B200, e.g. when B300 demand makes it unobtainable; a first-choice
+   B200 is then reported as `operator_preference_applied: true`, not as a
+   fallback, and a `fallback_reason` still appears only when an
+   earlier-preference profile was actually refused.
 2. **DONE: the production RunPod adapter is implemented and
    mock-contract-tested.** Spot acquisition uses the pinned GraphQL surface
    (`provider/runpod/graphql_spot.py`, contract pinned in
@@ -56,7 +65,12 @@ Steps requiring **explicit user authorization** are marked **[USER AUTH]**.
    allows) and B200_BATCHED batch 1/2/4/8/16/32/64 (where memory allows), on
    the validation corpus only. Report levels A (structural, must be exact),
    B (numerical, frozen tolerances), C (stochastic trajectory identity).
-   Never downgrade a failure.
+   Structural equivalence (level A) is measured for EVERY benchmark
+   configuration (per `config_id`), not per backend; a configuration
+   without its own equivalence verdict is ineligible for selection — so the
+   deepest batch, which selection would otherwise prefer on throughput, can
+   never be chosen on a verdict measured for a different batch size. Never
+   downgrade a failure.
 8. **Run the bounded non-O1 benchmark** in the frozen staged order
    (`policies/BENCHMARK_ORDER.json`): serial → replica 2/4/8 → batched
    4/8/16; extensions only under the predeclared cost rule; stop on OOM or
@@ -69,7 +83,12 @@ Steps requiring **explicit user authorization** are marked **[USER AUTH]**.
     (including which profile, B300 or B200, was actually provisioned and,
     if B200, the recorded B300 refusal reason); everything scientific is
     already frozen. Finalization refuses unresolved fields
-    (`runner/precommit_template.py`).
+    (`runner/precommit_template.py`). The sealed-format precommit is minted
+    ONCE per session and reused by every later pod from the durable store,
+    because the sealed record sink binds every row to the precommit's
+    SHA-256 and refuses to mix bindings; per-pod hardware commitments are
+    stored under per-digest keys so an earlier pod's commitment is never
+    overwritten.
 11. **[USER AUTH] Commit and push the finalized precommit externally.**
 12. **Independently verify the remote commit/ref** (fetch the blob back from
     the remote and hash it, as the v2.1 chronology did).

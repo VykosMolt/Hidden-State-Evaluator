@@ -1,4 +1,5 @@
 {
+  "_profile_preference_note": "Order in which the FROZEN accelerator profiles are tried. Both are covered by the rental authorization, so reordering adds no capability \u2014 it only expresses which part the operator wants FIRST. Set [\"B200\",\"B300\"] to prefer the B200 (e.g. when B300 demand makes it unobtainable); the session still falls back to the other profile and records the reason. Unknown profile names are refused.",
   "_status": "PARTIALLY RESOLVED \u2014 image_digest_ref (B300 image registry push) and package_zip_sha256 (v0.3.0 zip) are the remaining UNRESOLVED fields; zero_touch refuses to run until resolved.",
   "adapter_commit": "4df540bad858c76aca9999ff06cc2fb9a2d62589",
   "budget_policy_sha256": "8ae82de9ff432f4fb8ad467eec967a661c2a14edf2eae6b70d19f7e42781cda7",
@@ -11,6 +12,10 @@
   },
   "image_digest_ref": "UNRESOLVED (ghcr.io/vykosmolt/o1-b300-runner@sha256:... from the registry push of the B300 image; see CONTAINER_IMAGE_RECORD.json)",
   "package_zip_sha256": "UNRESOLVED (sha256 of O1_B300_RUNNER_v0.3.0 zip after packaging)",
+  "profile_preference": [
+    "B300",
+    "B200"
+  ],
   "project": "O1_B300_CALIBRATION",
   "result_destination": "hf://VykosMolt/o1-b200-results/O1_B300_CALIBRATION",
   "result_source": "hf://VykosMolt/o1-b200-results/results/o1_results.tar.gz",

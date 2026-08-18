@@ -41,11 +41,54 @@ always re-query live, do not hardcode): B300 secure list $7.89/h (community
 $6.94), availability NONE at query time, datacenters EU-NL-1 / EUR-IS-1;
 B200 secure $6.79/h, availability LOW, US-CA-2/US-NC-2/US-NE-1.
 
+Current live state (still to be re-confirmed at rental time, not hardcoded):
+B300 and B200 both showing Low stock, Secure-filtered minimum bids equal to
+the list figures above, 0 pods currently owned on the account, and the
+master preflight check PASS.
+
+### Operator profile preference
+
+The session config's `profile_preference` field (default `["B300",
+"B200"]`) lets the operator choose which of the two authorization-committed
+profiles is tried first. Both profiles' canonical bodies are already
+authorized by the rental authorization regardless of this order — reordering
+is a preference, not a new capability, and dropping a profile from the list
+does not remove it as a fallback. Set it to `["B200", "B300"]` in
+`RUNPOD_SESSION_CONFIG.json` to prefer the B200, e.g. when B300 demand makes
+it unobtainable (as observed above, B300 is currently NONE). Unknown profile
+names are refused. A first-choice B200 acquired under this preference is
+reported as `operator_preference_applied: true`, not as a fallback; a
+`fallback_reason` only appears when an earlier-preference profile was
+actually refused.
+
+### Budget derivation
+
+The committed budget is unchanged: USD 45.00 total authorized / 40.00 max
+compute / 5.00 reserved non-compute. A quote is refused only when the $40
+compute allocation cannot buy at least `MIN_VIABLE_SESSION_SECONDS` (2 h) —
+an effective ceiling near $20.00/h. At the live rates above that is ~5.07 h
+of runtime on B300 ($7.89/h) and ~5.89 h on B200 ($6.79/h). Every per-pod
+deadline (in-process watchdog and RunPod's provider-side `terminateAfter`)
+is armed from the REMAINING allocation net of what earlier evicted pods
+already spent, so an eviction/reacquisition sequence can never authorize
+more than the $40 compute allocation even if the driving orchestrator dies.
+Spend is metered from POD CREATION (a pod evicted before RUNNING is not
+free) and frozen only after termination is confirmed (a pod keeps billing
+while terminating).
+
+### Sealed precommit across evictions
+
+The sealed-format calibration precommit is minted ONCE per session and
+reused by every later pod from the durable store, not re-minted per pod;
+per-pod hardware commitments are stored under per-digest keys so an earlier
+pod's commitment is never overwritten.
+
 ## 2. Remote image publication
 
 Follow `REGISTRY_PUSH_PROCEDURE.md` (3 commands + one visibility click).
 The B300 image is already built locally as `o1-b300-runner:v0.3.0`, local
-image id `sha256:26dba0ac9ce869449b5fb5d0f7c520f1c72d9ad2d9ab0d0ec4f4b3474963b101`;
+image id `sha256:13e023bc8b2a3d2cd9732b080fc83d633c34662f0766425ee864303ecbd8e0ef`
+(rebuilt after the adversarial-review fixes);
 the registry digest is UNRESOLVED until the operator pushes. After pushing,
 use the printed REMOTE manifest digest — the immutable reference
 `ghcr.io/vykosmolt/o1-b300-runner@sha256:<remote-manifest-digest>` — in

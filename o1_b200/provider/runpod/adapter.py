@@ -33,7 +33,10 @@ import tarfile
 import time
 
 from .authorization import AuthorizationError, LiveMutationAuthorization
-from .billing import SpendTracker, hard_compute_seconds, session_fits_policy
+from .billing import (
+    BudgetViolation, SpendTracker, hard_compute_seconds,
+    remaining_compute_seconds, session_fits_policy,
+)
 from .graphql_spot import PRODUCTION_GRAPHQL_URL, RunpodGraphQlClient
 from .identityutil import utcnow_iso
 from .models import (
@@ -42,7 +45,10 @@ from .models import (
 from .policy import (
     MIN_CUDA_VERSION, PROFILES_BY_KEY, PURCHASE_MODE, QUOTE_VALIDITY_SECONDS,
 )
-from .pod_request import build_pod_request, render_canonical_deployment
+from .pod_request import (
+    build_pod_request, identity_body, render_canonical_deployment,
+    verify_deployment_rendering,
+)
 from .quote import (
     CATALOG_PATH, QuoteError, build_quote, check_quote_fresh, parse_catalog,
     select_offer,
@@ -81,7 +87,7 @@ class RunpodV2Adapter:
                  authorization: LiveMutationAuthorization | None = None,
                  api_key: str | None = None, opener=None,
                  sleep=time.sleep, clock=time.time,
-                 spend_clock=time.monotonic):
+                 spend_clock=time.monotonic, profile_preference=None):
         verify_pinned_schema()
         self.readonly = ReadOnlyTransport(base_url=base_url, api_key=api_key,
                                           opener=opener, sleep=sleep)
@@ -99,8 +105,14 @@ class RunpodV2Adapter:
                 opener=opener, sleep=sleep)
         self.clock = clock
         self.spend_clock = spend_clock
+        # optional operator reordering of the frozen profiles (never an
+        # addition: the authorization covers every frozen profile already)
+        self.profile_preference = profile_preference
         self.accepted_quote: dict | None = None
         self.spend: SpendTracker | None = None
+        #: audit trail for ownership decisions taken without a verifiable
+        #: launch nonce (surfaced in the lifecycle report)
+        self._reconciliation_notes: list[dict] = []
 
     # ---------------- read-only operations ----------------
 
@@ -123,7 +135,7 @@ class RunpodV2Adapter:
 
     def get_offer_selection(self) -> dict:
         """Preference-ordered profile selection against the live catalog."""
-        return select_offer(self.list_gpu_types())
+        return select_offer(self.list_gpu_types(), self.profile_preference)
 
     def get_availability(self) -> dict:
         """Availability + live spot pricing for the selected profile, with
@@ -234,23 +246,18 @@ class RunpodV2Adapter:
                 f"quote is for {self.accepted_quote['gpu_type_id']!r} but "
                 f"the request pins {req.gpu_type_id!r}; re-quote for the "
                 f"selected profile")
-        if rendered.get("request_sha256") != \
-                self.authorization.deployment_spec_sha256:
+        # Re-derive the hash from the rendering's CONTENTS before comparing:
+        # trusting rendered["request_sha256"] would compare the operator's
+        # commitment against a caller-supplied claim, letting an arbitrary
+        # unrendered body deploy under a valid authorization.
+        actual_spec_sha256 = verify_deployment_rendering(rendered)
+        if actual_spec_sha256 != self.authorization.deployment_spec_sha256:
             raise AuthorizationError(
                 "deployment specification hash does not match the "
                 "authorization's committed deployment_spec_sha256")
         profile_key = self.accepted_quote["profile"]
         body = rendered.get("create_pod_bodies", {}).get(profile_key)
-
-        def _identity_body(b: dict) -> dict:
-            # launch-time facts are not deployment identity: the datacenter
-            # comes from the fresh quote, and env VALUES are injected at
-            # launch (the canonical rendering pins the env NAME set only,
-            # and never contains secret values)
-            out = {k: v for k, v in b.items() if k != "dataCenterIds"}
-            out["env"] = sorted(b.get("env", {}))
-            return out
-        if body is None or _identity_body(body) != _identity_body(req.to_json()):
+        if body is None or body != identity_body(req.to_json()):
             raise AuthorizationError(
                 f"the request for profile {profile_key} is not the "
                 f"authorized canonical body; refusing")
@@ -261,8 +268,16 @@ class RunpodV2Adapter:
                 f"a pod named {req.name!r} already exists "
                 f"({existing.id}); refusing duplicate creation")
         self.authorization.consume_nonce()
-        limit = hard_compute_seconds(
-            self.accepted_quote["total_projected_hourly_usd"])
+        # provider-side auto-terminate: a redundant backstop derived from the
+        # REMAINING allocation (never the full one), so the sum of all pods'
+        # unattended horizons can never exceed the compute budget even if
+        # this orchestrator dies mid-session
+        limit = remaining_compute_seconds(
+            self.accepted_quote["total_projected_hourly_usd"],
+            self.session_spend_usd())
+        if limit <= 0:
+            raise BudgetViolation(
+                "no compute allocation remains; refusing to create a pod")
         terminate_after = time.strftime(
             "%Y-%m-%dT%H:%M:%SZ",
             time.gmtime(self.clock() + limit + TERMINATE_AFTER_MARGIN_SECONDS))
@@ -296,11 +311,22 @@ class RunpodV2Adapter:
         # authoritative state comes from the REST surface
         return self.get_instance(pod_id)
 
+    def session_spend_usd(self):
+        """Cumulative session spend including every earlier evicted pod."""
+        return self.spend.effective_spend() if self.spend is not None else "0"
+
     def _arm_spend(self) -> None:
-        carry = self.spend.effective_spend() if self.spend is not None else "0"
+        """Arm the meter at POD CREATION, not at RUNNING.
+
+        RunPod bills a pod from provisioning onward, so a pod evicted before
+        its container ever reached RUNNING still costs money; starting the
+        meter at RUNNING recorded those attempts as free.
+        """
+        carry = self.session_spend_usd()
         self.spend = SpendTracker(
             self.accepted_quote["total_projected_hourly_usd"],
             clock=self.spend_clock, carryover_usd=carry)
+        self.spend.mark_pod_started()
 
     def _reconcile_by_identity(self, name: str,
                                nonce: str | None = None) -> PodModel | None:
@@ -319,17 +345,37 @@ class RunpodV2Adapter:
                         by_id[p["id"]] = self.get_instance(p["id"])
         except Exception:  # noqa: BLE001 - redundant surface; REST rules
             pass
-        matches = []
+        matches, unverified = [], []
         for pod in by_id.values():
-            if pod.name != name:
+            if pod.name != name or pod.status == "TERMINATED":
                 continue
-            if nonce is not None:
-                env = (pod.extra.get("env") or {})
-                if isinstance(env, dict) and env.get("O1_LAUNCH_NONCE") not in (
-                        None, nonce):
-                    continue
-            if pod.status != "TERMINATED":
+            if nonce is None:
                 matches.append(pod)
+                continue
+            env = pod.extra.get("env")
+            if isinstance(env, dict) and env.get("O1_LAUNCH_NONCE"):
+                if env["O1_LAUNCH_NONCE"] != nonce:
+                    continue        # provably a DIFFERENT launch: not ours
+                matches.append(pod)
+            else:
+                # The live REST surface may omit env, in which case the
+                # nonce cannot be checked.  Such a pod is NOT silently
+                # treated as ours: it is held aside, and only used when no
+                # nonce-verified pod exists at all.
+                unverified.append(pod)
+        if nonce is not None and not matches and unverified:
+            # fall back to the newest by creation time and say so loudly,
+            # rather than adopting an arbitrary same-named leftover
+            unverified.sort(key=lambda p: str(p.created_at or ""),
+                            reverse=True)
+            matches = [unverified[0]]
+            self._reconciliation_notes.append({
+                "event": "NONCE_UNVERIFIED_ADOPTION",
+                "pod_id": unverified[0].id,
+                "candidates": len(unverified),
+                "reason": "the pod listing carried no O1_LAUNCH_NONCE, so "
+                          "ownership was inferred from the canonical name "
+                          "and the newest creation time"})
         if len(matches) > 1:
             # ambiguous: terminate everything matching and halt
             for pod in matches:
@@ -390,10 +436,11 @@ class RunpodV2Adapter:
         try:
             m.mutate("POST", f"/v2/pods/{pod_id}/action",
                      {"action": "terminate"})
-        except ApiHttpError as exc:
-            if exc.status not in (404, 409):
-                # fall through to DELETE anyway; termination must be redundant
-                pass
+        except ApiHttpError:
+            # Deliberately swallowed for EVERY status: termination is
+            # redundant by design and the DELETE below is the second,
+            # independent path.  A raise here would skip it.
+            pass
         try:
             m.mutate("DELETE", f"/v2/pods/{pod_id}")
         except ApiHttpError as exc:

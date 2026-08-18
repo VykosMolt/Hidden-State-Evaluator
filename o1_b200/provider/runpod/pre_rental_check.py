@@ -21,10 +21,13 @@ PY = sys.executable
 def _run(cmd, cwd=None, timeout=3600, live_credentials=False):
     env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "PYTHONPATH": _ROOT}
     if not live_credentials:
-        # local phases are hermetic: the operator credential never enters
-        # a local/mock test process
+        # local phases are hermetic: neither the operator credential nor the
+        # live-mutation authorization flag enters a local/mock test process
+        # (the independent watchdog gates only on that flag)
         env.pop("RUNPOD_API_KEY", None)
         env.pop("RUNPOD_API_KEY_FILE", None)
+        env.pop("RUNPOD_ALLOW_BILLABLE_MUTATIONS", None)
+        env.pop("HF_TOKEN", None)
     proc = subprocess.run(cmd, cwd=cwd or _ROOT, capture_output=True,
                           text=True, timeout=timeout, env=env)
     return proc.returncode, (proc.stdout + proc.stderr)[-4000:]

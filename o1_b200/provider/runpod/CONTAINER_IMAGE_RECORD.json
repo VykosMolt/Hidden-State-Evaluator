@@ -1,6 +1,6 @@
 {
   "base_image_digest": "python@sha256:23c59390fc717bf09f9336908199a0ae75d9c4264bf296123f94ad772fea3b52",
-  "build_timestamp_utc": "2026-08-17T17:51:33Z",
+  "build_timestamp_utc": "2026-08-17T23:01:53Z",
   "dependency_lock_sha256": "53c15b49312dbe6b1ca1e399ae9cf6045c1bdbc53ab1f825a5d3cfbf0870335b",
   "dockerfile_sha256": "a57a80e1398f9daebc4ad6e69e666e15628eb3c95f1af76714a9c0e807c11fbd",
   "environment": {
@@ -22,7 +22,7 @@
     "torch_cuda_runtime": "13.0",
     "transformers": "4.54.1"
   },
-  "image_id_local": "sha256:26dba0ac9ce869449b5fb5d0f7c520f1c72d9ad2d9ab0d0ec4f4b3474963b101",
+  "image_id_local": "sha256:13e023bc8b2a3d2cd9732b080fc83d633c34662f0766425ee864303ecbd8e0ef",
   "image_name": "o1-b300-runner:v0.3.0",
   "notes": "no FP8/FP4/quantization/speculative/vLLM/TensorRT-LLM/SGLang; no startup installation/compilation/clone/resolution; checkpoint never baked; no credentials",
   "platform": "linux/amd64",

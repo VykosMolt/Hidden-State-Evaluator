@@ -14,7 +14,7 @@ from decimal import ROUND_FLOOR, Decimal
 
 from .policy import (
     MAX_COMPUTE_USD, MIN_VIABLE_SESSION_SECONDS, PolicyViolation,
-    SOFT_STOP_FRACTION, TOTAL_AUTHORIZED_USD,
+    RESERVED_NONCOMPUTE_USD, SOFT_STOP_FRACTION, TOTAL_AUTHORIZED_USD,
 )
 
 
@@ -33,7 +33,18 @@ def as_money(v) -> Decimal:
     return d
 
 
+def assert_policy_coherent() -> None:
+    """The three budget constants must agree, or every derived limit lies."""
+    if MAX_COMPUTE_USD + RESERVED_NONCOMPUTE_USD != TOTAL_AUTHORIZED_USD:
+        raise BudgetViolation(
+            f"budget policy incoherent: compute {MAX_COMPUTE_USD} + reserved "
+            f"non-compute {RESERVED_NONCOMPUTE_USD} != total authorized "
+            f"{TOTAL_AUTHORIZED_USD}")
+
+
 def hard_compute_seconds(accepted_total_hourly_rate) -> int:
+    """Runtime the FULL compute allocation buys at this rate (session start)."""
+    assert_policy_coherent()
     rate = as_money(accepted_total_hourly_rate)
     if rate <= 0:
         raise BudgetViolation(f"hourly rate must be positive, got {rate}")
@@ -43,6 +54,29 @@ def hard_compute_seconds(accepted_total_hourly_rate) -> int:
     seconds = (MAX_COMPUTE_USD / rate * Decimal(3600)).to_integral_value(
         rounding=ROUND_FLOOR)
     return int(seconds)
+
+
+def remaining_compute_seconds(accepted_total_hourly_rate,
+                              already_spent_usd="0") -> int:
+    """Runtime the REMAINING compute allocation buys at this rate.
+
+    Every per-pod deadline (the independent watchdog and the provider-side
+    auto-terminate) must be derived from this, never from
+    hard_compute_seconds: an eviction/reacquisition sequence that armed each
+    pod at the full allocation would authorize N x MAX_COMPUTE_USD of
+    unattended runtime if the driving orchestrator died.
+    """
+    rate = as_money(accepted_total_hourly_rate)
+    if rate <= 0:
+        raise BudgetViolation(f"hourly rate must be positive, got {rate}")
+    spent = as_money(already_spent_usd)
+    if spent < 0:
+        raise BudgetViolation(f"spend cannot be negative, got {spent}")
+    remaining = MAX_COMPUTE_USD - spent
+    if remaining <= 0:
+        return 0
+    return int((remaining / rate * Decimal(3600)).to_integral_value(
+        rounding=ROUND_FLOOR))
 
 
 def validate_gpu_rate(gpu_hourly) -> Decimal:

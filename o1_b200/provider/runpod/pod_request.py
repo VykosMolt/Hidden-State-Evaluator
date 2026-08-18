@@ -32,7 +32,6 @@ from .policy import (
 POD_NAME = "o1-b300-calibration"
 CONTAINER_DISK_GB = 60   # image + runtime scratch; checkpoint ~6 GB + records
 ENV_NAMES = (
-    # names only; values are provided by the authorized launcher at runtime
     "O1_B200_OUT", "O1_B200_ARTIFACT_SOURCE", "O1_B200_RESULT_DESTINATION",
     "RUNPOD_ALLOW_BILLABLE_MUTATIONS",
     # session facts injected per acquisition (fresh quote):
@@ -42,6 +41,21 @@ ENV_NAMES = (
     # never rendered into the canonical deployment)
     "HF_TOKEN",
 )
+
+#: Env values that legitimately differ per acquisition (fresh quote) or are
+#: secrets.  These render as empty strings and are compared BY NAME only.
+LAUNCH_VARIABLE_ENV_NAMES = (
+    "O1_ACQUIRED_PROFILE", "O1_SESSION_AUTHORIZED_SECONDS",
+    "O1_HOURLY_RATE_USD", "RUNPOD_ALLOW_BILLABLE_MUTATIONS",
+    "HF_TOKEN", "O1_LAUNCH_NONCE",
+)
+
+#: Env values that ARE deployment identity: they decide what the pod fetches
+#: and where it publishes, so they are frozen into the canonical rendering
+#: and compared EXACTLY.  ("deployment identity" that excluded artifact
+#: provenance would let an authorized launch read and publish anywhere.)
+IDENTITY_ENV_NAMES = tuple(n for n in ENV_NAMES
+                           if n not in LAUNCH_VARIABLE_ENV_NAMES)
 START_ARGS = ("/opt/o1_b200/o1_b200/deploy/start_b300.sh")
 
 DEPLOYMENT_SCHEMA = "o1b300.runpod_deployment_spec.v2"
@@ -127,14 +141,20 @@ def render_canonical_deployment(reqs_by_profile: dict, identities: dict) -> dict
             f"{want}, got {sorted(reqs_by_profile)}")
     bodies = {}
     for key, req in reqs_by_profile.items():
-        body = req.to_json()
-        if set(body["env"].values()) - {""}:
+        raw = req.to_json()
+        # Check the RAW body, before identity_body() blanks anything: a
+        # guard applied after blanking can never fire, so a newly added
+        # secret that someone forgot to list in LAUNCH_VARIABLE_ENV_NAMES
+        # would be frozen in cleartext into a document that is written to
+        # disk and covered by the authorization hash.
+        leaked = sorted(name for name, value in (raw.get("env") or {}).items()
+                        if value and name not in IDENTITY_ENV_NAMES)
+        if leaked:
             raise PodRequestError(
-                "canonical rendering must not contain secret env VALUES")
-        # the datacenter is a launch-time fact from the fresh quote, not a
-        # deployment-identity fact; the frozen spec is datacenter-invariant
-        body.pop("dataCenterIds", None)
-        bodies[key] = body
+                f"canonical rendering must not contain non-identity env "
+                f"VALUES: {leaked}; classify each name as identity-bearing "
+                f"or launch-variable before rendering")
+        bodies[key] = identity_body(raw)
     doc = {
         "schema": DEPLOYMENT_SCHEMA,
         "profile_preference": want,
@@ -144,6 +164,50 @@ def render_canonical_deployment(reqs_by_profile: dict, identities: dict) -> dict
     }
     doc["request_sha256"] = canonical_sha256(DEPLOYMENT_SCHEMA, doc)
     return doc
+
+
+def identity_body(body: dict) -> dict:
+    """Project a createPod body onto its DEPLOYMENT-IDENTITY fields.
+
+    Dropped: dataCenterIds (a launch-time fact from the fresh quote) and the
+    VALUES of launch-variable/secret env names (kept as empty strings so the
+    env NAME SET stays part of the identity).  Everything else — image
+    digest, gpu id, count, cloud, purchase mode, disk, args, ports, name,
+    and the identity-bearing env values (artifact source, result
+    destination, output dir, image digest) — is identity.
+    """
+    out = {k: v for k, v in body.items() if k != "dataCenterIds"}
+    env = dict(body.get("env") or {})
+    for name in LAUNCH_VARIABLE_ENV_NAMES:
+        if name in env:
+            env[name] = ""
+    out["env"] = env
+    return out
+
+
+def verify_deployment_rendering(rendered: dict) -> str:
+    """Re-derive and return the rendering's own hash; raise on mismatch.
+
+    The authorization commits to deployment_spec_sha256.  Comparing that
+    commitment against ``rendered["request_sha256"]`` alone is comparing it
+    against a caller-supplied CLAIM: a doc carrying an arbitrary body plus a
+    matching-looking hash field would pass.  Every consumer must therefore
+    recompute the hash over the rendering's CONTENTS before trusting it.
+    """
+    if not isinstance(rendered, dict):
+        raise PodRequestError("deployment rendering is not an object")
+    claimed = rendered.get("request_sha256")
+    body = {k: v for k, v in rendered.items() if k != "request_sha256"}
+    if body.get("schema") != DEPLOYMENT_SCHEMA:
+        raise PodRequestError(
+            f"deployment rendering schema {body.get('schema')!r} != "
+            f"{DEPLOYMENT_SCHEMA!r}")
+    actual = canonical_sha256(DEPLOYMENT_SCHEMA, body)
+    if claimed != actual:
+        raise PodRequestError(
+            f"deployment rendering hash does not match its own contents "
+            f"(claimed {str(claimed)[:16]}, actual {actual[:16]}); refusing")
+    return actual
 
 
 def render_canonical_pod_request(req: CreatePodRequestModel,

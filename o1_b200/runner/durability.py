@@ -110,33 +110,65 @@ class LocalDurableStore(DurableStore):
 
 
 class HfDurableStore(DurableStore):
-    """Private HF repo store (the session's existing artifact approach)."""
+    """Private HF repo store (the session's existing artifact approach).
 
-    def __init__(self, repo_id: str, token: str | None = None):
+    Every hub call runs in the isolated ``runner.hf_transfer`` subprocess:
+    the pod keeps ``HF_HUB_OFFLINE=1`` so a model load can never reach the
+    network, and only that helper is spawned with the offline flags
+    stripped.  Doing the calls in-process would either fail closed (the
+    OfflineAdapter raises for uploads too) or require weakening the
+    offline guarantee for the whole session.
+    """
+
+    def __init__(self, repo_id: str, token: str | None = None,
+                 runner=None, timeout: float = 3600.0):
         self.repo_id = repo_id
-        self.token = token
+        self.token = token or os.environ.get("HF_TOKEN")
+        self.timeout = timeout
+        self._runner = runner or self._spawn
+
+    def _spawn(self, args: list[str]) -> dict:
+        import subprocess
+        import sys
+
+        from .hf_transfer import child_env
+        from ..provider.runpod.redaction import redact
+        proc = subprocess.run(
+            [sys.executable, "-m", "o1_b200.runner.hf_transfer", *args],
+            capture_output=True, text=True, timeout=self.timeout,
+            env=child_env(self.token))
+        if proc.returncode != 0:
+            raise DurabilityError(
+                redact(f"hf transfer {args[0]} failed: "
+                       f"{(proc.stdout + proc.stderr)[-500:]}"))
+        try:
+            return json.loads(proc.stdout.strip().splitlines()[-1])
+        except (json.JSONDecodeError, IndexError):
+            raise DurabilityError(
+                f"hf transfer {args[0]} produced no result object") from None
 
     def push_file(self, local_path: str, remote_rel: str) -> dict:
-        from huggingface_hub import HfApi
-        api = HfApi(token=self.token)
-        api.upload_file(path_or_fileobj=local_path,
-                        path_in_repo=remote_rel, repo_id=self.repo_id,
-                        repo_type="model")
-        return {"remote": remote_rel, "sha256": sha256_file(local_path)}
+        out = self._runner(["push", "--repo", self.repo_id,
+                            "--local", local_path, "--remote-rel", remote_rel])
+        want = sha256_file(local_path)
+        if out.get("sha256") != want:
+            raise DurabilityError(
+                f"push digest disagreement for {remote_rel}")
+        return {"remote": remote_rel, "sha256": want}
 
     def fetch_file(self, remote_rel: str, local_path: str) -> dict:
-        from huggingface_hub import hf_hub_download
-        got = hf_hub_download(repo_id=self.repo_id, filename=remote_rel,
-                              token=self.token)
-        os.makedirs(os.path.dirname(local_path) or ".", exist_ok=True)
-        shutil.copyfile(got, local_path)
-        return {"local": local_path, "sha256": sha256_file(local_path)}
+        out = self._runner(["fetch", "--repo", self.repo_id,
+                            "--remote-rel", remote_rel, "--local", local_path])
+        got = sha256_file(local_path)
+        if out.get("sha256") != got:
+            raise DurabilityError(
+                f"fetch digest disagreement for {remote_rel}")
+        return {"local": local_path, "sha256": got}
 
     def list_prefix(self, remote_prefix: str) -> list[str]:
-        from huggingface_hub import HfApi
-        api = HfApi(token=self.token)
-        files = api.list_repo_files(self.repo_id)
-        return sorted(f for f in files if f.startswith(remote_prefix))
+        out = self._runner(["list", "--repo", self.repo_id,
+                            "--prefix", remote_prefix])
+        return list(out.get("files") or [])
 
 
 def store_for_destination(destination: str) -> DurableStore:
@@ -257,20 +289,65 @@ class CheckpointDurability:
 
     def sync_checkpoint(self, archive_path: str, meta: dict) -> dict:
         """Push checkpoint + manifest; the manifest is pushed LAST so a
-        half-pushed checkpoint is never referenced."""
-        digest = sha256_file(archive_path)
+        half-pushed checkpoint is never referenced.
+
+        The source is SNAPSHOTTED before hashing, and the snapshot — not the
+        live file — is what gets hashed and pushed.  Without this, a file
+        still being appended to (the sealed orchestrator's records JSONL is
+        mirrored while it grows) is hashed at one moment and read at
+        another, so the manifest records a digest for bytes that were never
+        stored and every later restore refuses with a hash mismatch.
+        """
         name = os.path.basename(archive_path)
-        self.store.push_file(archive_path, f"{self.remote_prefix}/{name}")
-        manifest = {"archive": name, "sha256": digest, **meta}
-        tmp = archive_path + ".manifest.json"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(manifest, fh, indent=2, sort_keys=True)
+        snapshot = archive_path + ".mirror_snapshot"
+        shutil.copyfile(archive_path, snapshot)
         try:
-            self.store.push_file(tmp, f"{self.remote_prefix}/LATEST.json")
+            digest = sha256_file(snapshot)
+            rows = None
+            if snapshot.endswith(".jsonl.mirror_snapshot") or \
+                    archive_path.endswith(".jsonl"):
+                with open(snapshot, encoding="utf-8") as fh:
+                    rows = sum(1 for ln in fh if ln.strip())
+            self.store.push_file(snapshot, f"{self.remote_prefix}/{name}")
+            manifest = {"archive": name, "sha256": digest, **meta}
+            if rows is not None:
+                manifest["rows"] = rows
+            tmp = archive_path + ".manifest.json"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(manifest, fh, indent=2, sort_keys=True)
+            try:
+                self.store.push_file(tmp, f"{self.remote_prefix}/LATEST.json")
+            finally:
+                os.remove(tmp)
         finally:
-            os.remove(tmp)
-        self.on_event("CHECKPOINT_SYNCED", archive=name, sha256=digest)
+            try:
+                os.remove(snapshot)
+            except FileNotFoundError:
+                pass
+        self.on_event("CHECKPOINT_SYNCED", archive=name, sha256=digest,
+                      rows=manifest.get("rows"))
         return manifest
+
+    def latest_row_count(self) -> int | None:
+        """Durable committed-row count from the manifest, or None if absent.
+
+        This is the externally visible progress marker the off-pod session
+        driver uses for its zero-progress guard: None means "unknown", which
+        is deliberately NOT the same as zero.
+        """
+        try:
+            listing = self.store.list_prefix(self.remote_prefix)
+            if f"{self.remote_prefix}/LATEST.json" not in listing:
+                return None
+            import tempfile
+            with tempfile.TemporaryDirectory() as tmp:
+                local = os.path.join(tmp, "LATEST.json")
+                self.store.fetch_file(
+                    f"{self.remote_prefix}/LATEST.json", local)
+                with open(local, encoding="utf-8") as fh:
+                    return json.load(fh).get("rows")
+        except Exception:  # noqa: BLE001 - advisory marker
+            return None
 
     def restore_latest(self, dest_dir: str) -> dict | None:
         """Fetch the latest durable checkpoint; hash-verified against its
@@ -293,4 +370,7 @@ class CheckpointDurability:
                 f"durable checkpoint hash mismatch: {got[:16]} != "
                 f"{manifest['sha256'][:16]}; refusing to resume from it")
         self.on_event("CHECKPOINT_RESTORED", archive=manifest["archive"])
-        return {"archive": archive, **manifest}
+        # the resolved LOCAL path must win: spreading the manifest last put
+        # its bare basename back into "archive", so callers received a
+        # relative name that only resolved by accident of the cwd
+        return {**manifest, "archive": archive}

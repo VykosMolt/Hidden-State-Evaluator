@@ -1,2 +1,0 @@
-{"backend":"B200_BATCHED","batch_size":8,"compaction":false,"event":"EXECUTE_ROWS","n_specs":96,"utc":"2026-08-17T18:08:16Z"}
-{"event":"FINALIZED","n_rows":96,"records_sha256":"7b9a0415557ab481f650b9b23e2547a6b8e93b3b6895c91ab4891e82f07f7cad","utc":"2026-08-17T18:09:49Z"}

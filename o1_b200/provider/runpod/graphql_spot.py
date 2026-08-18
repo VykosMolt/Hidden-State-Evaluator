@@ -39,10 +39,10 @@ import urllib.error
 import urllib.request
 
 from .models import SchemaIncompatibility
-from .redaction import load_api_key, redact
+from .redaction import redact
 from .transport import (
     AmbiguousMutation, CredentialIsolationError, ReadOnlyViolation,
-    TransportError,
+    TransportError, resolve_credential,
 )
 
 PRODUCTION_GRAPHQL_URL = "https://api.runpod.io/graphql"
@@ -88,7 +88,7 @@ query SpotPricing {
     communityPrice
     secureSpotPrice
     communitySpotPrice
-    lowestPrice(input: {gpuCount: 1}) {
+    lowestPrice(input: {gpuCount: 1, secureCloud: true}) {
       minimumBidPrice
       uninterruptablePrice
       stockStatus
@@ -127,12 +127,8 @@ class RunpodGraphQlClient:
                  api_key: str | None = None, authorization=None,
                  opener=None, sleep=time.sleep, rng=random.random):
         self.url = url
-        if api_key is None and url != PRODUCTION_GRAPHQL_URL:
-            raise CredentialIsolationError(
-                f"GraphQL client for non-production url {url!r} requires an "
-                f"explicit api_key; ambient operator credentials are never "
-                f"sent to non-production hosts")
-        self._api_key = api_key if api_key is not None else load_api_key()
+        self._api_key = resolve_credential(
+            url, api_key, production_url=PRODUCTION_GRAPHQL_URL)
         self._authorization = authorization
         self._opener = opener or urllib.request.urlopen
         self._sleep = sleep
@@ -238,6 +234,9 @@ class RunpodGraphQlClient:
             raise SchemaIncompatibility(
                 f"GraphQL gpuTypes carries {len(match)} entries for the id")
         g = match[0]
+        # lowestPrice is queried with secureCloud:true, so minimumBidPrice is
+        # the SECURE market minimum — an unfiltered global/community minimum
+        # must never be used to raise a Secure bid
         lowest = g.get("lowestPrice") or {}
         return {
             "gpu_type_id": g["id"],

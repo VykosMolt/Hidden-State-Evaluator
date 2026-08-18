@@ -8,7 +8,13 @@ Secure Cloud INTERRUPTIBLE (spot) session. Primary accelerator profile:
 NVIDIA B300 SXM6 AC (Blackwell Ultra, sm_103, compute capability 10.3,
 288 GB HBM3e); explicit fallback profile NVIDIA B200 (sm_100, CC 10.0,
 180 GB HBM3e), selected only when B300 is refused, with the refusal reason
-recorded in the quote/report — never silent. Built on the verified
+recorded in the quote/report — never silent. The rental authorization
+already commits to BOTH profiles' canonical bodies; the session config's
+`profile_preference` (default `["B300", "B200"]`) only orders which one is
+*tried first* and can be set to `["B200", "B300"]` when B300 demand makes it
+unobtainable — a first-choice B200 is then reported as a deliberate
+`operator_preference_applied: true` selection, not a fallback, and dropping
+a profile from the list never removes it as a fallback. Built on the verified
 scientific package `O1_oracle_reachability_v2.1.0` (imported
 byte-hash-verified, never modified). This package is development
 infrastructure — it is NOT:
@@ -50,6 +56,18 @@ design is frozen and untouched (see `docs/ARCHITECTURE.md`).
   local smoke report.
 - `preserved_attempts/` — the hashed, frozen 403-row stopped laptop attempt
   (ABORTED_BEFORE_CALIBRATION_ANALYSIS; NO ROWS REUSED).
+
+## Current validation state
+
+Aggregate runner suite: 228 checks / 0 failed across 18 modules. Foundation
+Learner suite: 1662 passed / 0 failed / 8 skipped. Mocked dress rehearsal:
+COMPLETE. 21-point failure injection: all-terminal. Master pre-rental
+readiness: PASS. Live GET-only preflight: PASS, with B300 and B200 both
+showing Low stock (B300 $7.89/h, B200 $6.79/h secure spot; Secure-filtered
+minimum bids equal to those figures). Container image
+`o1-b300-runner:v0.3.0`, local id
+`sha256:13e023bc8b2a3d2cd9732b080fc83d633c34662f0766425ee864303ecbd8e0ef`,
+registry digest UNRESOLVED until the operator pushes.
 
 ## Base identity
 

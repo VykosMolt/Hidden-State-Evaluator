@@ -28,6 +28,7 @@ MODULES = [
     "test_runpod_zero_touch",
     "test_hardware_gate",
     "test_preemption",
+    "test_review_repairs",
     "test_credential_isolation",
 ]
 
