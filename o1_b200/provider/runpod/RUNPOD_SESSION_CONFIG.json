@@ -1,7 +1,7 @@
 {
   "_profile_preference_note": "Order in which the FROZEN accelerator profiles are tried. Both are covered by the rental authorization, so reordering adds no capability \u2014 it only expresses which part the operator wants FIRST. Set [\"B200\",\"B300\"] to prefer the B200 (e.g. when B300 demand makes it unobtainable); the session still falls back to the other profile and records the reason. Unknown profile names are refused.",
   "_status": "PARTIALLY RESOLVED \u2014 image_digest_ref (B300 image registry push) and package_zip_sha256 (v0.3.0 zip) are the remaining UNRESOLVED fields; zero_touch refuses to run until resolved.",
-  "adapter_commit": "4df540bad858c76aca9999ff06cc2fb9a2d62589",
+  "adapter_commit": "b19751972e9b7d950ee83cf5d3661c60b563b654",
   "budget_policy_sha256": "8ae82de9ff432f4fb8ad467eec967a661c2a14edf2eae6b70d19f7e42781cda7",
   "identities": {
     "artifact_staging": "private HF repo VykosMolt/o1-b200-staging (see PRE_RENTAL_PREREQUISITES.md)",
@@ -11,7 +11,7 @@
     "result_destination": "private HF repo VykosMolt/o1-b200-results (SEPARATE from staging; pod write token fine-grained to results only)"
   },
   "image_digest_ref": "UNRESOLVED (ghcr.io/vykosmolt/o1-b300-runner@sha256:... from the registry push of the B300 image; see CONTAINER_IMAGE_RECORD.json)",
-  "package_zip_sha256": "UNRESOLVED (sha256 of O1_B300_RUNNER_v0.3.0 zip after packaging)",
+  "package_zip_sha256": "UNRESOLVED (sha256 of the deployed O1_B300_RUNNER v0.3.0 zip). Deliberately NOT baked in: this file lives INSIDE the archive, so a package cannot contain its own hash. The archive built from this commit is 0af363fd1bb3bb3583d9a542b5e538c1ef6def9c2d0046da56e19faeea34f57f (o1_packages/O1_B300_RUNNER_v0.3.0_RUNPOD_PRERENTAL.zip.sha256, reproducible via o1_b200/scripts/package_release.sh). Paste that value here at launch; zero_touch reads this file from the worktree, not from the archive.",
   "profile_preference": [
     "B300",
     "B200"
