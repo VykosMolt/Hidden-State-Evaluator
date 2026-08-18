@@ -1,6 +1,6 @@
 # External Pre-Rental Prerequisites — current state
 
-Software readiness is PASS (155/155 checks; see
+Software readiness is PASS (256/256 local checks across 19 modules; see
 `reports/RUNPOD_PRE_RENTAL_READINESS.*`). Rental remains inappropriate until
 ALL of the following flip to done. None of them is runner development; each
 is credential-gated account/staging work.
