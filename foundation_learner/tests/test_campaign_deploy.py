@@ -53,11 +53,30 @@ def test_the_lock_records_that_peft_is_absent_on_the_b200():
 
 def test_the_lock_binds_the_container_and_changes_nothing_in_it():
     container = lock()["container"]
-    assert container["image_name"] == "o1-b300-runner:v0.3.1"
+    # The invariant is CORRESPONDENCE, not a literal version: the lock must
+    # describe the image the O1 build actually produced.  Hardcoding a tag
+    # here just means chasing it at every bump while real drift -- a lock
+    # describing an image that was never built -- still passes.
+    record = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))))),
+        "o1-v2-b200-runner", "o1_b200", "provider", "runpod",
+        "CONTAINER_IMAGE_RECORD.json")
+    if os.path.isfile(record):
+        with open(record, encoding="utf-8") as fh:
+            built = json.load(fh)
+        assert container["image_name"] == built["image_name"], (
+            f"the lock names {container['image_name']} but the O1 build "
+            f"record says {built['image_name']}")
+        assert container["image_id_local"] == built["image_id_local"]
+        assert container["foundation_learner_source_sha256"] == \
+            built["foundation_learner_source_sha256"]
+    else:
+        assert container["image_name"].startswith("o1-b300-runner:v0.3.")
     assert container["base_image"] == "python:3.14-slim-bookworm"
     assert container["base_image_digest"].startswith("python@sha256:")
     assert container["venv"] == "/opt/venv"
-    # v0.3.1 bakes the FL SOURCE (the image previously carried none, so a
+    # v0.3.1+ bakes the FL SOURCE (the image previously carried none, so a
     # combined session refused at the handover).  What must still be true is
     # that FL changes nothing about the runtime it borrows.
     assert container["fl_changes_to_the_image"].startswith("SOURCE ONLY")

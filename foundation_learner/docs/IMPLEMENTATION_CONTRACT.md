@@ -685,7 +685,7 @@ pins transformers 4.54.1, torch, peft, numpy, python, CUDA, and binds the O1
 B200 container reference (Dockerfile.b200 digest) — the FL package RUNS IN
 the existing O1 container and changes nothing about the runtime it borrows:
 no package installation, no dependency change, no venv change. From image
-`o1-b300-runner:v0.3.1` the FL *source* is baked at
+`o1-b300-runner:v0.3.2` the FL *source* is baked at
 `/opt/foundation_learner/foundation_learner` (one `Dockerfile.b300` COPY,
 recorded as `foundation_learner_source_sha256`), because an image without it
 refused every combined session at the O1→FL handover with exit 78. The

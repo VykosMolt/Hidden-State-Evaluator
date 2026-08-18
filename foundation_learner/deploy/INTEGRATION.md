@@ -9,7 +9,7 @@ rental, and nothing here spends money.
 
 | item | value |
 |---|---|
-| image | `o1-b300-runner:v0.3.1` (local id `sha256:37b76595…`; B300 primary / B200 explicit fallback, INTERRUPTIBLE) |
+| image | `o1-b300-runner:v0.3.2` (local id `sha256:6ddf92b9…`; B300 primary / B200 explicit fallback, INTERRUPTIBLE) |
 | base | `python:3.14-slim-bookworm`, pinned by digest `python@sha256:23c59390…` |
 | venv | `/opt/venv` |
 | torch | `2.12.1+cu130` (stable; identical wheel verified locally on sm_120 incl. the real-checkpoint smoke) |
@@ -20,7 +20,7 @@ rental, and nothing here spends money.
 | container disk | 60 GB |
 | checkpoint | mounted at `/artifacts/ouro_rltt_local`, never baked into the image |
 
-**The FL package changes the image only by being in it.** From v0.3.1 the FL
+**The FL package changes the image only by being in it.** From v0.3.2 the FL
 source is baked at `/opt/foundation_learner/foundation_learner` (one
 `Dockerfile.b300` COPY, staged from the FL worktree by
 `o1_b200/scripts/build_b300_image.sh`, recorded as
