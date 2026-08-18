@@ -82,6 +82,13 @@ if [[ -n "${O1_B300_ENTRY_ACTIVE:-}" && -n "$FL_CONFIG" ]]; then
 fi
 export O1_B300_ENTRY_ACTIVE=1
 if [[ -n "$FL_CONFIG" ]]; then
+  if [[ ! -f "$FL_CONFIG" ]]; then
+    echo "[start_b300] REFUSED: O1_FL_SESSION_CONFIG names $FL_CONFIG," >&2
+    echo "            which does not exist on this pod.  A combined session" >&2
+    echo "            was requested and cannot be honoured; refusing now" >&2
+    echo "            rather than after the accelerator is paid for." >&2
+    exit 78
+  fi
   if [[ ! -x "$FL_ENTRY" ]]; then
     echo "[start_b300] REFUSED: O1_FL_SESSION_CONFIG is set but the FL entry" >&2
     echo "            $FL_ENTRY is absent — a combined session was requested" >&2

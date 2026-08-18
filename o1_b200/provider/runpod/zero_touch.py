@@ -52,6 +52,32 @@ class DeterministicPodFailure(RuntimeError):
     """The pod reported a reproducible failure; reacquiring cannot help."""
 
 
+#: Path-in-store of the result archive.  ONE definition: production_entry
+#: pushes here and the off-pod driver reads from here, both relative to the
+#: same destination, so a session prefix can never move one without the
+#: other.  Storing an absolute result_source separately is what let the
+#: prefixed store publish to <prefix>/results/... while the driver looked
+#: for results/... and declared a fully paid, fully successful run ABORTED.
+RESULT_ARCHIVE_REL = "results/o1_results.tar.gz"
+
+#: Keys the session config MUST carry.  Absent is NOT the same as
+#: UNRESOLVED: an absent artifact_source silently became "" and the pod
+#: started with nothing to fetch, burning acquisitions before anything could
+#: notice.  Missing is now a refusal, exactly like unresolved.
+REQUIRED_CONFIG_KEYS = (
+    "artifact_source", "result_destination", "image_digest_ref",
+    "project", "identities",
+)
+
+
+def result_archive_uri(config: dict) -> str:
+    """Where this session's result archive lives, derived — never stored."""
+    destination = config.get("result_destination", "")
+    if not destination:
+        return ""
+    return f"{destination.rstrip('/')}/{RESULT_ARCHIVE_REL}"
+
+
 def load_session_config(root: str) -> dict:
     """Deployment facts resolved before launch (image digest, identities)."""
     path = os.path.join(root, "o1_b200", "provider", "runpod",
@@ -67,6 +93,22 @@ def load_session_config(root: str) -> dict:
     if unresolved:
         raise AuthorizationError(
             f"session config carries unresolved template fields {unresolved}")
+    missing = [k for k in REQUIRED_CONFIG_KEYS
+               if not config.get(k)]
+    if missing:
+        raise AuthorizationError(
+            f"session config is missing required field(s) {missing}; an "
+            f"absent key is not a default — a missing artifact_source made "
+            f"the pod start with nothing to fetch and cost acquisitions "
+            f"before anything refused")
+    stored = config.get("result_source")
+    derived = result_archive_uri(config)
+    if stored and stored != derived:
+        raise AuthorizationError(
+            f"result_source {stored!r} disagrees with the location the pod "
+            f"actually publishes to, {derived!r} (result_destination + "
+            f"{RESULT_ARCHIVE_REL}). Remove result_source — it is derived — "
+            f"rather than maintaining two paths for one object")
     return config
 
 
@@ -80,6 +122,11 @@ def identity_env_values(config: dict) -> dict:
         "O1_B200_OUT": config.get("pod_out_dir", "/outputs"),
         "O1_B200_ARTIFACT_SOURCE": config.get("artifact_source", ""),
         "O1_B200_RESULT_DESTINATION": config.get("result_destination", ""),
+        # "" = O1-only.  A path here selects the combined O1 -> FL session;
+        # start_b300.sh refuses at once if the file or the FL entry is
+        # absent, rather than discovering it after the accelerator is paid
+        # for.  Identity-bound, so enabling it needs a fresh authorization.
+        "O1_FL_SESSION_CONFIG": config.get("fl_session_config", ""),
         "O1_IMAGE_DIGEST": config["image_digest_ref"],
     }
 
@@ -417,8 +464,13 @@ def run_session(*, authorization_path: str, out_dir: str,
             # against a stale archive from an earlier attempt
             controller.collect_logs(pod_id)
             dest = os.path.join(out_dir, "downloaded_results")
+            # load_session_config REFUSES a stored result_source that
+            # disagrees with the derived location, so honouring an explicit
+            # value here cannot reintroduce the divergence; it just keeps a
+            # directly-constructed config (tests, rehearsals) working.
             got = adapter.download_results(
-                config.get("result_source", dest), dest)
+                config.get("result_source") or result_archive_uri(config)
+                or dest, dest)
             step("RESULTS_DOWNLOADED", dest)
             witness_state, expected = _expected_result_digest(config)
             if witness_state == "VERIFIABLE" and got.get("sha256") != expected:

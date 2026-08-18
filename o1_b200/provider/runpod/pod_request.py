@@ -33,6 +33,13 @@ POD_NAME = "o1-b300-calibration"
 CONTAINER_DISK_GB = 60   # image + runtime scratch; checkpoint ~6 GB + records
 ENV_NAMES = (
     "O1_B200_OUT", "O1_B200_ARTIFACT_SOURCE", "O1_B200_RESULT_DESTINATION",
+    # Selects the COMBINED O1 -> Foundation Learner session.  Identity, not
+    # a launch variable: it decides which workloads run on the accelerator,
+    # so it is frozen into the canonical rendering and the authorization
+    # commits to it.  Empty means an O1-only session.  NOTE: adding this
+    # name changed deployment_spec_sha256 -- any authorization minted before
+    # v0.3.2 no longer matches and a fresh ceremony is required.
+    "O1_FL_SESSION_CONFIG",
     "RUNPOD_ALLOW_BILLABLE_MUTATIONS",
     # session facts injected per acquisition (fresh quote):
     "O1_ACQUIRED_PROFILE", "O1_SESSION_AUTHORIZED_SECONDS",

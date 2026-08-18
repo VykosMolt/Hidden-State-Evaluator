@@ -148,12 +148,31 @@ def do_scope(repo_id: str, mode: str) -> dict:
     api.auth_check(repo_id, repo_type="model")
     out["read"] = True
     if mode == "write":
+        # Sweep probes a previous pod left behind.  Eviction between the
+        # upload and the delete strands a .preflight/ entry in the results
+        # repository forever, and nothing else ever removes it.
+        swept = []
+        for name in api.list_repo_files(repo_id):
+            if name.startswith(PREFLIGHT_PREFIX + "/"):
+                try:
+                    api.delete_file(path_in_repo=name, repo_id=repo_id,
+                                    repo_type="model")
+                    swept.append(name)
+                except Exception:  # noqa: BLE001 - best effort cleanup
+                    pass
+        out["swept_stale_probes"] = swept
         rel = f"{PREFLIGHT_PREFIX}/scope_{uuid4().hex}"
         api.upload_file(path_or_fileobj=b"o1-b300 write-scope probe\n",
                         path_in_repo=rel, repo_id=repo_id, repo_type="model")
-        api.delete_file(path_in_repo=rel, repo_id=repo_id, repo_type="model")
         out["write"] = True
         out["probe_path"] = rel
+        # finally: the probe must not survive a failure between here and
+        # the return, or it becomes the litter this sweep exists to remove.
+        try:
+            api.delete_file(path_in_repo=rel, repo_id=repo_id,
+                            repo_type="model")
+        except Exception:  # noqa: BLE001
+            out["probe_cleanup"] = "FAILED (swept on the next acquisition)"
     return out
 
 

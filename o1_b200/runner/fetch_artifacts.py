@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 
@@ -121,15 +122,32 @@ def fetch(source_uri: str, artifacts_root: str = ARTIFACTS_ROOT,
                 "artifacts_root": artifacts_root}
     repo = parse_hf_source(source_uri)
     fetched = []
+    # Stage, then publish atomically.  Downloading straight into
+    # /artifacts left a PARTIAL tree behind on any interruption, and the
+    # next start saw "the path exists" and skipped the fetch entirely --
+    # so verification failed forever, which the driver reads as an
+    # eviction and answers with reacquisitions that fail identically.
+    staging = os.path.join(artifacts_root, ".incoming")
     for rel in missing:
         remote = STAGED_LAYOUT.get(rel, rel)
+        shutil.rmtree(staging, ignore_errors=True)
+        os.makedirs(staging, exist_ok=True)
         run(["snapshot", "--repo", repo, "--prefix", remote,
-             "--local", artifacts_root])
-        if not os.path.exists(os.path.join(artifacts_root, rel)):
+             "--local", staging])
+        staged = os.path.join(staging, remote)
+        if not os.path.exists(staged):
             raise ArtifactFetchError(
                 f"artifact {rel!r} is absent from the staging repo {repo!r} "
                 f"after fetch; the pod cannot proceed")
+        target = os.path.join(artifacts_root, rel)
+        os.makedirs(os.path.dirname(os.path.abspath(target)) or "/",
+                    exist_ok=True)
+        if os.path.exists(target):
+            shutil.rmtree(target, ignore_errors=True) \
+                if os.path.isdir(target) else os.remove(target)
+        os.replace(staged, target)
         fetched.append(rel)
+    shutil.rmtree(staging, ignore_errors=True)
     return {"repo": repo, "fetched": fetched,
             "already_present": [r for r in wanted if r not in missing],
             "artifacts_root": artifacts_root}

@@ -729,9 +729,13 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
                 if os.path.exists(p):
                     tar.add(p, arcname=name)
         digest = sha256_file(archive)
-        store.push_file(archive, "results/o1_results.tar.gz")
+        # ONE definition of where the archive goes, shared with the off-pod
+        # driver (zero_touch.RESULT_ARCHIVE_REL).  Both are relative to the
+        # same destination, so a session prefix moves both or neither.
+        from o1_b200.provider.runpod.zero_touch import RESULT_ARCHIVE_REL
+        store.push_file(archive, RESULT_ARCHIVE_REL)
         back = os.path.join(out_dir, "transfer_verify.tar.gz")
-        store.fetch_file("results/o1_results.tar.gz", back)
+        store.fetch_file(RESULT_ARCHIVE_REL, back)
         if sha256_file(back) != digest:
             raise ProductionEntryError("result transfer verification failed")
         os.remove(back)

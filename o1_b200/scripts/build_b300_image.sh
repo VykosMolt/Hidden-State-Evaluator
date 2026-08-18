@@ -38,8 +38,14 @@ else
     echo "REFUSED: staged FL source has no executable deploy/fl_b200_entry.sh" >&2
     exit 2
   fi
-  FL_TREE_SHA=$(cd build_ctx/foundation_learner && find . -type f -print0 \
-    | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)
+  # LC_ALL=C: sort order is locale-dependent, so without it the SAME tree
+  # digests differently on a differently-configured machine and the recorded
+  # provenance hash stops being reproducible.  -print0/-0 handles newlines in
+  # names; symlinks are listed explicitly so a link change is not invisible.
+  FL_TREE_SHA=$(cd build_ctx/foundation_learner \
+    && find . \( -type f -o -type l \) -print0 \
+    | LC_ALL=C sort -z | xargs -0 sha256sum | LC_ALL=C sha256sum \
+    | cut -d' ' -f1)
 fi
 
 # verify the frozen wheel set against its hash manifest BEFORE building

@@ -325,6 +325,13 @@
         "a mounted durable destination is proven by actually writing to it",
         "the scope preflight requires a token only when a hub repo is actually named",
         "the entrypoint proves the credential scope before fetching anything",
+        "the session config refuses a required field that is merely ABSENT, not just one that is UNRESOLVED",
+        "the result archive location is derived, and a stored one that disagrees is refused",
+        "the combined O1 -> FL session can be selected from the authorized launch path at all",
+        "the scope preflight refuses an empty read source while the manifest still expects a fetch",
+        "a hub 5xx keeps its status line and is typed apart from a deterministic 401/403",
+        "a deterministic credential refusal emits the abort marker; a transient one deliberately does not",
+        "an interrupted artifact fetch leaves nothing publishable, so a retry can still succeed",
         "a deterministic pod abort is recognised and stops the session instead of driving reacquisition",
         "a session prefix in the durable destination scopes every key, so a fresh run cannot silently resume an old one",
         "an expired authorization still permits TERMINATION while refusing acquisition"
@@ -332,7 +339,7 @@
       "failed": 0,
       "failures": [],
       "module": "test_launch_path",
-      "passed": 21
+      "passed": 28
     },
     {
       "checks": [
@@ -412,7 +419,7 @@
   "schema": "o1b200.test_report.v1",
   "scope_note": "Hardware-independent local validation only: synthetic runtime + non-O1 corpus + mocked provider/clock. No B200 hardware claim is made or implied.",
   "total_failed": 0,
-  "total_passed": 256,
-  "utc": "2026-08-18T11:24:07Z",
+  "total_passed": 263,
+  "utc": "2026-08-18T15:29:09Z",
   "verdict": "ALL O1 B200 RUNNER TESTS PASSED"
 }

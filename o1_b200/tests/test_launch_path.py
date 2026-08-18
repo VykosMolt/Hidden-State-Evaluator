@@ -137,8 +137,10 @@ def run() -> Runner:
 
         def fake(args):
             calls.append(args)
-            # the helper materialises the tree; emulate that
-            os.makedirs(os.path.join(root, "ouro_rltt_local"), exist_ok=True)
+            # the helper materialises the tree under --local, which is now a
+            # staging dir; the fetch publishes it atomically afterwards
+            local = args[args.index("--local") + 1]
+            os.makedirs(os.path.join(local, "ouro_rltt_local"), exist_ok=True)
             return {"count": 3}
         out = fetch("hf://ns/staging", root, runner=fake,
                     manifest_path=POD_MANIFEST)
@@ -349,15 +351,21 @@ def run() -> Runner:
         import o1_b200.runner.check_hf_scope as mod
         d = fresh_dir("scope_no_token")
         dest = os.path.join(d, "durable")
+        # an ALL-MOUNTED pod: every artifact the manifest wants is present,
+        # so no fetch is due and no hub credential is needed
+        mounted = os.path.join(d, "artifacts")
+        os.makedirs(os.path.join(mounted, "ouro_rltt_local"))
         saved_argv, saved_token = sys.argv, os.environ.pop("HF_TOKEN", None)
         sys.argv = ["check_hf_scope", "--read-source", "",
-                    "--write-destination", dest]
+                    "--write-destination", dest,
+                    "--artifacts-root", mounted, "--manifest", POD_MANIFEST]
         try:
             assert mod.main() == 0, (
                 "a pod with mounted artifacts and a mounted durable path was "
                 "refused for lacking an unnecessary HF_TOKEN")
             sys.argv = ["check_hf_scope", "--read-source", "hf://ns/staging",
-                        "--write-destination", dest]
+                        "--write-destination", dest,
+                        "--artifacts-root", mounted, "--manifest", POD_MANIFEST]
             assert mod.main() == 2, (
                 "an hf:// source with no token must still refuse")
         finally:
@@ -377,6 +385,233 @@ def run() -> Runner:
             "doomed session pays for a 5 GB download first")
     r.check("the entrypoint proves the credential scope before fetching "
             "anything", the_entrypoint_checks_scope_before_the_multi_gigabyte_fetch)
+
+    def the_recorded_fl_digest_matches_the_tree_the_image_would_get():
+        """Nothing used to check this, so the record could describe no commit."""
+        import hashlib
+        rec_path = os.path.join(_ROOT, "o1_b200", "provider", "runpod",
+                                "CONTAINER_IMAGE_RECORD.json")
+        with open(rec_path, encoding="utf-8") as fh:
+            rec = json.load(fh)
+        recorded = rec.get("foundation_learner_source_sha256", "")
+        if recorded.startswith("ABSENT_BY_REQUEST"):
+            return                      # deliberately O1-only image
+        src = os.path.join(os.path.dirname(_ROOT),
+                           "foundation-learner-b200-v0", "foundation_learner")
+        if not os.path.isdir(src):
+            return                      # FL worktree not present in this checkout
+        # same rule as scripts/build_b300_image.sh: files + symlinks, C sort
+        names = []
+        for base, dirs, files in os.walk(src):
+            dirs[:] = [x for x in dirs
+                       if x not in ("reports", "__pycache__")]
+            for n in files:
+                if n.endswith(".pyc"):
+                    continue
+                names.append(os.path.relpath(os.path.join(base, n), src))
+        digests = []
+        for rel in sorted(names):
+            h = hashlib.sha256()
+            with open(os.path.join(src, rel), "rb") as fh:
+                for chunk in iter(lambda: fh.read(1 << 20), b""):
+                    h.update(chunk)
+            digests.append(f"{h.hexdigest()}  ./{rel}\n")
+        outer = hashlib.sha256("".join(digests).encode()).hexdigest()
+        assert outer == recorded, (
+            f"the image record's foundation_learner_source_sha256 "
+            f"({recorded[:16]}…) does not describe the FL tree the build "
+            f"would stage ({outer[:16]}…); the recorded image was built from "
+            f"a state that no longer exists, so its FL content is not "
+            f"reproducible")
+    r.check("the image record's FL digest describes the FL tree the build "
+            "would actually stage",
+            the_recorded_fl_digest_matches_the_tree_the_image_would_get)
+
+    # ---- review round 4: the config could send a pod out with nothing ----
+
+    def session_config_refuses_a_merely_absent_required_field():
+        import o1_b200.provider.runpod.zero_touch as zt
+        from o1_b200.provider.runpod.authorization import AuthorizationError
+        d = fresh_dir("cfg_missing")
+        root = os.path.join(d, "root")
+        cfgdir = os.path.join(root, "o1_b200", "provider", "runpod")
+        os.makedirs(cfgdir)
+        good = {"artifact_source": "hf://ns/staging",
+                "result_destination": "hf://ns/results/SESSION",
+                "image_digest_ref": "r@sha256:" + "0" * 64,
+                "project": "P", "identities": {"a": "b"}}
+        path = os.path.join(cfgdir, "RUNPOD_SESSION_CONFIG.json")
+        for drop in ("artifact_source", "result_destination", "project"):
+            bad = {k: v for k, v in good.items() if k != drop}
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(bad, fh)
+            try:
+                zt.load_session_config(root)
+            except AuthorizationError as exc:
+                assert drop in str(exc), (drop, str(exc))
+            else:
+                raise AssertionError(
+                    f"a config with no {drop!r} loaded; an absent key became "
+                    f"an empty default and the pod started with nothing")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(good, fh)
+        assert zt.load_session_config(root)["artifact_source"]
+    r.check("the session config refuses a required field that is merely "
+            "ABSENT, not just one that is UNRESOLVED",
+            session_config_refuses_a_merely_absent_required_field)
+
+    def the_result_archive_path_has_exactly_one_definition():
+        import o1_b200.provider.runpod.zero_touch as zt
+        from o1_b200.provider.runpod.authorization import AuthorizationError
+        cfg = {"result_destination": "hf://ns/results/O1_B300_CALIBRATION"}
+        assert zt.result_archive_uri(cfg) == (
+            "hf://ns/results/O1_B300_CALIBRATION/" + zt.RESULT_ARCHIVE_REL)
+        # the pod pushes through the store, which applies the session prefix;
+        # a separately stored result_source could disagree and did
+        from o1_b200.runner.durability import _PrefixedStore, store_for_destination
+        store = store_for_destination(cfg["result_destination"])
+        assert isinstance(store, _PrefixedStore)
+        pushed = f"{store.prefix}/{zt.RESULT_ARCHIVE_REL}"
+        assert zt.result_archive_uri(cfg).endswith(pushed), (
+            f"the driver would download something the pod never wrote: "
+            f"pod writes {pushed}, driver reads {zt.result_archive_uri(cfg)}")
+        d = fresh_dir("cfg_divergent")
+        root = os.path.join(d, "root")
+        cfgdir = os.path.join(root, "o1_b200", "provider", "runpod")
+        os.makedirs(cfgdir)
+        bad = {"artifact_source": "hf://ns/staging",
+               "result_destination": "hf://ns/results/SESSION",
+               "image_digest_ref": "r@sha256:" + "0" * 64,
+               "project": "P", "identities": {"a": "b"},
+               "result_source": "hf://ns/results/results/o1_results.tar.gz"}
+        with open(os.path.join(cfgdir, "RUNPOD_SESSION_CONFIG.json"),
+                  "w", encoding="utf-8") as fh:
+            json.dump(bad, fh)
+        try:
+            zt.load_session_config(root)
+        except AuthorizationError as exc:
+            assert "disagrees" in str(exc)
+        else:
+            raise AssertionError(
+                "a result_source disagreeing with where the pod publishes "
+                "was accepted; a fully successful paid run would report "
+                "ABORTED on a 404")
+    r.check("the result archive location is derived, and a stored one that "
+            "disagrees is refused", the_result_archive_path_has_exactly_one_definition)
+
+    def the_combined_session_is_reachable_from_the_launch_path():
+        from o1_b200.provider.runpod.pod_request import (
+            ENV_NAMES, IDENTITY_ENV_NAMES, build_pod_request,
+        )
+        from o1_b200.provider.runpod.policy import PROFILE_PREFERENCE
+        import o1_b200.provider.runpod.zero_touch as zt
+        assert "O1_FL_SESSION_CONFIG" in ENV_NAMES, (
+            "the pod request rejects the only variable that selects the "
+            "combined O1 -> FL session, so it can never be launched")
+        assert "O1_FL_SESSION_CONFIG" in IDENTITY_ENV_NAMES, (
+            "which workloads run is deployment identity, not a launch "
+            "variable")
+        values = zt.identity_env_values(
+            {"image_digest_ref": "r@sha256:" + "0" * 64,
+             "fl_session_config": "/artifacts/FL_SESSION_CONFIG.json"})
+        assert values["O1_FL_SESSION_CONFIG"] == \
+            "/artifacts/FL_SESSION_CONFIG.json"
+        # and it must actually render into a pod request
+        req = build_pod_request(profile=PROFILE_PREFERENCE[0],
+                                image_digest_ref="r@sha256:" + "0" * 64,
+                                datacenter_id="DC", env_values=values)
+        assert req is not None
+    r.check("the combined O1 -> FL session can be selected from the "
+            "authorized launch path at all",
+            the_combined_session_is_reachable_from_the_launch_path)
+
+    def scope_preflight_refuses_an_empty_read_source_when_a_fetch_is_due():
+        import o1_b200.runner.check_hf_scope as mod
+        d = fresh_dir("scope_noread")
+        empty = os.path.join(d, "artifacts")
+        os.makedirs(empty)
+        dest = os.path.join(d, "durable")
+        saved, token = sys.argv, os.environ.pop("HF_TOKEN", None)
+        sys.argv = ["check_hf_scope", "--read-source", "",
+                    "--write-destination", dest,
+                    "--artifacts-root", empty, "--manifest", POD_MANIFEST]
+        try:
+            assert mod.main() == 2, (
+                "an empty read source passed the preflight: parse_repo('') "
+                "is None, so the read side is skipped and only the write "
+                "probe runs — exactly how a config with no artifact_source "
+                "reached a paid pod")
+        finally:
+            sys.argv = saved
+            if token is not None:
+                os.environ["HF_TOKEN"] = token
+    r.check("the scope preflight refuses an empty read source while the "
+            "manifest still expects a fetch",
+            scope_preflight_refuses_an_empty_read_source_when_a_fetch_is_due)
+
+    def transient_hub_failures_retry_and_do_not_look_deterministic():
+        from o1_b200.runner.check_hf_scope import (
+            DETERMINISTIC_STATUSES, ScopeError, TransientScopeError,
+            _helper_error, http_status,
+        )
+        # the status line survives, so an outage is distinguishable from a
+        # bad token — it used to be dropped in favour of the last line
+        msg = ("500 Server Error: Internal Server Error for url: ...\n"
+               "\nSomething went wrong on our end.")
+        assert http_status(msg) == 500
+        assert "500 Server Error" in _helper_error(msg)
+        assert http_status("401 Client Error: Unauthorized for url: x") == 401
+        assert 401 in DETERMINISTIC_STATUSES and 403 in DETERMINISTIC_STATUSES
+        assert issubclass(TransientScopeError, ScopeError)
+    r.check("a hub 5xx keeps its status line and is typed apart from a "
+            "deterministic 401/403",
+            transient_hub_failures_retry_and_do_not_look_deterministic)
+
+    def a_wrong_credential_stops_the_session_instead_of_reacquiring():
+        text = open(os.path.join(_ROOT, "o1_b200", "runner",
+                                 "check_hf_scope.py"), encoding="utf-8").read()
+        assert "ZERO_TOUCH_ABORTED_AT_HF_SCOPE" in text, (
+            "a deterministic credential refusal must emit the marker the "
+            "driver greps for, or every reacquisition repeats it")
+        marker_at = text.index("ZERO_TOUCH_ABORTED_AT_HF_SCOPE")
+        transient_at = text.index("REFUSED (transient)")
+        assert marker_at < transient_at or "TransientScopeError" in text
+        zt = open(os.path.join(_ROOT, "o1_b200", "provider", "runpod",
+                               "zero_touch.py"), encoding="utf-8").read()
+        assert "ZERO_TOUCH_ABORTED_AT_" in zt
+    r.check("a deterministic credential refusal emits the abort marker; a "
+            "transient one deliberately does not",
+            a_wrong_credential_stops_the_session_instead_of_reacquiring)
+
+    def an_interrupted_fetch_never_publishes_a_partial_artifact():
+        from o1_b200.runner.fetch_artifacts import ArtifactFetchError, fetch
+        d = fresh_dir("fetch_partial")
+        root = os.path.join(d, "artifacts")
+        os.makedirs(root)
+
+        def half(args):
+            # emulate an interrupted snapshot: some files, then nothing
+            local = args[args.index("--local") + 1]
+            tree = os.path.join(local, "ouro_rltt_local")
+            os.makedirs(tree, exist_ok=True)
+            with open(os.path.join(tree, "config.json"), "w") as fh:
+                fh.write("{}")
+            raise ArtifactFetchError("connection reset mid-snapshot")
+
+        try:
+            fetch("hf://ns/staging", root, runner=half,
+                  manifest_path=POD_MANIFEST)
+        except ArtifactFetchError:
+            pass
+        else:
+            raise AssertionError("a failed snapshot reported success")
+        assert not os.path.exists(os.path.join(root, "ouro_rltt_local")), (
+            "a partial tree was published into /artifacts; the next start "
+            "would see the path exist, skip the fetch, and fail verification "
+            "forever")
+    r.check("an interrupted artifact fetch leaves nothing publishable, so a "
+            "retry can still succeed",
+            an_interrupted_fetch_never_publishes_a_partial_artifact)
 
     def a_deterministic_pod_abort_is_not_an_eviction():
         """ZERO_TOUCH_ABORTED_AT_* must stop the session, not reacquire."""

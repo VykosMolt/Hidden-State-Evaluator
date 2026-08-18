@@ -1,8 +1,12 @@
 {
+  "_fl_session_config_note": "EMPTY = O1-only session (the default). A pod-visible path here selects the COMBINED O1 -> Foundation Learner session; the FL package is baked into image v0.3.1+ at /opt/foundation_learner, and the named file must also be present on the pod (staged alongside the artifacts or mounted) - start_b300.sh refuses before any scientific work if either is absent. This value is DEPLOYMENT IDENTITY: it changes deployment_spec_sha256, so switching a session from O1-only to combined requires a FRESH rental authorization ceremony. It is deliberately not set by default.",
   "_profile_preference_note": "Order in which the FROZEN accelerator profiles are tried. Both are covered by the rental authorization, so reordering adds no capability \u2014 it only expresses which part the operator wants FIRST. Set [\"B200\",\"B300\"] to prefer the B200 (e.g. when B300 demand makes it unobtainable); the session still falls back to the other profile and records the reason. Unknown profile names are refused.",
-  "_status": "PARTIALLY RESOLVED \u2014 image_digest_ref (B300 image registry push) and package_zip_sha256 (v0.3.1 zip) are the remaining UNRESOLVED fields; zero_touch refuses to run until resolved.",
+  "_result_source_note": "REMOVED and derived: the archive lives at result_destination + 'results/o1_results.tar.gz'. Storing it separately let the session prefix move the publish path while the driver kept reading the old one, which turned a fully successful paid run into ABORTED_TERMINATED. zero_touch.result_archive_uri() is the one source.",
+  "_status": "PARTIALLY RESOLVED - image_digest_ref (B300 image registry push) and package_zip_sha256 (v0.3.1 zip) are the remaining UNRESOLVED fields; zero_touch refuses to run until resolved, and now also refuses any REQUIRED field that is merely absent.",
   "adapter_commit": "b19751972e9b7d950ee83cf5d3661c60b563b654",
+  "artifact_source": "hf://Vykos/o1-b200-staging",
   "budget_policy_sha256": "8ae82de9ff432f4fb8ad467eec967a661c2a14edf2eae6b70d19f7e42781cda7",
+  "fl_session_config": "",
   "identities": {
     "artifact_staging": "private HF repo Vykos/o1-b200-staging (see PRE_RENTAL_PREREQUISITES.md)",
     "base_scientific_package": "O1_oracle_reachability_v2.1.0 zip a8b0571cc67584b862db3e42fb015f47ae7d2887d7ce59605e3c273591fe7892",
@@ -18,6 +22,5 @@
   ],
   "project": "O1_B300_CALIBRATION",
   "result_destination": "hf://Vykos/o1-b200-results/O1_B300_CALIBRATION",
-  "result_source": "hf://Vykos/o1-b200-results/results/o1_results.tar.gz",
   "schema": "o1b300.runpod_session_config.v2"
 }

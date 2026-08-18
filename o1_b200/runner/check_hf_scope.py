@@ -23,8 +23,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
+import time
 
 from .hf_transfer import child_env
 
@@ -46,33 +48,89 @@ def parse_repo(uri: str) -> str | None:
     return "/".join(parts[:2])
 
 
-def _helper_error(text: str, limit: int = 400) -> str:
-    """The last meaningful line, not a raw tail.
+#: HTTP status lines worth keeping: for HfHubHTTPError the status is on the
+#: FIRST line of a multi-line message while the human blurb is last, so a
+#: naive "last line" loses exactly the part that distinguishes a transient
+#: outage from a genuinely wrong token.
+_STATUS_RE = re.compile(r"\b([45]\d\d)\s+(?:Client|Server)\s+Error\b")
 
-    A Python traceback ends with the exception line — the one thing the
-    operator needs ("Invalid user token", "401 Unauthorized").  Slicing the
-    last N characters instead lands mid-frame and prints source fragments.
+#: Statuses that are the caller's fault and will recur on a fresh pod.
+DETERMINISTIC_STATUSES = (401, 403, 404)
+
+
+def http_status(text: str) -> int | None:
+    m = _STATUS_RE.search(text)
+    return int(m.group(1)) if m else None
+
+
+def _helper_error(text: str, limit: int = 400) -> str:
+    """The informative line, not a raw tail.
+
+    A Python traceback ends with the exception line, which is usually what
+    the operator needs — but for an HTTP failure the status line comes
+    first.  Keep the status when there is one, then the final line; slicing
+    the last N characters instead lands mid-frame and prints source
+    fragments.
     """
     lines = [ln.strip() for ln in text.strip().splitlines() if ln.strip()]
-    return lines[-1][:limit] if lines else "(helper produced no output)"
+    if not lines:
+        return "(helper produced no output)"
+    tail = lines[-1]
+    status_line = next((ln for ln in lines if _STATUS_RE.search(ln)), None)
+    if status_line and status_line != tail:
+        return f"{status_line[:limit]} | {tail[:limit]}"
+    return tail[:limit]
 
 
-def _run_helper(repo: str, mode: str, timeout: float) -> dict:
-    proc = subprocess.run(
-        [sys.executable, "-m", "o1_b200.runner.hf_transfer", "scope",
-         "--repo", repo, "--mode", mode],
-        capture_output=True, text=True, timeout=timeout,
-        env=child_env(os.environ.get("HF_TOKEN")))
-    if proc.returncode != 0:
-        from ..provider.runpod.redaction import redact
-        raise ScopeError(redact(
-            f"{mode.upper()} scope check failed for {repo}: "
-            f"{_helper_error(proc.stdout + proc.stderr)}"))
-    try:
-        return json.loads(proc.stdout.strip().splitlines()[-1])
-    except (json.JSONDecodeError, IndexError):
-        raise ScopeError(
-            f"{mode} scope check for {repo} produced no result") from None
+class TransientScopeError(ScopeError):
+    """The hub was unreachable or erroring; a fresh attempt may succeed."""
+
+
+def _run_helper(repo: str, mode: str, timeout: float,
+                attempts: int = 4, sleep=time.sleep) -> dict:
+    """Probe once, retrying only what a retry can fix.
+
+    Without this, a single HF 5xx/429/timeout at pod start killed the
+    entrypoint, which the driver reads as an eviction and answers with a
+    reacquisition — and because evictions are counted cumulatively, one hub
+    hiccup could end a session that had already produced hours of rows.
+    401/403/404 are the caller's fault and recur on a fresh pod, so they are
+    raised immediately as deterministic.
+    """
+    from ..provider.runpod.redaction import redact
+    last = ""
+    for attempt in range(1, attempts + 1):
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-m", "o1_b200.runner.hf_transfer", "scope",
+                 "--repo", repo, "--mode", mode],
+                capture_output=True, text=True, timeout=timeout,
+                env=child_env(os.environ.get("HF_TOKEN")))
+        except subprocess.TimeoutExpired:
+            last = f"helper timed out after {timeout:.0f}s"
+            if attempt < attempts:
+                sleep(min(30.0, 2.0 ** attempt))
+                continue
+            raise TransientScopeError(
+                f"{mode.upper()} scope check for {repo}: {last}") from None
+        if proc.returncode == 0:
+            try:
+                return json.loads(proc.stdout.strip().splitlines()[-1])
+            except (json.JSONDecodeError, IndexError):
+                raise ScopeError(
+                    f"{mode} scope check for {repo} produced no "
+                    f"result") from None
+        combined = proc.stdout + proc.stderr
+        last = _helper_error(combined)
+        status = http_status(combined)
+        if status in DETERMINISTIC_STATUSES:
+            raise ScopeError(redact(
+                f"{mode.upper()} scope check failed for {repo}: {last}"))
+        if attempt < attempts:
+            sleep(min(30.0, 2.0 ** attempt))
+    raise TransientScopeError(redact(
+        f"{mode.upper()} scope check for {repo} failed {attempts}x "
+        f"(last: {last}); treating as a transient hub failure"))
 
 
 def _check_local_write(path: str) -> dict:
@@ -130,8 +188,38 @@ def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--read-source", default=os.environ.get(READ_ENV, ""))
     p.add_argument("--write-destination", default=os.environ.get(WRITE_ENV, ""))
+    p.add_argument("--artifacts-root", default=None,
+                   help="where artifacts must appear (default /artifacts)")
+    p.add_argument("--manifest", default=None)
     p.add_argument("--out")
     a = p.parse_args()
+
+    # An EMPTY read source is not "nothing to check".  If the pod manifest
+    # still expects artifacts that are not on disk, an empty source means
+    # the fetch is guaranteed to refuse a few seconds from now — and,
+    # worse, parse_repo("") returns None, so the read side would be silently
+    # skipped and this preflight would PASS on the write probe alone.  That
+    # is exactly how a session config with no artifact_source at all reached
+    # a paid pod.
+    try:
+        from .fetch_artifacts import ARTIFACTS_ROOT, required_from_manifest
+        root = a.artifacts_root or ARTIFACTS_ROOT
+        manifest = a.manifest or os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "deploy", "POD_TRANSFER_MANIFEST.json")
+        wanted = required_from_manifest(manifest, root)
+        missing = [r for r in wanted
+                   if not os.path.exists(os.path.join(root, r))]
+    except OSError:
+        missing = []
+    if missing and not str(a.read_source).startswith("hf://"):
+        print("ZERO_TOUCH_ABORTED_AT_HF_SCOPE")
+        print(f"REFUSED: {missing} must still be fetched but "
+              f"{READ_ENV} is {a.read_source!r}; the read side of this "
+              f"preflight cannot be proven and the fetch will refuse "
+              f"moments from now", file=sys.stderr)
+        return 2
+
     # A token is only required when a hub repo is actually involved: a pod
     # with mounted artifacts and a mounted durable path needs none, and
     # refusing that configuration would be an invented requirement.
@@ -144,7 +232,17 @@ def main() -> int:
         return 2
     try:
         report = check(a.read_source, a.write_destination)
+    except TransientScopeError as exc:
+        # No marker: a fresh pod may well succeed, so let the driver treat
+        # this as an eviction and reacquire rather than ending the session.
+        print(f"REFUSED (transient): {exc}", file=sys.stderr)
+        return 2
     except ScopeError as exc:
+        # The credential or the destination is wrong, and a fresh pod would
+        # fail identically.  Emit the marker the off-pod driver greps for so
+        # it raises DeterministicPodFailure and stops, instead of paying for
+        # a reacquisition that repeats this exact refusal.
+        print("ZERO_TOUCH_ABORTED_AT_HF_SCOPE")
         print(f"REFUSED: {exc}", file=sys.stderr)
         return 2
     payload = json.dumps(report, indent=2, sort_keys=True) + "\n"
