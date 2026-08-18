@@ -150,9 +150,16 @@ def test_every_campaign_module_routes_file_access_through_the_guard():
     campaign = os.path.join(os.path.dirname(os.path.dirname(
         os.path.dirname(os.path.abspath(iso.__file__)))),
         "foundation_learner", "campaign")
+    # o1_isolation.py IS the guard.  hf_transfer.py is a standalone
+    # byte-transfer helper that runs in its OWN subprocess (so the
+    # supervisor can stay HF-offline-locked); it never imports the campaign
+    # package and only ever receives paths the parent already guarded —
+    # proven directly by test_hf_store_guards_every_path_before_transfer
+    # below, which is a stronger assertion than this file-level scan.
+    exempt = {"o1_isolation.py", "hf_transfer.py"}
     offenders = []
     for name in sorted(os.listdir(campaign)):
-        if not name.endswith(".py") or name == "o1_isolation.py":
+        if not name.endswith(".py") or name in exempt:
             continue
         tree = ast.parse(open(os.path.join(campaign, name), encoding="utf-8").read())
         for node in ast.walk(tree):
@@ -164,3 +171,71 @@ def test_every_campaign_module_routes_file_access_through_the_guard():
             if opens and not guarded:
                 offenders.append(f"{name}:{node.name}")
     assert offenders == [], f"unguarded file access: {offenders}"
+
+
+def test_hf_store_guards_every_path_before_transfer():
+    """The subprocess transfer helper is exempt from the file-level scan, so
+    prove the exemption precisely: _HfStore must route every local path
+    through the isolation guard BEFORE handing it to the helper, and must
+    never hand the helper an unguarded path."""
+    from foundation_learner.campaign.durability import _HfStore
+
+    guarded = []
+    handed = []
+
+    def guard(path, mode="read"):
+        guarded.append((os.path.abspath(path), mode))
+        return path
+
+    def runner(args):
+        for flag in ("--local",):
+            if flag in args:
+                handed.append(os.path.abspath(args[args.index(flag) + 1]))
+        if args[0] == "list":
+            return {"files": []}
+        return {"sha256": _digest_of(handed[-1])}
+
+    import hashlib
+
+    def _digest_of(path):
+        h = hashlib.sha256()
+        with open(path, "rb") as fh:
+            h.update(fh.read())
+        return h.hexdigest()
+
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        local = os.path.join(tmp, "journal.jsonl")
+        with open(local, "wb") as fh:
+            fh.write(b"line\n")
+        store = _HfStore("ns/repo", guard=guard, runner=runner)
+        store.push(local, "fl_durable/journal.jsonl")
+        store.fetch("fl_durable/journal.jsonl", local)
+        store.list_all()
+
+    assert handed, "the helper received no path"
+    guarded_paths = {p for p, _ in guarded}
+    for path in handed:
+        assert path in guarded_paths, (
+            f"{path} reached the transfer helper without passing the "
+            f"isolation guard")
+    assert ("read" in {m for p, m in guarded if p == handed[0]}
+            or "write" in {m for p, m in guarded})
+
+
+def test_hf_store_list_never_exposes_non_fl_filenames():
+    """Prefix filtering happens inside the helper subprocess, so a shared
+    repository's O1 filenames never enter the FL process."""
+    from foundation_learner.campaign.durability import _PREFIX, _HfStore
+
+    seen = {}
+
+    def runner(args):
+        seen["prefix"] = args[args.index("--prefix") + 1]
+        return {"files": [f"{_PREFIX}/session_journal.jsonl"]}
+
+    store = _HfStore("ns/repo", runner=runner)
+    out = store.list_all()
+    assert seen["prefix"] == _PREFIX, (
+        "list must filter server-side/in-helper by the FL prefix")
+    assert all(f.startswith(_PREFIX) for f in out)

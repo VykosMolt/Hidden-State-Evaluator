@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Deterministic release packaging (contract §19).
 
-Builds ``FOUNDATION_LEARNER_B200_V0.1.0.zip`` with the O1 algorithm — sorted
+Builds ``FOUNDATION_LEARNER_B200_V0.2.0.zip`` with the O1 algorithm — sorted
 entries, ``date_time=(1980,1,1,0,0,0)``, ``external_attr = 0o644 << 16``,
 ``ZIP_DEFLATED`` level 9, secret-pattern deny-list.
 
@@ -60,7 +60,7 @@ from foundation_learner.campaign import result_verifier as rv  # noqa: E402
 from foundation_learner.ecology.base import sha256_file  # noqa: E402
 
 PACKAGE_NAME = "FOUNDATION_LEARNER_B200_V0"
-ZIP_NAME = "FOUNDATION_LEARNER_B200_V0.1.0.zip"
+ZIP_NAME = "FOUNDATION_LEARNER_B200_V0.2.0.zip"
 SUMS_NAME = "SHA256SUMS"
 MANIFEST_DIR_NAME = "MANIFESTS"
 CAMPAIGN_MANIFEST_NAME = "FOUNDATION_LEARNER_V0_MANIFEST.json"

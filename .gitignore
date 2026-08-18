@@ -15,3 +15,4 @@ checkpoints/
 !/artifacts_fl/pregen*/MANIFESTS/
 /foundation_learner/reports/local_runs/
 FOUNDATION_LEARNER_B200_V0.1.0.zip
+FOUNDATION_LEARNER_B200_V0.2.0.zip

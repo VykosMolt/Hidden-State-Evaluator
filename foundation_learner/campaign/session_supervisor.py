@@ -365,6 +365,35 @@ class SessionSupervisor:
             self.payload.get("o1_forbidden_roots_extra", []))
         self.guard.add_forbidden_roots(extra_roots)
         self.custodian = O1RecordCustodian(self.payload["o1_roots"])
+        # Off-pod durability under INTERRUPTIBLE capacity: restore the
+        # mirrored journal/checkpoints BEFORE reading the journal, so a
+        # fresh pod after eviction resumes exactly like a same-pod restart
+        # (completed states skip; training resumes from the last valid
+        # atomic checkpoint; post-checkpoint work reruns).  Local files are
+        # never overwritten by the restore.
+        self.durability = None
+        self.durability_events: list[dict] = []
+        destination = self.payload.get("fl_durable_destination")
+        if destination and not str(destination).startswith("UNRESOLVED"):
+            from .durability import FlDurableMirror
+
+            def _mirror_event(event, **fields):
+                # buffered here because the journal does not exist yet during
+                # construction; drained into it by _drain_durability_events
+                # so a silently failing mirror can never look durable
+                self.durability_events.append({"event": str(event), **fields})
+
+            self.durability = FlDurableMirror(
+                str(destination), self.out_dir, on_event=_mirror_event,
+                guard=self.guard.guard)
+            try:
+                self.durability.restore_all()
+            except Exception as exc:  # noqa: BLE001
+                # a store outage must DEGRADE (start fresh; restore never
+                # overwrites local files anyway), not refuse the session
+                self.durability_events.append(
+                    {"event": "FL_DURABILITY_RESTORE_FAILED",
+                     "error": str(exc)[:300]})
         self.completed = [r["state"] for r in self.read_journal()
                           if r.get("event") == "STATE_COMPLETED"]
 
@@ -396,7 +425,34 @@ class SessionSupervisor:
             json.dumps(record, sort_keys=True, separators=(",", ":"),
                        ensure_ascii=False))
         self._records += 1
+        if self.durability is not None:
+            self.durability.push_file(self.journal_path)
+            self._drain_durability_events()
         return record
+
+    def _drain_durability_events(self) -> None:
+        """Journal buffered mirror events (failures included).
+
+        Without this, a journal mirror that fails for the whole session
+        leaves no record, and after eviction the next pod resumes from a
+        stale journal believing it was durable.
+        """
+        pending, self.durability_events = self.durability_events, []
+        for entry in pending:
+            event = entry.pop("event", "FL_DURABILITY_EVENT")
+            record = {
+                "schema": JOURNAL_SCHEMA, "index": self._records,
+                "event": event, "state": "DURABILITY",
+                "session_id": self.payload.get("session_id"),
+                "label": self.label(), "rehearsal": self.rehearsal,
+                "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "monotonic": round(self.clock.monotonic(), 6), **entry,
+            }
+            self.guard.append_line(
+                self.journal_path,
+                json.dumps(record, sort_keys=True, separators=(",", ":"),
+                           ensure_ascii=False))
+            self._records += 1
 
     def read_journal(self) -> list[dict]:
         path = self.guard.guard(self.journal_path, o1_isolation.MODE_READ)

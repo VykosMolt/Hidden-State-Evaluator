@@ -192,6 +192,8 @@ def build_stage_context(supervisor: Any) -> StageContext:
         device=str(bundle_description["device"]),
         extra=extra,
     )
+    if getattr(supervisor, "durability", None) is not None:
+        ctx.extra["durability_mirror"] = supervisor.durability
     ctx.extra.setdefault("stage_states", {})
     ctx.extra.setdefault("campaign_hashes", {
         "checkpoint_tree_sha256": payload.get("checkpoint_tree_sha256"),

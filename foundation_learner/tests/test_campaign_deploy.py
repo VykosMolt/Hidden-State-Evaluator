@@ -35,15 +35,17 @@ def test_the_lock_pins_transformers_exactly_and_matches_the_loader():
 
 def test_the_lock_records_both_torch_builds_with_their_roles():
     drift = lock()["torch_pin_drift"]
-    assert drift["local_venv"] == "2.12.0.dev20260407+cu128"
-    assert drift["b200_image"] == "2.12.0.dev20260408+cu128"
+    assert drift["local_venv"] == "2.12.1+cu130"
+    assert drift["b300_image"] == "2.12.1+cu130"
     assert "LOCAL" in drift["local_role"]
-    assert "accelerator" in drift["b200_role"]
+    assert "accelerator" in drift["b300_role"]
+    assert "2.12.0.dev20260407+cu128" in drift["sealed_reference"]
+    assert "replacement manifest" in drift["sealed_reference"]
 
 
 def test_the_lock_records_that_peft_is_absent_on_the_b200():
     payload = lock()["no_peft_on_b200"]
-    assert "requirements.b200.lock" in payload["fact"]
+    assert "requirements.b300.lock" in payload["fact"]
     assert "training/lora.py" in payload["consequence"]
     assert payload["amendment"].startswith("CONTRACT_AMENDMENTS.md Amendment 3")
     assert lock()["packages"]["peft"].endswith("LOCAL ONLY")
@@ -51,12 +53,12 @@ def test_the_lock_records_that_peft_is_absent_on_the_b200():
 
 def test_the_lock_binds_the_container_and_changes_nothing_in_it():
     container = lock()["container"]
-    assert container["image_name"] == "o1-b200-runner:v0.2.0"
+    assert container["image_name"] == "o1-b300-runner:v0.3.0"
     assert container["base_image"] == "python:3.14-slim-bookworm"
     assert container["base_image_digest"].startswith("python@sha256:")
     assert container["venv"] == "/opt/venv"
     assert container["fl_changes_to_the_image"].startswith("NONE")
-    assert lock()["cuda"]["toolkit"] == "12.8"
+    assert lock()["cuda"]["toolkit"] == "13.0"
 
 
 def test_the_lock_binds_the_frozen_checkpoint_hash():
@@ -155,10 +157,13 @@ def test_the_session_config_template_refuses_as_shipped():
 def test_integration_doc_states_the_unresolved_gap_honestly():
     text = open(INTEGRATION_PATH, encoding="utf-8").read()
     assert "o1_entry_command" in text
+    # the historical refusing-stub gap is CLOSED by the B300 migration and
+    # the doc must say so honestly, keeping the history visible
+    assert "RESOLVED (B300 migration)" in text
     assert "refusing stub" in text
+    assert "start_b300.sh" in text
     assert "NOT AUTHORIZED" in text
     assert "adds no image change" in text or "no image change" in text
-    assert "No B200" in text or "no B200" in text
 
 
 def test_the_isolation_roots_in_the_doc_match_the_code():

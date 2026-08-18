@@ -35,6 +35,6 @@ accelerator, or opens sealed data outside ``sealed_gate``.
 """
 from __future__ import annotations
 
-CAMPAIGN_VERSION = "0.1.0"
+CAMPAIGN_VERSION = "0.2.0"
 
 __all__ = ["CAMPAIGN_VERSION"]

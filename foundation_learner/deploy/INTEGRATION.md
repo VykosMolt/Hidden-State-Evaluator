@@ -9,10 +9,10 @@ rental, and nothing here spends money.
 
 | item | value |
 |---|---|
-| image | `o1-b200-runner:v0.2.0` (local id `sha256:75582fe4…`) |
+| image | `o1-b300-runner:v0.3.0` (local id `sha256:26dba0ac…`; B300 primary / B200 explicit fallback, INTERRUPTIBLE) |
 | base | `python:3.14-slim-bookworm`, pinned by digest `python@sha256:86f975ac…` |
 | venv | `/opt/venv` |
-| torch | `2.12.0.dev20260408+cu128` in the image (local venv is `…0407+cu128`) |
+| torch | `2.12.1+cu130` (stable; identical wheel verified locally on sm_120 incl. the real-checkpoint smoke) |
 | transformers | `4.54.1` — build-asserted in the image, re-asserted at runtime by FL |
 | numpy | `2.4.4` |
 | env | `TRANSFORMERS_OFFLINE=1`, `HF_HUB_OFFLINE=1`, `CUBLAS_WORKSPACE_CONFIG=":4096:8"`, `PYTHONDONTWRITEBYTECODE=1` |
@@ -23,7 +23,7 @@ rental, and nothing here spends money.
 **The FL package adds no image change.** No Dockerfile edit, no package
 installation at start-up, no new third-party dependency: FL runs on stdlib +
 numpy + torch + transformers + safetensors. `peft` is absent from
-`requirements.b200.lock` and therefore absent from the container, which is why
+`requirements.b300.lock` and therefore absent from the container, which is why
 every low-rank adapter in this campaign is implemented in
 `foundation_learner/training/lora.py` (Amendment 3). `peft` 0.19.1 is used
 locally, in one unit test, purely as a numerical oracle.
@@ -99,7 +99,7 @@ auditable rather than asserted.
 
 | field | why it is open |
 |---|---|
-| `o1_entry_command` | **operator-bound.** The sealed O1 package's pod entrypoint `o1_b200/deploy/start_b200.sh` is currently a refusing stub (`exit 64`) pending the O1 provider-adapter step. Repairing it is explicitly out of FL scope, so the real O1 launch command must be supplied by the operator in the session config. |
+| `o1_entry_command` | **RESOLVED (B300 migration).** The historical `start_b200.sh` refusing stub is retired: the O1 pod entrypoint is the real production zero-touch entry `o1_b200/deploy/start_b300.sh` (-> `o1_b200.runner.production_entry`); the template binds it as the default and the operator may still override it. |
 | `image_digest_ref` | filled from the GHCR push output of the O1 image; owned by the O1 pre-rental checklist. |
 | `session_authorized_seconds` | derived at session time from the authorized budget and the observed hourly rate. |
 | `available_foundation_learner_seconds` | computed on the pod after O1 closes; it is an INPUT to the FL scheduler, never an assumption. |

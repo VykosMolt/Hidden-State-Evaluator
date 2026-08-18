@@ -1257,18 +1257,37 @@ def fl0_work(ctx: StageContext, stage: StageDefinition) -> dict:
     return ctx.results["FL0"]
 
 
-def _trainer_hooks(ctx: StageContext, stage_id: str):
-    """Scheduler heartbeat + checkpoint notification, when a scheduler exists."""
+def _trainer_hooks(ctx: StageContext, stage_id: str,
+                   arm_out_dir: str | None = None):
+    """Scheduler heartbeat + checkpoint notification (+ off-pod checkpoint
+    mirroring under interruptible capacity), when a scheduler exists."""
+    from ..training.checkpointing import checkpoint_paths
     from ..training.trainer import TrainerHooks
 
     if ctx.scheduler is None:
         return None
-    return TrainerHooks(
-        on_step=ctx.scheduler.heartbeat_hook(stage_id, watchdog=ctx.watchdog),
-        on_checkpoint=lambda tag, manifest: ctx.scheduler.journal(
+    mirror = ctx.extra.get("durability_mirror")
+
+    def _on_checkpoint(tag, manifest):
+        ctx.scheduler.journal(
             "CHECKPOINT_WRITTEN",
             {"stage_id": stage_id, "tag": tag,
-             "manifest_hash": manifest.get("manifest_hash")}))
+             "manifest_hash": manifest.get("manifest_hash")})
+        if mirror is not None and arm_out_dir is not None:
+            payload_path, manifest_path = checkpoint_paths(arm_out_dir, tag)
+            try:
+                mirror.push_checkpoint(payload_path, manifest_path)
+            except Exception as exc:  # noqa: BLE001 - loud, never fatal:
+                # generation continues on local atomic state; the eviction
+                # loss window is widened and journalled
+                ctx.scheduler.journal(
+                    "CHECKPOINT_MIRROR_FAILED",
+                    {"stage_id": stage_id, "tag": tag,
+                     "error": str(exc)[:200]})
+
+    return TrainerHooks(
+        on_step=ctx.scheduler.heartbeat_hook(stage_id, watchdog=ctx.watchdog),
+        on_checkpoint=_on_checkpoint)
 
 
 def _train_arm(ctx: StageContext, arm_id: str, *, updates: int, stage_name: str,
@@ -1285,7 +1304,7 @@ def _train_arm(ctx: StageContext, arm_id: str, *, updates: int, stage_name: str,
         ctx.scheduler.assert_checkpoint_cadence(cfg)
     ctx.checkpoint(f"{arm_id}:train")
     result = run_training_arm(cfg, bundle, examples, out_dir,
-                              _trainer_hooks(ctx, arm_id))
+                              _trainer_hooks(ctx, arm_id, out_dir))
     return {"result": result, "bundle": bundle, "config": cfg,
             "out_dir": out_dir}
 

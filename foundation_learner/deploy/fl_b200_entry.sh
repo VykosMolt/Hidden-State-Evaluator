@@ -8,10 +8,10 @@
 # and never writes under an O1 root.
 #
 # It refuses to start a real session whose configuration still carries
-# UNRESOLVED fields.  The known operator-bound gap is 'o1_entry_command': the
-# sealed O1 package's own pod entrypoint (o1_b200/deploy/start_b200.sh) is a
-# refusing stub, so the operator must bind the real O1 launch command before a
-# combined session can run.  A DRESS REHEARSAL may proceed with unresolved
+# UNRESOLVED fields.  The historical o1_entry_command gap is CLOSED: the
+# O1 pod entry is the real production zero-touch entry
+# (o1_b200/deploy/start_b300.sh); the operator may override it in the session
+# config.  A DRESS REHEARSAL may proceed with unresolved
 # fields and is loudly labelled DRESS_REHEARSAL in every artefact it writes.
 set -euo pipefail
 
