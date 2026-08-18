@@ -11,7 +11,7 @@
     "result_destination": "private HF repo VykosMolt/o1-b200-results (SEPARATE from staging; pod write token fine-grained to results only)"
   },
   "image_digest_ref": "UNRESOLVED (ghcr.io/vykosmolt/o1-b300-runner@sha256:... from the registry push of the B300 image; see CONTAINER_IMAGE_RECORD.json)",
-  "package_zip_sha256": "UNRESOLVED (sha256 of the deployed O1_B300_RUNNER v0.3.0 zip). Deliberately NOT baked in: this file lives INSIDE the archive, so a package cannot contain its own hash. The archive built from this commit is 0af363fd1bb3bb3583d9a542b5e538c1ef6def9c2d0046da56e19faeea34f57f (o1_packages/O1_B300_RUNNER_v0.3.0_RUNPOD_PRERENTAL.zip.sha256, reproducible via o1_b200/scripts/package_release.sh). Paste that value here at launch; zero_touch reads this file from the worktree, not from the archive.",
+  "package_zip_sha256": "UNRESOLVED (sha256 of the deployed O1_B300_RUNNER v0.3.0 zip). Deliberately NOT baked in: this file lives INSIDE the archive, so a package cannot contain its own hash - writing one here changes the archive and invalidates it. Build with o1_b200/scripts/package_release.sh and paste the value from the generated o1_packages/O1_B300_RUNNER_v0.3.0_RUNPOD_PRERENTAL.zip.sha256 at launch; zero_touch reads this config from the worktree, not from the archive, so editing it afterwards is correct and expected.",
   "profile_preference": [
     "B300",
     "B200"
