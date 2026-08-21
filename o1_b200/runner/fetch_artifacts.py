@@ -51,6 +51,11 @@ REQUIRED = ("ouro_rltt_local",)
 ARTIFACTS_ROOT = "/artifacts"
 
 
+class TransientFetchError(RuntimeError):
+    """The transfer failed for a reason a fresh pod may not repeat (network,
+    5xx, timeout).  NO deterministic marker: the driver may reacquire."""
+
+
 class ArtifactFetchError(RuntimeError):
     pass
 
@@ -73,10 +78,16 @@ def _run_helper(args: list[str], timeout: float) -> dict:
         env=child_env(os.environ.get("HF_TOKEN")))
     if proc.returncode != 0:
         from ..provider.runpod.redaction import redact
-        from .check_hf_scope import _helper_error
-        raise ArtifactFetchError(
-            redact(f"artifact fetch failed: "
-                   f"{_helper_error(proc.stdout + proc.stderr)}"))
+        from .check_hf_scope import (DETERMINISTIC_STATUSES, _helper_error,
+                                     http_status)
+        combined = proc.stdout + proc.stderr
+        msg = redact(f"artifact fetch failed: {_helper_error(combined)}")
+        # 401/403/404 repeat on every pod; anything else (5xx, reset,
+        # timeout, rate limit) is a hub/network condition a new pod may
+        # not see
+        if http_status(combined) in DETERMINISTIC_STATUSES:
+            raise ArtifactFetchError(msg)
+        raise TransientFetchError(msg)
     try:
         return json.loads(proc.stdout.strip().splitlines()[-1])
     except (json.JSONDecodeError, IndexError):
@@ -178,7 +189,17 @@ def main() -> int:
               f"O1_B200_ARTIFACT_SOURCE is unset; the pod cannot obtain the "
               f"checkpoint and nothing scientific may run", file=sys.stderr)
         return 2
-    report = fetch(a.source, a.artifacts_root, manifest_path=a.manifest)
+    try:
+        report = fetch(a.source, a.artifacts_root, manifest_path=a.manifest)
+    except (TransientFetchError, subprocess.TimeoutExpired) as exc:
+        print(f"REFUSED (transient): {exc}", file=sys.stderr)
+        return 2
+    except ArtifactFetchError as exc:
+        # wrong credential, absent artifact, digest mismatch: identical on
+        # every pod, so the driver must not pay to repeat it
+        print("ZERO_TOUCH_ABORTED_AT_ARTIFACT_FETCH")
+        print(f"REFUSED: {exc}", file=sys.stderr)
+        return 2
     payload = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if a.out:
         with open(a.out, "w", encoding="utf-8") as fh:

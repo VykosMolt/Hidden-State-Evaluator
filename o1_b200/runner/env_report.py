@@ -112,14 +112,14 @@ def collect_pod_report(container_image_digest: str = "UNKNOWN",
         "schema": "o1b200.environment_report.v1",
         "status": "RESOLVED_ON_POD",
         "gpu_name": props.name,
-        "gpu_uuid": str(props.uuid),
+        "gpu_uuid": _safe(lambda: str(props.uuid)),
         "gpu_count": torch.cuda.device_count(),
         "hbm_capacity_bytes": int(props.total_memory),
         "nvidia_driver": _driver_version(),
         "cuda_runtime": torch.version.cuda,
         "cuda_toolkit": torch.version.cuda,
-        "cudnn": torch.backends.cudnn.version(),
-        "nccl": ".".join(str(x) for x in torch.cuda.nccl.version()),
+        "cudnn": _safe(lambda: torch.backends.cudnn.version()),
+        "nccl": _safe(lambda: ".".join(str(x) for x in torch.cuda.nccl.version())),
         "pytorch_version": torch.__version__,
         "transformers_version": transformers.__version__,
         "numpy_version": numpy.__version__,
@@ -149,6 +149,15 @@ def collect_pod_report(container_image_digest: str = "UNKNOWN",
         "cuda_graph_state": (observed or {}).get("cuda_graph_state",
                                                  "UNOBSERVED"),
     }
+
+
+def _safe(fn, default: str = "UNAVAILABLE"):
+    """Diagnostic fields must not abort ENVIRONMENT_VERIFY after the pod and
+    the checkpoint fetch have been paid for."""
+    try:
+        return fn()
+    except Exception:  # noqa: BLE001
+        return default
 
 
 def _driver_version() -> str:

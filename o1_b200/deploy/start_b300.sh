@@ -40,24 +40,47 @@ export PYTHONPATH="$ROOT"
 
 mkdir -p "$OUT" "$ARTIFACTS"
 
+# Every pre-entry step below fails DETERMINISTICALLY (same image, same
+# config, same artifacts -> same refusal), so a non-zero exit must carry the
+# marker the off-pod driver greps for.  Without it the driver reads the
+# EXITED pod as an eviction and reacquires; the zero-progress guard cannot
+# help because no durable row count exists before the first calibration
+# checkpoint.  Result: four paid acquisitions of a run that refuses each
+# time.  (check_hf_scope distinguishes TRANSIENT hub failures itself and
+# deliberately omits the marker for those; this wrapper only fires when a
+# step exited without having printed one.)
+step() {
+  local name="$1"; shift
+  local rc=0
+  local log="$OUT/.pre_entry_${name}.log"
+  "$@" 2>&1 | tee "$log" || rc=${PIPESTATUS[0]}
+  if [[ "$rc" -ne 0 ]]; then
+    if ! grep -q "ZERO_TOUCH_ABORTED_AT_" "$log" 2>/dev/null \
+        && ! grep -q "REFUSED (transient)" "$log" 2>/dev/null; then
+      echo "ZERO_TOUCH_ABORTED_AT_PRE_ENTRY_${name}"
+    fi
+    exit "$rc"
+  fi
+}
+
 # Credential scope FIRST: one HF_TOKEN must cover both the staged-artifact
 # read and the durable-result write.  A read-only token passes ingestion and
 # every gate, then loses every durability push — under interruptible capacity
 # the run looks healthy until the eviction that destroys it.  Seconds here.
 echo "[start_b300] credential scope preflight (read source + write destination)"
-"$PY" -m o1_b200.runner.check_hf_scope --out "$OUT/HF_SCOPE_REPORT.json"
+step HF_SCOPE "$PY" -m o1_b200.runner.check_hf_scope --out "$OUT/HF_SCOPE_REPORT.json"
 
 echo "[start_b300] artifact ingestion (checkpoint is not baked into the image)"
-"$PY" -m o1_b200.runner.fetch_artifacts \
+step ARTIFACT_FETCH "$PY" -m o1_b200.runner.fetch_artifacts \
   --artifacts-root "$ARTIFACTS" \
   --out "$OUT/ARTIFACT_FETCH_REPORT.json"
 
 echo "[start_b300] artifact verification (container-path manifest)"
-"$PY" "$ROOT/o1_b200/deploy/verify_artifacts.py" \
+step ARTIFACT_VERIFY "$PY" "$ROOT/o1_b200/deploy/verify_artifacts.py" \
   --manifest "${O1_B200_TRANSFER_MANIFEST:-$ROOT/o1_b200/deploy/POD_TRANSFER_MANIFEST.json}"
 
 echo "[start_b300] environment validation"
-"$PY" "$ROOT/o1_b200/deploy/validate_environment.py" --out "$OUT/environment_report.local.json"
+step ENV_VALIDATE "$PY" "$ROOT/o1_b200/deploy/validate_environment.py" --out "$OUT/environment_report.local.json"
 
 # Combined O1 -> Foundation Learner session: the FL supervisor owns the
 # session and runs O1 as an opaque configured subprocess (INTEGRATION.md

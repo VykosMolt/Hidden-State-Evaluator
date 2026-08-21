@@ -126,6 +126,18 @@ def main() -> int:
     except Exception as exc:  # noqa: BLE001
         record("artifact_transfer_manifest", False, exc)
 
+    # 6b. transfer manifests are FRESH: they pin tree hashes of policies/,
+    # runner/ and deploy/, and a repair that touches any of those without
+    # regenerating them makes verify_artifacts.py fail on every pod built
+    # from HEAD (a deterministic abort, paid for).  This is sha256_tree
+    # over local paths: no network, no cost.
+    rc, out = _run([PY, os.path.join(_ROOT, "o1_b200", "deploy",
+                                     "verify_artifacts.py"),
+                    "--manifest", os.path.join(_ROOT, "o1_b200", "deploy",
+                                               "TRANSFER_MANIFEST.json")])
+    record("transfer_manifests_fresh", rc == 0,
+           out.strip().splitlines()[-1] if out.strip() else "")
+
     # 7. secret scan over the tree
     rc, out = _run(["grep", "-rIlE",
                     "(rpa_[A-Za-z0-9]{16,}|ghp_[A-Za-z0-9]{20,}|BEGIN [A-Z ]*PRIVATE KEY|AKIA[A-Z0-9]{16})",

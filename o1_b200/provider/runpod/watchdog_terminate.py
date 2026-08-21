@@ -153,9 +153,11 @@ def terminate_pod(pod_id: str, log, host="api.runpod.io", port=None,
 class WatchdogHandle:
     """Parent-side handle to the armed watchdog process."""
 
-    def __init__(self, proc: subprocess.Popen, log_path: str | None = None):
+    def __init__(self, proc: subprocess.Popen, log_path: str | None = None,
+                 pod_id: str | None = None):
         self.proc = proc
         self.log_path = log_path
+        self.pod_id = pod_id
 
     def confirm_armed(self, timeout: float = 20.0, sleep=time.sleep) -> bool:
         """Prove the watchdog is running AND wrote its armed record.
@@ -171,15 +173,30 @@ class WatchdogHandle:
             if self.log_path and os.path.exists(self.log_path):
                 try:
                     with open(self.log_path, encoding="utf-8") as fh:
-                        if any('"armed": true' in ln.lower()
-                               for ln in fh):
-                            return True
+                        for ln in fh:
+                            # The log is append-only and shared by every
+                            # acquisition of the session: a record must
+                            # name THIS pod, or attempt 1's line would
+                            # confirm attempt 2's dead watchdog.
+                            if self._is_armed_record(ln):
+                                return True
                 except OSError:
                     pass
             if self.proc.poll() is not None:
                 return False          # exited before arming
             sleep(0.5)
         return False
+
+    def _is_armed_record(self, line: str) -> bool:
+        try:
+            rec = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            return False
+        if rec.get("armed") is not True:
+            return False
+        if self.pod_id is None:
+            return True
+        return rec.get("pod_id") == self.pod_id
 
     def terminate_now(self) -> None:
         if self.proc.poll() is None:
@@ -210,7 +227,8 @@ def spawn_watchdog(*, pod_id: str, hard_limit_seconds: int,
                             stderr=subprocess.DEVNULL,
                             start_new_session=True)
     return WatchdogHandle(
-        proc, os.path.join(out_dir, "watchdog_termination.jsonl"))
+        proc, os.path.join(out_dir, "watchdog_termination.jsonl"),
+        pod_id=pod_id)
 
 
 def main() -> int:

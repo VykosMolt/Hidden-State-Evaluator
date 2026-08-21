@@ -23,7 +23,7 @@ from .persistence import atomic_write_text
 from .precommit_template import finalize, load_template, resolve
 from .provider_adapter import MockProviderAdapter
 from .runbuild import O1_MANIFEST_PATHS, build_validation_bundle
-from .selection import derive_gates, select_backend
+from .selection import benchmark_candidates, derive_gates, select_backend
 from .state_machine import ZeroTouchStateMachine
 from .validation_corpus import disjointness_report, load_corpus
 
@@ -164,9 +164,7 @@ def build_handlers(corpus_dir: str, work_dir: str, provider: MockProviderAdapter
                 expected_rows=int(ctx.get("corpus_row_count") or 0),
                 environment=ctx["environment_report_raw"],
                 corpus_config_verified=ctx["corpus_config_verified"])
-            for e in ctx["benchmark_raw"]
-            if "config_id" in e and not e.get("oom_count")
-            and not e.get("integrity_failures")]
+            for e in benchmark_candidates(ctx["benchmark_raw"])]
         ctx["benchmark"] = candidates
         out = select_backend(candidates)
         ctx["selected_backend"] = out["selected"]
@@ -178,6 +176,9 @@ def build_handlers(corpus_dir: str, work_dir: str, provider: MockProviderAdapter
                             "environment": ctx["environment_report_raw"]},
                         **out}, indent=2, sort_keys=True, default=str) + "\n")
         return {"selected": out["selected"]["config_id"],
+                # loud: a rehearsal that only COMPLETEs via the terminal
+                # fallback waiver means no accelerated backend passed
+                "terminal_fallback_waiver": out.get("terminal_fallback_waiver"),
                 "eligible": [c["config_id"] for c in out["eligible"]],
                 "gate_failures": {c["config_id"]: c["gate_failures"]
                                   for c in out["all_judged"]

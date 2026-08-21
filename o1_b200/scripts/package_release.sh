@@ -33,6 +33,15 @@ if [[ -n "$DIRTY" ]]; then
   echo "$DIRTY" | head -20 >&2
   exit 4
 fi
+# refresh the transfer manifests: they pin tree hashes of policies/, runner/
+# and deploy/, and the pod refuses at ARTIFACT_VERIFY if they are stale
+python3 -m o1_b200.runner.make_transfer_manifest >/dev/null
+if [[ -n "$(git status --porcelain -- o1_b200/deploy/TRANSFER_MANIFEST.json o1_b200/deploy/POD_TRANSFER_MANIFEST.json || true)" ]]; then
+  echo "REFUSED: the transfer manifests were stale and have been regenerated;" >&2
+  echo "         commit them, then re-run (a pod built from the stale pair" >&2
+  echo "         fails verify_artifacts.py deterministically)." >&2
+  exit 4
+fi
 # refresh the package checksum manifest: it ships inside the archive
 ./o1_b200/deploy/checksums.sh write >/dev/null
 if [[ -n "$(git status --porcelain -- o1_b200/SHA256SUMS || true)" ]]; then

@@ -398,15 +398,24 @@ class ReplicaBackend(Backend):
         return ReferenceSerialBackend.validate_artifacts(self)
 
     def partition(self, row_specs: list) -> list[list]:
-        """Deterministic task-affine allocation: task g -> worker g mod W.
+        """Deterministic, size-balanced, task-affine allocation.
 
         Task affinity keeps a task's baseline bank and its intervention rows
         in one worker, so the sealed h_base pairing never crosses processes.
+        Whole task groups go, in order, to the least-loaded worker (ties to
+        the lowest index), instead of ``g mod W``: with 12 tasks and 8
+        workers the modulo rule gave half the workers twice the rows, and
+        their decode rate doubled once the others finished — read by the
+        stability gate as a healthy accelerator being unstable.
         """
         groups = group_specs_by_task(row_specs)
-        parts: list[list] = [[] for _ in range(self.config.worker_count)]
-        for g, (_task_id, specs) in enumerate(groups):
-            parts[g % self.config.worker_count].extend(specs)
+        W = self.config.worker_count
+        parts: list[list] = [[] for _ in range(W)]
+        loads = [0] * W
+        for _task_id, specs in groups:
+            w = min(range(W), key=lambda i: (loads[i], i))
+            parts[w].extend(specs)
+            loads[w] += len(specs)
         return parts
 
     def execute_rows(self, row_specs: list, max_restarts: int = 2) -> dict:

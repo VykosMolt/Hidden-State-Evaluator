@@ -42,7 +42,14 @@ from .persistence import atomic_write_text
 from .precommit_template import finalize, load_template, resolve
 from .provider_adapter import LocalProviderAdapter
 from .runbuild import O1_MANIFEST_PATHS
-from .selection import derive_gates, select_backend
+from .benchmark_o1_b200 import _oom_types, load_benchmark_order
+from .identity import domain_sha256
+from .selection import benchmark_candidates, derive_gates, select_backend
+
+#: BENCHMARK_ORDER amendment 2: the pre-calibration phase (equivalence +
+#: benchmark) may use at most this fraction of the runtime remaining when
+#: it starts; stages run in the frozen order until the budget is spent.
+PRECALIBRATION_BUDGET_FRACTION = 0.25
 from .state_machine import ZeroTouchStateMachine
 from .validation_corpus import disjointness_report, load_corpus
 from . import sealed_import
@@ -193,12 +200,42 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
         """
         from .benchmark_o1_b200 import load_benchmark_order
         stages = load_benchmark_order()["staged_candidates"]
+        # A replacement pod after eviction must not pay for the whole
+        # pre-calibration phase again: the previous pod's equivalence +
+        # benchmark + selection are mirrored durably and restored when the
+        # image digest and profile match (the measurements describe the
+        # same software on the same accelerator class).
+        restored = _restore_precalibration(ctx)
+        if restored:
+            return {"restored_from_durable_store": True,
+                    **{cid: v.get("eligible_structurally")
+                       for cid, v in sorted(ctx["equivalence"].items())}}
+        phase_t0 = clock()
+        remaining_at_start = ctx["runtime_limit"] - phase_t0
         ref = run_backend("REFERENCE_SERIAL", corpus_dir,
                           os.path.join(out_dir, "eq_ref"), artifact)
+        ref_seconds = max(1.0, clock() - phase_t0)
+        # BENCHMARK_ORDER amendment 2: the pre-calibration phase (equivalence
+        # + benchmark, both over the full validation corpus per stage) is
+        # bounded to a predeclared fraction of the remaining runtime, shared
+        # by both phases.  Stages run in the frozen order until the budget
+        # is exhausted; the reference always runs.  Without this the phase
+        # was ~55% of the calibration workload, unbounded, and only checked
+        # for affordability after it had been paid for.
+        budget = PRECALIBRATION_BUDGET_FRACTION * remaining_at_start
+        ctx["precalibration"] = {
+            "remaining_at_start_seconds": remaining_at_start,
+            "budget_seconds": budget,
+            "reference_pass_seconds": ref_seconds,
+            "equivalence_spent_seconds": 0.0,
+        }
         comp = {"REFERENCE_SERIAL_w1_b1": {
             "eligible_structurally": True, "scientific_core_identical": True,
             "is_reference": True}}
         clean_so_far = True
+        spent = 0.0
+        estimate = ref_seconds
+        oom_types = _oom_types()
         for entry in stages:
             cid = entry["config_id"]
             if cid in comp:
@@ -210,39 +247,47 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
                 comp[cid] = {"eligible_structurally": False,
                              "skipped": "prior stage not clean"}
                 continue
+            # the benchmark still needs its own pass per stage, so an
+            # equivalence pass may use at most half of what is left
+            if estimate > 0.5 * (budget - spent):
+                comp[cid] = {"eligible_structurally": False,
+                             "skipped": "precalibration cost rule",
+                             "estimate_seconds": estimate,
+                             "budget_left_seconds": budget - spent}
+                continue
+            t_stage = clock()
             try:
                 cand = run_backend(
                     entry["backend"], corpus_dir,
                     os.path.join(out_dir, f"eq_{cid}"), artifact,
                     worker_count=int(entry.get("workers", 1)),
                     batch_size=int(entry.get("batch", 1)))
-            except MemoryError as exc:
+            except oom_types as exc:
+                # ANY non-reference stage that OOMs is ineligible, never an
+                # abort: the reference is the terminal fallback and the
+                # calibration does not use the selected backend's code path
                 clean_so_far = False
-                if not conditional:
-                    raise
-                # a capacity-conditional stage that OOMs is SKIPPED (and
-                # therefore ineligible), exactly as in the benchmark — it
-                # must not abort the whole paid session
                 comp[cid] = {"eligible_structurally": False,
                              "skipped": f"OOM: {exc!r}"[:200]}
+                spent += clock() - t_stage
                 continue
             except Exception as exc:  # noqa: BLE001
                 clean_so_far = False
-                if not conditional:
-                    raise
                 comp[cid] = {"eligible_structurally": False,
                              "skipped": f"integrity failure: {exc!r}"[:200]}
+                spent += clock() - t_stage
                 continue
+            stage_seconds = clock() - t_stage
+            spent += stage_seconds
+            estimate = max(estimate, stage_seconds)
             comp[cid] = compare_rows(ref["rows"], cand["rows"])
+            comp[cid]["stage_seconds"] = stage_seconds
             if not comp[cid].get("eligible_structurally"):
                 clean_so_far = False
-        mandatory = [e["config_id"] for e in stages
-                     if not e.get("conditional")]
-        failed = [cid for cid in mandatory
-                  if not comp.get(cid, {}).get("eligible_structurally")]
-        if failed:
-            raise ProductionEntryError(
-                f"structural equivalence gate failed for {failed}")
+        ctx["precalibration"]["equivalence_spent_seconds"] = spent
+        ctx["precalibration"]["stage_cost_estimate_seconds"] = estimate
+        # the reference defines structural eligibility by construction; a
+        # failed non-reference stage is recorded as ineligible, never raised
         ctx["equivalence"] = comp
         # the reference run defines the expected row count every benchmark
         # configuration must reproduce exactly
@@ -254,11 +299,19 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
                 for cid, v in sorted(comp.items())}
 
     def non_o1_benchmark(ctx):
+        if ctx.get("precalibration_restored"):
+            return {"benchmarked": len(ctx["benchmark_raw"]),
+                    "restored_from_durable_store": True}
         from .benchmark_o1_b200 import run_benchmarks
+        pre = ctx["precalibration"]
         rep = run_benchmarks(
             corpus_dir, os.path.join(out_dir, "benchmark"),
             mode="real-hardware", artifact=artifact,
-            remaining_authorized_seconds=ctx["runtime_limit"] - clock())
+            remaining_authorized_seconds=ctx["runtime_limit"] - clock(),
+            stage_budget_seconds=max(
+                0.0, pre["budget_seconds"] - pre["equivalence_spent_seconds"]),
+            stage_cost_estimate_seconds=pre.get(
+                "stage_cost_estimate_seconds", pre["reference_pass_seconds"]))
         ctx["benchmark_raw"] = [r for r in rep["results"]
                                 if not r.get("skipped")]
         atomic_write_text(
@@ -280,18 +333,78 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
             corpus_config_verified=bool(ctx.get("corpus_config_verified")))
 
     def backend_select(ctx):
-        candidates = [_derive_gates(e, ctx) for e in ctx["benchmark_raw"]
-                      if "config_id" in e and not e.get("oom_count")
-                      and not e.get("integrity_failures")
-                      and not e.get("oom")
-                      and not e.get("integrity_failure")]
+        candidates = [_derive_gates(e, ctx)
+                      for e in benchmark_candidates(ctx["benchmark_raw"])]
         ctx["benchmark"] = candidates
         out = select_backend(candidates)
         ctx["selected_backend"] = out["selected"]
         atomic_write_text(
             os.path.join(out_dir, "BACKEND_SELECTION.json"),
             json.dumps(out, indent=2, sort_keys=True, default=str) + "\n")
-        return {"selected": out["selected"]["config_id"]}
+        if not ctx.get("precalibration_restored"):
+            _persist_precalibration(ctx)
+        return {"selected": out["selected"]["config_id"],
+                "terminal_fallback_waiver": out.get("terminal_fallback_waiver")}
+
+    PRECAL_REMOTE_REL = "durable_o1_precalibration/PRECALIBRATION_RESULT.json"
+
+    def _precal_identity() -> dict:
+        return {"image_digest": os.environ.get("O1_IMAGE_DIGEST", "UNKNOWN"),
+                "profile": profile_key,
+                "benchmark_order_sha256": domain_sha256(
+                    "o1b200.benchmark_order.v1", load_benchmark_order())}
+
+    def _persist_precalibration(ctx) -> None:
+        payload = {
+            "schema": "o1b300.precalibration_result.v1",
+            "identity": _precal_identity(),
+            "equivalence": ctx["equivalence"],
+            "corpus_row_count": ctx["corpus_row_count"],
+            "benchmark_report_text": open(
+                os.path.join(out_dir, "BENCHMARK_REPORT.real.json"),
+                encoding="utf-8").read(),
+            "precalibration": ctx.get("precalibration"),
+        }
+        local = os.path.join(out_dir, "PRECALIBRATION_RESULT.json")
+        atomic_write_text(local, json.dumps(payload, sort_keys=True,
+                                            default=str) + "\n")
+        try:
+            store.push_file(local, PRECAL_REMOTE_REL)
+        except Exception as exc:  # noqa: BLE001 - advisory: a replacement pod re-measures
+            atomic_write_text(os.path.join(out_dir, "PRECALIBRATION_PUSH_FAILED.txt"),
+                              repr(exc)[:500] + "\n")
+
+    def _restore_precalibration(ctx) -> bool:
+        local = os.path.join(out_dir, "PRECALIBRATION_RESULT.restored.json")
+        try:
+            store.fetch_file(PRECAL_REMOTE_REL, local)
+            with open(local, encoding="utf-8") as fh:
+                payload = json.load(fh)
+        except Exception:  # noqa: BLE001 - absent or unreadable: measure
+            return False
+        if payload.get("schema") != "o1b300.precalibration_result.v1":
+            return False
+        if payload.get("identity") != _precal_identity():
+            # a different image or accelerator class: measurements do not
+            # transfer; measure again
+            return False
+        ctx["equivalence"] = payload["equivalence"]
+        ctx["corpus_row_count"] = int(payload["corpus_row_count"])
+        report_path = os.path.join(out_dir, "BENCHMARK_REPORT.real.json")
+        atomic_write_text(report_path, payload["benchmark_report_text"])
+        rep = json.loads(payload["benchmark_report_text"])
+        ctx["benchmark_raw"] = [r for r in rep["results"]
+                                if not r.get("skipped")]
+        ctx["benchmark_sha256"] = __import__("hashlib").sha256(
+            open(report_path, "rb").read()).hexdigest()
+        ctx["precalibration"] = payload.get("precalibration")
+        ctx["precalibration_restored"] = True
+        atomic_write_text(
+            os.path.join(out_dir, "EQUIVALENCE_REPORT.real.json"),
+            json.dumps(ctx["equivalence"], indent=2, sort_keys=True,
+                       default=str) + "\n")
+        return True
+
 
     def precommit_build(ctx):
         import torch

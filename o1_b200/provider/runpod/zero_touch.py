@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import time
 
 from .adapter import RunpodV2Adapter
@@ -71,6 +72,25 @@ REQUIRED_CONFIG_KEYS = (
     # a bare KeyError outside the authorization check
     "package_zip_sha256", "budget_policy_sha256",
 )
+
+
+#: The pod's completion witness: a WHOLE LINE, not a substring.  In a
+#: combined session the O1 phase runs as a child of the FL supervisor, which
+#: rewrites O1's own markers (O1_PHASE_COMPLETE) and prints the session's
+#: marker once at its end; a substring match would have read a quoted,
+#: prefixed or mid-line occurrence as the verdict.
+_WITNESS_RE = re.compile(r"^\s*ZERO_TOUCH_(COMPLETE|ABORTED_AT_([A-Z0-9_]+))\s*$",
+                         re.MULTILINE)
+
+
+def completion_verdict(log_tail: str) -> str | None:
+    """``"COMPLETE"``, the abort state name, or None (no verdict yet).
+    The LAST whole-line marker wins."""
+    verdict = None
+    for m in _WITNESS_RE.finditer(log_tail or ""):
+        verdict = "COMPLETE" if m.group(1) == "COMPLETE" else (
+            m.group(2) or "UNSPECIFIED_STATE")
+    return verdict
 
 
 def result_archive_uri(config: dict) -> str:
@@ -341,21 +361,16 @@ def run_session(*, authorization_path: str, out_dir: str,
         for attempt_i in range(retries):
             try:
                 tail = adapter.get_container_logs(pod.id, tail=50)
-                if "ZERO_TOUCH_ABORTED_AT_" in tail:
+                verdict = completion_verdict(tail)
+                if verdict and verdict != "COMPLETE":
                     # The pod reached a DETERMINISTIC verdict and said so.
                     # Reacquiring cannot help — a fresh pod runs the same
                     # gates against the same artifacts and fails identically
                     # — so this must never be mistaken for an eviction.
-                    rest = tail.split("ZERO_TOUCH_ABORTED_AT_")[-1].split()
-                    # a log truncated exactly at the marker used to raise
-                    # IndexError into the broad handler below, degrading a
-                    # DETERMINISTIC failure into "log unavailable" -> a paid
-                    # reacquisition of a run that fails identically
-                    marker = rest[0] if rest else "UNSPECIFIED_STATE"
                     raise DeterministicPodFailure(
-                        f"the pod aborted deterministically at {marker}; "
+                        f"the pod aborted deterministically at {verdict}; "
                         f"reacquisition would repeat it")
-                return "ZERO_TOUCH_COMPLETE" in tail
+                return verdict == "COMPLETE"
             except DeterministicPodFailure:
                 raise
             except Exception:  # noqa: BLE001 - log endpoint may lag

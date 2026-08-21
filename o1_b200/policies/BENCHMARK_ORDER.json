@@ -94,8 +94,18 @@
     "stop immediately on any OOM (larger configurations are not attempted)",
     "stop immediately on any integrity failure",
     "stop launching new stages at 95% budget consumption (watchdog)",
-    "each stage runs the full validation corpus exactly once; no cherry-picking"
+    "each stage runs the full validation corpus exactly once; no cherry-picking",
+    "a non-reference stage that fails (OOM, integrity, structural) is INELIGIBLE, never a session abort: REFERENCE_SERIAL is the terminal fallback"
   ],
   "selection": "policies/B200_BACKEND_SELECTION_POLICY.json \u2014 highest verified rows/hour among gate-eligible candidates; extra B300 capacity is exploited ONLY through these mechanically measured stages, never through scientific redesign",
-  "note": "v2 of the order frozen during the B300 migration, before any provider instance was rented. Stages 1-7 are byte-identical to the v1 order validated for the B200; stages 8-10 are the capacity-conditional deep-batch extension for the 288 GB part. It must not be reordered on the accelerator."
+  "note": "v2 of the order frozen during the B300 migration, before any provider instance was rented. Stages 1-7 are byte-identical to the v1 order validated for the B200; stages 8-10 are the capacity-conditional deep-batch extension for the 288 GB part. It must not be reordered on the accelerator.",
+  "amendments": [
+    {
+      "amendment": 2,
+      "date": "2026-08-21",
+      "rule": "PRE-CALIBRATION BUDGET: the non-O1 equivalence phase and the benchmark together may use at most 25% of the authorized runtime remaining when the phase starts. The reference stage always runs (it is the terminal fallback and the equivalence anchor). Other stages run in the frozen order, each only if its projected cost (the largest stage time measured so far, initially the reference pass) fits the remaining budget; a stage that does not fit is skipped and therefore ineligible. The result of the whole phase is mirrored durably and restored on a replacement pod whose image digest, profile and benchmark order match, so an eviction never repays the phase.",
+      "why": "the phase ran 21 full-corpus passes (~55% of the calibration workload) before the affordability gate, was unbounded, and was repeated in full after every eviction against a shrinking allocation",
+      "scientific_impact": "none: selection input only; every stage that runs still runs the full corpus exactly once"
+    }
+  ]
 }

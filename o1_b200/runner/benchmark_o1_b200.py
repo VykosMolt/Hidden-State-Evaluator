@@ -129,6 +129,12 @@ def stability_spread(rates: list[float]) -> float | None:
 def _row_commit_events(rows_dir: str) -> dict[str, list[tuple[float, int]]]:
     """worker_id -> [(mtime, n_generated_tokens)] for every committed row."""
     events: dict[str, list[tuple[float, int]]] = {}
+    # A batched backend commits its B rows milliseconds apart, not at one
+    # mtime; treating them as B events attributed the first row's tokens to
+    # the whole batch interval and the other B-1 to an instant, so one long
+    # row in a batch read as a rate collapse.  Rows sharing a batch_id are
+    # ONE event: all their tokens, at the batch's last commit.
+    batches: dict[tuple[str, str], list[tuple[float, int]]] = {}
     for name in os.listdir(rows_dir):
         if not name.endswith(".json"):
             continue
@@ -138,10 +144,17 @@ def _row_commit_events(rows_dir: str) -> dict[str, list[tuple[float, int]]]:
                 rec = json.load(fh)
             tokens = int(rec.get("n_generated_tokens", 0))
             worker = str(rec.get("worker_id") or "w0")
-            events.setdefault(worker, []).append(
-                (os.path.getmtime(path), tokens))
+            batch = str(rec.get("batch_id") or "serial")
+            mtime = os.path.getmtime(path)
         except (OSError, ValueError):
             continue
+        if batch == "serial":
+            events.setdefault(worker, []).append((mtime, tokens))
+        else:
+            batches.setdefault((worker, batch), []).append((mtime, tokens))
+    for (worker, _batch), rows in batches.items():
+        events.setdefault(worker, []).append(
+            (max(t for t, _ in rows), sum(n for _, n in rows)))
     return events
 
 
@@ -239,7 +252,7 @@ def benchmark_config(entry: dict, corpus_dir: str, out_dir: str,
         # ONE call, as production makes it; stability comes from the
         # per-row commit times (see the module docstring)
         exec_report = backend.execute_rows(bundle.specs) or {}
-    except MemoryError:
+    except _oom_types():
         ooms += 1
         raise
     t_exec = time.monotonic()
@@ -305,11 +318,34 @@ def benchmark_config(entry: dict, corpus_dir: str, out_dir: str,
     }
 
 
+def _oom_types() -> tuple:
+    """A CUDA OOM is torch.cuda.OutOfMemoryError (a RuntimeError subclass in
+    current torch), NOT MemoryError; catching MemoryError alone recorded
+    real OOMs as integrity failures and the no_oom gate could never fire."""
+    types: list = [MemoryError]
+    try:
+        import torch
+        oom = getattr(torch.cuda, "OutOfMemoryError", None)
+        if oom is not None:
+            types.append(oom)
+    except Exception:  # noqa: BLE001
+        pass
+    return tuple(types)
+
+
 def run_benchmarks(corpus_dir: str, out_dir: str, *, mode: str,
                    task_subset=None, device: str = "cpu",
                    max_stages: int | None = None,
                    artifact: dict | None = None,
-                   remaining_authorized_seconds: float | None = None) -> dict:
+                   remaining_authorized_seconds: float | None = None,
+                   stage_budget_seconds: float | None = None,
+                   stage_cost_estimate_seconds: float | None = None) -> dict:
+    """``stage_budget_seconds``: the pre-calibration budget left for
+    NON-reference stages (BENCHMARK_ORDER amendment 2).  Each stage's cost
+    is estimated as ``stage_cost_estimate_seconds`` (the reference pass's
+    measured time, refined by this run's own measurements) and a stage
+    that would overrun the budget is skipped, in order, before it starts.
+    The reference stage always runs: it is the terminal fallback."""
     """mode: "local-synthetic" (harness validation, CPU, fake model) or
     "real-hardware" (the accelerator session: real Ouro-RLTT on CUDA,
     frozen stage order, stop rules enforced, conditional deep-batch stages
@@ -338,7 +374,20 @@ def run_benchmarks(corpus_dir: str, out_dir: str, *, mode: str,
     results = []
     clean_so_far = True
     t_bench0 = time.monotonic()
+    budget_left = stage_budget_seconds
+    cost_estimate = stage_cost_estimate_seconds
     for entry in stages:
+        is_reference = entry["backend"] == "REFERENCE_SERIAL"
+        if budget_left is not None and not is_reference:
+            measured = [float(r.get("total_stage_seconds") or 0.0)
+                        for r in results if not r.get("skipped")]
+            estimate = max([cost_estimate or 0.0] + measured)
+            if estimate <= 0 or estimate > budget_left:
+                results.append({"config_id": entry["config_id"],
+                                "skipped": "precalibration cost rule",
+                                "estimate_seconds": estimate,
+                                "budget_left_seconds": budget_left})
+                continue
         if entry.get("conditional"):
             # frozen extension rule: prior stages clean AND the cost rule
             if not clean_so_far:
@@ -353,10 +402,11 @@ def run_benchmarks(corpus_dir: str, out_dir: str, *, mode: str,
                     results.append({"config_id": entry["config_id"],
                                     "skipped": "extension cost rule"})
                     continue
+        t_stage = time.monotonic()
         try:
             res = benchmark_config(entry, corpus_dir, out_dir, artifact,
                                    task_subset=task_subset, device=device)
-        except MemoryError:
+        except _oom_types():
             clean_so_far = False
             results.append({"config_id": entry["config_id"], "oom": True})
             continue   # stop rule: larger configs are conditional-skipped
@@ -367,9 +417,14 @@ def run_benchmarks(corpus_dir: str, out_dir: str, *, mode: str,
             continue
         if res.get("oom_count") or res.get("integrity_failures"):
             clean_so_far = False
+        res["total_stage_seconds"] = time.monotonic() - t_stage
+        if budget_left is not None and not is_reference:
+            budget_left -= res["total_stage_seconds"]
         results.append(res)
     report = {
         "mode": label,
+        "stage_budget_seconds": stage_budget_seconds,
+        "stage_budget_left_seconds": budget_left,
         "benchmark_order_sha256": domain_sha256(
             "o1b200.benchmark_order.v1", order),
         "corpus_dir": corpus_dir,

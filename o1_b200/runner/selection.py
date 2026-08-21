@@ -37,6 +37,16 @@ class SelectionError(RuntimeError):
     pass
 
 
+def benchmark_candidates(results: list[dict]) -> list[dict]:
+    """The benchmark entries that may be judged: measured, no OOM, no
+    integrity failure (stub entries for skipped/failed stages excluded).
+    ONE filter for production and the rehearsal."""
+    return [r for r in results
+            if "config_id" in r and not r.get("skipped")
+            and not r.get("oom_count") and not r.get("integrity_failures")
+            and not r.get("oom") and not r.get("integrity_failure")]
+
+
 def derive_gates(entry: dict, *, equivalence: dict | None,
                  device_total_memory: int, expected_rows: int,
                  environment: dict | None,
