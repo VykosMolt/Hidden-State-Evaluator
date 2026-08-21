@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import json
 import os
 import time
 from dataclasses import dataclass, field
@@ -780,8 +781,12 @@ class StageContext:
             self.watchdog.check(phase)
 
     def write(self, stage_id: str, name: str, payload: Any) -> str:
-        return self.guard.write_json(
+        path = self.guard.write_json(
             os.path.join(self.stage_dir(stage_id), name), payload)
+        mirror = self.extra.get("durability_mirror")
+        if mirror is not None:
+            mirror.push_file(path)
+        return path
 
 
 # --------------------------------------------------------------------------
@@ -1292,6 +1297,7 @@ def _trainer_hooks(ctx: StageContext, stage_id: str,
 
 def _train_arm(ctx: StageContext, arm_id: str, *, updates: int, stage_name: str,
                learning_rate: float, out_dir: str) -> dict:
+    from ..training.checkpointing import latest_resume_tag
     from ..training.trainer import run_training_arm
 
     ctx.checkpoint(f"{arm_id}:model_load")
@@ -1303,8 +1309,10 @@ def _train_arm(ctx: StageContext, arm_id: str, *, updates: int, stage_name: str,
         # the frozen §11 cadence (600 s / 200 steps) must reach the trainer
         ctx.scheduler.assert_checkpoint_cadence(cfg)
     ctx.checkpoint(f"{arm_id}:train")
+    resume_from_tag = latest_resume_tag(out_dir)
     result = run_training_arm(cfg, bundle, examples, out_dir,
-                              _trainer_hooks(ctx, arm_id, out_dir))
+                              _trainer_hooks(ctx, arm_id, out_dir),
+                              resume_from_tag=resume_from_tag)
     return {"result": result, "bundle": bundle, "config": cfg,
             "out_dir": out_dir}
 
@@ -1354,6 +1362,9 @@ def dev_grid_work(ctx: StageContext, stage: StageDefinition) -> dict:
         decisions_path, selection=selection, updates_U=ctx.updates,
         stage_states=stage_states, checkpoint_tags=checkpoint_tags,
         hashes=hashes, runs=runs, guard=ctx.guard)
+    mirror = ctx.extra.get("durability_mirror")
+    if mirror is not None:
+        mirror.push_file(decisions_path)
     payload = {
         "schema": "flb200.dev_grid_report.v1",
         "selection": selection.to_dict(),
@@ -1756,6 +1767,25 @@ def sealed_eval_work(ctx: StageContext, stage: StageDefinition) -> dict:
     from ..evaluation.family_holdout import build_family_holdout_report
 
     out_dir = ctx.stage_dir(stage.stage_id)
+    ledger_path = os.path.join(ctx.out_dir, sealed_gate.LEDGER_NAME)
+    report_path = os.path.join(out_dir, "sealed_eval_report.json")
+    records_path = os.path.join(out_dir, "sealed_records.jsonl")
+    mirror = ctx.extra.get("durability_mirror")
+    if mirror is not None:
+        mirror.restore_all()
+    if os.path.isfile(ledger_path):
+        prior = sealed_gate.read_ledger(ledger_path, guard=ctx.guard)
+        if any(entry.get("event") == sealed_gate.EVENT_OPENED for entry in prior):
+            if os.path.isfile(report_path):
+                with open(ctx.guard.guard(report_path, o1_isolation.MODE_READ),
+                          encoding="utf-8") as fh:
+                    report = json.load(fh)
+                ctx.results["SEALED_EVAL"] = report
+                return report
+            raise StageError(
+                "REFUSED: the sealed ledger already records a committed "
+                "opening but the sealed result is missing; a second opening "
+                "is refused")
     ctx.checkpoint("sealed:promoted_arm")
     bundle, model_record = promoted_arm_bundle(ctx, require=True)
     # The LAST watchdog checkpoint before the seal.  Nothing inside the opening
@@ -1765,14 +1795,18 @@ def sealed_eval_work(ctx: StageContext, stage: StageDefinition) -> dict:
     ctx.checkpoint("sealed:before_opening")
 
     with sealed_gate.sealed_opening(
-            ledger_path=os.path.join(ctx.out_dir, sealed_gate.LEDGER_NAME),
+            ledger_path=ledger_path,
             dev_decisions_path=os.path.join(ctx.out_dir,
                                             sealed_gate.DEV_DECISIONS_NAME),
             split_manifest_path=os.path.join(ctx.pregen_root,
                                              "family_split_manifest.json"),
             stage_states=ctx.extra.get("stage_states"),
             guard=ctx.guard,
-            opened_by=f"{ctx.label}:SEALED_EVAL") as unlock:
+            opened_by=f"{ctx.label}:SEALED_EVAL",
+            durability=mirror,
+            scheduler_journal_path=(
+                None if ctx.scheduler is None else ctx.scheduler.journal_path),
+            result_paths=(report_path, records_path)) as unlock:
         episodes = _sealed_episodes(ctx, stage, unlock)
         records = run_episodes(bundle, episodes, env_factory,
                                cfg=LearningCurveConfig(

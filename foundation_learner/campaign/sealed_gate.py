@@ -51,7 +51,7 @@ import secrets
 import stat
 import time
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from ..ecology.base import (canonical_json, domain_sha256, sealed_key,
                             sha256_bytes, sha256_file, unseal_bytes)
@@ -82,6 +82,7 @@ __all__ = [
     "SealedUnlock",
     "open_sealed",
     "sealed_opening",
+    "sealed_ledger_expected",
 ]
 
 DEV_DECISIONS_NAME = "DEV_DECISIONS_FROZEN.json"
@@ -351,6 +352,13 @@ class SealedUnlock:
     results: list[dict] = field(default_factory=list)
     revoked: bool = False
     aborted: bool = False
+    on_durable: Callable[[str], None] | None = None
+
+    def _mirror(self, *paths: str) -> None:
+        if self.on_durable is None:
+            return
+        for path in paths:
+            self.on_durable(path)
 
     # -- validity ----------------------------------------------------------
 
@@ -411,6 +419,7 @@ class SealedUnlock:
         })
         self.entry = _append_ledger(self.ledger_path, EVENT_OPENED, payload,
                                     guard=self.guard, utc=_utc_now())
+        self._mirror(self.ledger_path)
         return self.entry
 
     def abort(self, reason: str) -> dict:
@@ -434,6 +443,7 @@ class SealedUnlock:
         })
         entry = _append_ledger(self.ledger_path, EVENT_ABORTED, payload,
                                guard=self.guard, utc=_utc_now())
+        self._mirror(self.ledger_path)
         self.aborted = True
         self.entry = None
         self._key = b""
@@ -508,6 +518,7 @@ class SealedUnlock:
              "mode": "0444",
              "dev_decisions_sha256": self.dev_decisions_sha256},
             guard=self.guard, utc=_utc_now())
+        self._mirror(resolved, self.ledger_path)
         record = {"path": resolved, "sha256": digest, "bytes": len(payload),
                   "kind": kind, "ledger_entry_sha256": entry["entry_sha256"]}
         self.results.append(record)
@@ -547,13 +558,72 @@ class SealedUnlock:
         }
 
 
+def sealed_ledger_expected(ledger_path: str, *, durability=None,
+                           scheduler_journal: str | None = None,
+                           result_paths: Sequence[str] = (),
+                           guard: o1_isolation.IsolationGuard | None = None
+                           ) -> list[str]:
+    """Reasons a sealed opening ledger is expected to already exist.
+
+    ``STAGE_STARTED`` alone is not a reason: a provisional opening writes
+    nothing, and eviction before commit/abort must still be allowed to
+    retry.  A committed opening, a durable listing of the ledger, or a
+    sealed result file is.
+    """
+    reasons: list[str] = []
+    if durability is not None:
+        try:
+            keys = set(durability.store.list_all())
+        except Exception:  # noqa: BLE001 - listing failure is not evidence
+            keys = set()
+        try:
+            rel = durability._rel(ledger_path)
+        except Exception:  # noqa: BLE001
+            rel = None
+        if rel and rel in keys:
+            reasons.append("durable store lists the sealed opening ledger")
+        for result_path in result_paths:
+            try:
+                result_rel = durability._rel(result_path)
+            except Exception:  # noqa: BLE001
+                continue
+            if result_rel in keys:
+                reasons.append(
+                    f"durable store lists {os.path.basename(result_path)}")
+    if scheduler_journal and os.path.isfile(scheduler_journal):
+        journal_path = (guard or o1_isolation.default_guard()).guard(
+            scheduler_journal, o1_isolation.MODE_READ)
+        with open(journal_path, encoding="utf-8") as fh:
+            for line in fh:
+                if not line.strip():
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if (rec.get("stage_id") == "SEALED_EVAL"
+                        and rec.get("event") == "STAGE_COMPLETED"):
+                    reasons.append(
+                        "scheduler journal records SEALED_EVAL completed")
+                    break
+    for result_path in result_paths:
+        if os.path.isfile(result_path):
+            reasons.append(
+                f"sealed result exists: {os.path.basename(result_path)}")
+    return reasons
+
+
 def open_sealed(*, ledger_path: str, dev_decisions_path: str,
                 split_manifest_path: str,
                 stage_states: Mapping[str, Any] | None = None,
                 opened_by: str = "campaign.session_supervisor",
                 guard: o1_isolation.IsolationGuard | None = None,
                 utc_fn=_utc_now,
-                verify_split_sources: bool = True) -> SealedUnlock:
+                verify_split_sources: bool = True,
+                durability=None,
+                on_durable: Callable[[str], None] | None = None,
+                scheduler_journal_path: str | None = None,
+                result_paths: Sequence[str] = ()) -> SealedUnlock:
     """Phase ONE of the single, ledgered sealed opening (contract §12).
 
     Refuses unless ``DEV_DECISIONS_FROZEN.json`` exists and validates, refuses
@@ -567,6 +637,19 @@ def open_sealed(*, ledger_path: str, dev_decisions_path: str,
     :func:`sealed_opening` does automatically.
     """
     guard = guard or o1_isolation.default_guard()
+    if durability is not None:
+        durability.restore_all()
+        if on_durable is None:
+            on_durable = durability.push_file
+    expected = sealed_ledger_expected(
+        ledger_path, durability=durability,
+        scheduler_journal=scheduler_journal_path,
+        result_paths=result_paths, guard=guard)
+    if expected and not os.path.isfile(ledger_path):
+        raise LedgerError(
+            "REFUSED: the sealed opening ledger is missing but expected "
+            f"({'; '.join(expected)}); a fresh opening is refused rather "
+            "than granting a second use of the sealed set")
     decisions = read_dev_decisions(dev_decisions_path, guard=guard)
     decisions_file_sha256 = sha256_file(
         guard.guard(dev_decisions_path, o1_isolation.MODE_READ))
@@ -632,6 +715,7 @@ def open_sealed(*, ledger_path: str, dev_decisions_path: str,
         prior_aborted=len(aborted),
         opening_payload=opening_payload,
         _key=sealed_key(split_hex),
+        on_durable=on_durable,
     )
 
 

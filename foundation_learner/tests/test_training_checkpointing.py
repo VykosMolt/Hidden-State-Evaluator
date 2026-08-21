@@ -155,6 +155,15 @@ def test_prune_keeps_the_retained_tags(tmp_path):
     assert sorted(cp.list_checkpoints(str(tmp_path))) == ["best_dev", "final", "initial"]
 
 
+def test_latest_resume_tag_picks_the_highest_step(tmp_path):
+    for tag, step in (("initial", 0), ("step2", 2), ("step4", 4), ("final", 4)):
+        _save(tmp_path, tag=tag, step=step)
+    assert cp.latest_resume_tag(str(tmp_path)) == "final"
+    os.remove(os.path.join(tmp_path, "ckpt_final.pt"))
+    os.remove(os.path.join(tmp_path, "ckpt_final.manifest.json"))
+    assert cp.latest_resume_tag(str(tmp_path)) == "step4"
+
+
 def test_invalid_tag_is_refused(tmp_path):
     with pytest.raises(cp.CheckpointError):
         _save(tmp_path, tag="../escape")

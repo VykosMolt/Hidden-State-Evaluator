@@ -285,3 +285,118 @@ def test_available_time_is_what_remains_after_o1(tmp_path):
     sup._t0 = sup.clock.monotonic() - 600.0
     record = sup.state_COMPUTE_REMAINING_AUTHORIZED_TIME()
     assert 2990.0 <= record["available_foundation_learner_seconds"] <= 3000.0
+
+
+def test_o1_receipts_are_mirrored_and_survive_eviction(tmp_path):
+    """F1: eviction after TRANSFER_O1_RECORDS must not lose the receipts.
+
+    The journal is mirrored; the receipts were not.  A replacement pod
+    would skip O1 (journal says TRANSFER complete) then refuse the ladder
+    because require_receipt looks for a file that died with the container.
+    """
+    dest = str(tmp_path / "durable")
+    path, _, _ = fixtures(tmp_path, fl_durable_destination=dest)
+    sup, _ = supervisor(tmp_path, path)
+
+    def crash_after_o1(scheduler, ctx):
+        raise RuntimeError("evicted after O1, before the ladder")
+
+    first = ss.SessionSupervisor(
+        config=ss.SessionConfig.load(path, guard=sup.guard),
+        out_dir=str(tmp_path / "pod1"), guard=sup.guard,
+        ladder_runner=crash_after_o1,
+        context_factory=lambda s: __import__(
+            "foundation_learner.campaign.stage_definitions",
+            fromlist=["StageContext"]).StageContext(
+                out_dir=os.path.join(s.out_dir, "ladder"),
+                pregen_root=s.payload["pregen_root"],
+                bundle_factory=lambda: None, guard=s.guard))
+    status = first.run(resume=False)
+    assert status["outcome"] == "ABORTED_AT_RUN_FL_LADDER"
+    assert os.path.isfile(os.path.join(first.out_dir, ss.O1_TRANSFER_RECEIPT))
+
+    # eviction: pod1 disk is gone
+    import shutil
+    shutil.rmtree(first.out_dir)
+    second = ss.SessionSupervisor(
+        config=ss.SessionConfig.load(path, guard=sup.guard),
+        out_dir=str(tmp_path / "pod2"), guard=sup.guard,
+        ladder_runner=lambda sch, ctx: {"states": {"BENCH": "COMPLETE"}},
+        context_factory=lambda s: __import__(
+            "foundation_learner.campaign.stage_definitions",
+            fromlist=["StageContext"]).StageContext(
+                out_dir=os.path.join(s.out_dir, "ladder"),
+                pregen_root=s.payload["pregen_root"],
+                bundle_factory=lambda: None, guard=s.guard))
+    receipt = second.require_receipt(
+        ss.O1_TRANSFER_RECEIPT, for_state="RUN_FL_LADDER")
+    assert os.path.isfile(receipt)
+    assert "TRANSFER_O1_RECORDS" in second.completed
+    status2 = second.run(resume=True)
+    assert status2["outcome"] == "COMPLETE", status2
+
+
+def test_a_foreign_session_journal_is_refused(tmp_path):
+    """F4c: a restored journal whose session_id disagrees must not be believed."""
+    path, _, _ = fixtures(tmp_path)
+    out = tmp_path / "session"
+    out.mkdir()
+    journal = out / ss.JOURNAL_NAME
+    journal.write_text(
+        json.dumps({"schema": ss.JOURNAL_SCHEMA, "event": "STATE_COMPLETED",
+                    "state": "TRANSFER_O1_RECORDS",
+                    "session_id": "SOME_OTHER_SESSION"}) + "\n",
+        encoding="utf-8")
+    with pytest.raises(ss.SupervisorError, match="session_id"):
+        supervisor(tmp_path, path)
+
+
+def test_a_zeroed_ladder_does_not_report_complete(tmp_path):
+    """F5: every stage refused, session must not report COMPLETE."""
+    path, _, _ = fixtures(tmp_path)
+    sup, _ = supervisor(
+        tmp_path, path,
+        ladder_runner=lambda sch, ctx: {
+            "states": {"BENCH": "REFUSED_UNAFFORDABLE",
+                       "FL0": "REFUSED_UNAFFORDABLE"}})
+    status = sup.run(resume=False)
+    assert status["outcome"] == "NO_STAGE_ADMITTED", status
+    assert "RUN_FL_LADDER" not in status["states_completed"]
+
+
+def test_command_records_redact_secrets(tmp_path, monkeypatch):
+    monkeypatch.setenv("HF_TOKEN", "hf_secrettokenvalue1234567890ABCD")
+    path, _, _ = fixtures(tmp_path)
+    sup, _ = supervisor(tmp_path, path)
+    record = sup._run_command(
+        [sys.executable, "-c",
+         "import os; print(os.environ['HF_TOKEN'])"],
+        state="TEST")
+    assert "hf_secrettokenvalue" not in record["stdout_tail"]
+    assert "[REDACTED]" in record["stdout_tail"]
+
+
+def test_transfer_timeout_does_not_block_termination(tmp_path):
+    """A hung FL transfer must not strand the billing pod on emergency close."""
+    marker = tmp_path / "TERMINATED.log"
+    path, _, _ = fixtures(
+        tmp_path,
+        fl_transfer_command=[sys.executable, "-c",
+                             "import time; time.sleep(30)"],
+        fl_transfer_timeout_seconds=0.3,
+        terminate_command=[sys.executable, "-c",
+                           "import sys; open(sys.argv[1],'a').write('T\\n')",
+                           str(marker)])
+
+    def exploding(scheduler, ctx):
+        os.makedirs(scheduler.out_dir, exist_ok=True)
+        open(os.path.join(scheduler.out_dir, "partial.json"), "w").write("{}\n")
+        raise RuntimeError("boom")
+
+    sup, _ = supervisor(tmp_path, path, ladder_runner=exploding)
+    t0 = __import__("time").monotonic()
+    status = sup.run(resume=False)
+    assert __import__("time").monotonic() - t0 < 15
+    assert status["close_out"]["transfer"]["status"] == "FAILED"
+    assert status["close_out"]["terminate"]["status"] == "COMPLETED"
+    assert marker.exists()

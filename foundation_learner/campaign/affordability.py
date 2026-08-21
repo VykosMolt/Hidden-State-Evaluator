@@ -227,6 +227,31 @@ class BenchMeasurement:
             "notes": list(self.notes),
         }
 
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "BenchMeasurement":
+        """Rebuild a measurement from :meth:`to_dict` (ladder resume)."""
+        return cls(
+            scope=str(payload["scope"]),
+            seconds_per_update=float(payload["seconds_per_update"]),
+            tokens_per_second=float(payload["tokens_per_second"]),
+            updates_measured=int(payload["updates_measured"]),
+            wall_seconds=float(payload["wall_seconds"]),
+            forward_tokens=int(payload["forward_tokens"]),
+            max_tokens_per_batch=int(payload["max_tokens_per_batch"]),
+            device=str(payload.get("device") or "unknown"),
+            eval_seconds_per_episode=(
+                None if payload.get("eval_seconds_per_episode") is None
+                else float(payload["eval_seconds_per_episode"])),
+            model_load_seconds=(
+                None if payload.get("model_load_seconds") is None
+                else float(payload["model_load_seconds"])),
+            forward_seconds_per_episode=(
+                None if payload.get("forward_seconds_per_episode") is None
+                else float(payload["forward_seconds_per_episode"])),
+            source=str(payload.get("source") or "MEASURED_BENCH"),
+            notes=tuple(payload.get("notes") or ()),
+        )
+
     @staticmethod
     def from_ledger(ledger: Mapping[str, Any], scope: str, *,
                     eval_seconds_per_episode: float | None = None,

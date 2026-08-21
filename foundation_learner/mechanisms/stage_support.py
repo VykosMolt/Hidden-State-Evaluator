@@ -508,6 +508,49 @@ def value_head_from_ctx(ctx: Any) -> Any | None:
         return None
 
 
+def _expected_arm_config_hash(ctx: Any, arm_id: str) -> str | None:
+    recorded = ((ctx.results.get(arm_id) or {}).get("arm_result") or {}).get(
+        "arm_config_hash")
+    if recorded:
+        return str(recorded)
+    if ctx.updates is None or ctx.learning_rate is None:
+        return None
+    from foundation_learner.training.arms import (
+        STAGE_CORE, STAGE_SMOKE, arm_config_hash, make_arm_config)
+
+    stage_tag = STAGE_SMOKE if getattr(ctx, "rehearsal", False) else STAGE_CORE
+    cfg = make_arm_config(
+        arm_id, learning_rate=float(ctx.learning_rate),
+        updates=int(ctx.updates),
+        max_tokens_per_batch=int(ctx.max_tokens_per_batch),
+        peft_mode=ctx.scope, seed=int(ctx.root_seed), stage=stage_tag,
+        checkpoint_every_steps=200, checkpoint_every_seconds=600.0,
+        max_seq_len=min(2048, int(ctx.max_tokens_per_batch)))
+    return arm_config_hash(cfg)
+
+
+def _assert_checkpoint_binding(ctx: Any, bundle: Any, manifest: dict,
+                               arm_id: str) -> None:
+    """The same two gates the trainer applies on resume (hash + identity)."""
+    expected = _expected_arm_config_hash(ctx, arm_id)
+    stored_hash = manifest.get("arm_config_hash")
+    if expected is None:
+        raise stage_error(
+            f"REFUSED: cannot verify {arm_id} checkpoint arm_config_hash "
+            "(this session has no recorded/computable arm config); a stale "
+            "checkpoint must not become this session's result")
+    if stored_hash != expected:
+        raise stage_error(
+            f"REFUSED: {arm_id} checkpoint arm_config_hash {stored_hash} "
+            f"!= this session {expected}")
+    stored_id = (manifest.get("base_identity") or {}).get("identity_hash")
+    bundle_id = (getattr(bundle, "identity", None) or {}).get("identity_hash")
+    if stored_id != bundle_id:
+        raise stage_error(
+            f"REFUSED: {arm_id} checkpoint base identity {stored_id} "
+            f"!= this session's bundle {bundle_id}")
+
+
 def arm_checkpoint_state(ctx: Any, bundle: Any, arm_id: str, *,
                         tag: str = "final") -> dict:
     """Load a completed core arm's trained state into ``bundle`` if it exists.
@@ -528,7 +571,9 @@ def arm_checkpoint_state(ctx: Any, bundle: Any, arm_id: str, *,
                 "model": "BASE_CHECKPOINT_NO_TRAINED_ARM",
                 "reason": f"no {tag!r} checkpoint for {arm_id} under {out_dir!r}"}
     payload = load_checkpoint(out_dir, tag)
-    scope = payload["manifest"].get("trained_scope")
+    manifest = payload["manifest"]
+    _assert_checkpoint_binding(ctx, bundle, manifest, arm_id)
+    scope = manifest.get("trained_scope")
     state = payload["trained_state"]
     if scope == "FULL_MODEL_MODE":
         bundle.model.load_state_dict(state, strict=True)

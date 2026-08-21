@@ -38,6 +38,35 @@ class DurabilityError(RuntimeError):
     pass
 
 
+def parse_hf_destination(destination: str) -> tuple[str, str]:
+    """``hf://ns/repo[/sub/path]`` -> (``ns/repo``, sub-path or ``""``).
+
+    The sub-path is a documented session scope.  Silently discarding it
+    would let two campaigns that share a repo (``hf://ns/repo/fl`` vs
+    ``hf://ns/repo/o1``) overwrite each other's durable state.
+    """
+    if not destination.startswith("hf://"):
+        raise DurabilityError(f"not an hf:// destination: {destination!r}")
+    parts = destination[len("hf://"):].strip("/").split("/")
+    if len(parts) < 2 or not all(parts[:2]):
+        raise DurabilityError(f"malformed destination {destination!r}")
+    return "/".join(parts[:2]), "/".join(parts[2:]).strip("/")
+
+
+def _safe_session_id(session_id: str) -> str:
+    text = str(session_id).strip()
+    if (not text or text in (".", "..") or "/" in text or "\\" in text
+            or text != os.path.basename(text)):
+        raise DurabilityError(f"invalid session_id {session_id!r}")
+    return text
+
+
+def _contained(root: str, path: str) -> bool:
+    root_abs = os.path.abspath(root)
+    path_abs = os.path.abspath(path)
+    return path_abs == root_abs or path_abs.startswith(root_abs + os.sep)
+
+
 def _sha256_file(path: str, guard=None) -> str:
     if guard is not None:
         path = guard(path, "read")
@@ -103,11 +132,12 @@ class _HfStore:
     """
 
     def __init__(self, repo_id: str, guard=None, runner=None,
-                 timeout: float = 3600.0):
+                 timeout: float = 3600.0, list_prefix: str = _PREFIX):
         self.guard = guard or (lambda path, mode="read": path)
         self.repo_id = repo_id
         self.token = os.environ.get("HF_TOKEN")
         self.timeout = timeout
+        self.list_prefix = list_prefix
         self._runner = runner or self._spawn
 
     def _spawn(self, args: list[str]) -> dict:
@@ -147,16 +177,15 @@ class _HfStore:
 
     def list_all(self) -> list[str]:
         out = self._runner(["list", "--repo", self.repo_id,
-                            "--prefix", _PREFIX])
+                            "--prefix", self.list_prefix])
         return list(out.get("files") or [])
 
 
-def _store_for(destination: str, guard=None):
+def _store_for(destination: str, guard=None, *, list_prefix: str | None = None):
     if destination.startswith("hf://"):
-        parts = destination[len("hf://"):].split("/")
-        if len(parts) < 2 or not all(parts[:2]):
-            raise DurabilityError(f"malformed destination {destination!r}")
-        return _HfStore("/".join(parts[:2]), guard=guard)
+        repo_id, _subpath = parse_hf_destination(destination)
+        prefix = _PREFIX if list_prefix is None else list_prefix
+        return _HfStore(repo_id, guard=guard, list_prefix=prefix)
     return _LocalStore(destination, guard=guard)
 
 
@@ -164,20 +193,37 @@ class FlDurableMirror:
     """Mirrors files under ``run_root`` to the durable destination."""
 
     def __init__(self, destination: str, run_root: str, on_event=None,
-                 guard=None):
+                 guard=None, session_id: str | None = None):
         # guard: the campaign isolation guard (o1_isolation.IsolationGuard
         # .guard); every local path this mirror touches is routed through it
         self.guard = guard or (lambda path, mode="read": path)
-        self.store = _store_for(destination, guard=self.guard)
+        self.session_id = (_safe_session_id(session_id)
+                           if session_id else None)
+        if destination.startswith("hf://"):
+            _repo, self.remote_subpath = parse_hf_destination(destination)
+        else:
+            self.remote_subpath = ""
         self.run_root = os.path.abspath(run_root)
         self.on_event = on_event or (lambda *a, **k: None)
+        self.store = _store_for(destination, guard=self.guard,
+                                list_prefix=self._scope_prefix())
+
+    def _scope_prefix(self) -> str:
+        """Remote key prefix: optional dest sub-path + fl_durable + session."""
+        parts: list[str] = []
+        if self.remote_subpath:
+            parts.append(self.remote_subpath.strip("/"))
+        parts.append(_PREFIX)
+        if self.session_id:
+            parts.append(self.session_id)
+        return "/".join(parts)
 
     def _rel(self, path: str) -> str:
         ap = os.path.abspath(path)
-        if not ap.startswith(self.run_root + os.sep):
+        if not _contained(self.run_root, ap) or ap == self.run_root:
             raise DurabilityError(
                 f"{path!r} is outside the mirrored run root")
-        return f"{_PREFIX}/" + os.path.relpath(ap, self.run_root)
+        return f"{self._scope_prefix()}/" + os.path.relpath(ap, self.run_root)
 
     def push_file(self, path: str) -> None:
         """Best-effort single-file mirror; failure is reported loudly but
@@ -201,23 +247,32 @@ class FlDurableMirror:
         are never overwritten; a corrupt fetch is quarantined."""
         restored, skipped, corrupt = 0, 0, 0
         quarantine = os.path.join(self.run_root, "durability_quarantine")
+        prefix = self._scope_prefix() + "/"
         for rel in self.store.list_all():
-            if not rel.startswith(_PREFIX + "/"):
+            if not rel.startswith(prefix):
                 continue
-            local = os.path.join(self.run_root,
-                                 rel[len(_PREFIX) + 1:])
+            local_rel = rel[len(prefix):]
+            local = os.path.abspath(os.path.join(self.run_root, local_rel))
+            if not _contained(self.run_root, local) or local == self.run_root:
+                self.on_event("FL_DURABILITY_RESTORE_ESCAPE", path=rel)
+                raise DurabilityError(
+                    f"path escape refused during restore: {rel!r}")
             if os.path.exists(local):
                 skipped += 1
                 continue
             tmp = local + ".restoring"
             try:
                 self.store.fetch(rel, tmp)
+                if not _contained(self.run_root, os.path.abspath(tmp)):
+                    raise DurabilityError(
+                        f"path escape refused during restore: {rel!r}")
                 os.replace(tmp, local)
                 restored += 1
             except Exception as exc:  # noqa: BLE001
                 corrupt += 1
                 os.makedirs(quarantine, exist_ok=True)
-                if os.path.exists(tmp):
+                if os.path.exists(tmp) and _contained(self.run_root,
+                                                      os.path.abspath(tmp)):
                     os.replace(tmp, os.path.join(
                         quarantine, os.path.basename(local) + ".corrupt"))
                 self.on_event("FL_DURABILITY_RESTORE_CORRUPT",

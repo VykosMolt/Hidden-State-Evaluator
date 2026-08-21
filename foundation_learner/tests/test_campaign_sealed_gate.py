@@ -294,6 +294,84 @@ def test_an_edited_ledger_entry_is_detected(tmp_path):
         sg.read_ledger(ledger, guard=guard)
 
 
+def test_commit_mirrors_the_ledger_and_a_missing_expected_ledger_refuses(
+        tmp_path):
+    """F3: eviction after commit() must not grant a fresh sealed opening.
+
+    The ledger is written under ctx.out_dir and was never pushed.  The next
+    pod saw zero openings and granted another one.  A missing-but-expected
+    ledger must refuse, not grant.
+    """
+    from foundation_learner.campaign.durability import FlDurableMirror
+
+    guard, pregen, out, shard, manifest = campaign_dir(tmp_path)
+    frozen_decisions(guard, out)
+    dest = str(tmp_path / "durable")
+    mirror = FlDurableMirror(dest, out, session_id="SEALED")
+    pushed = []
+
+    def on_durable(path):
+        pushed.append(os.path.basename(path))
+        mirror.push_file(path)
+
+    unlock = sg.open_sealed(
+        **reopen_kwargs(pregen, out, guard), on_durable=on_durable)
+    unlock.read_shard(shard)
+    unlock.commit(evaluation={"n_records": 1})
+    assert sg.LEDGER_NAME in pushed
+    assert os.path.isfile(os.path.join(out, sg.LEDGER_NAME))
+
+    # eviction: local ledger gone; durable copy remains
+    os.remove(os.path.join(out, sg.LEDGER_NAME))
+    restored = str(tmp_path / "pod2")
+    os.makedirs(restored, exist_ok=True)
+    # the decisions file must exist on the new pod too
+    import shutil
+    shutil.copy(os.path.join(out, sg.DEV_DECISIONS_NAME),
+                os.path.join(restored, sg.DEV_DECISIONS_NAME))
+    shutil.copy(os.path.join(pregen, "family_split_manifest.json"),
+                os.path.join(restored, "family_split_manifest.json"))
+    m2 = FlDurableMirror(dest, restored, session_id="SEALED")
+    m2.restore_all()
+    assert os.path.isfile(os.path.join(restored, sg.LEDGER_NAME))
+    with pytest.raises(sg.LedgerError, match="already been opened"):
+        sg.open_sealed(
+            ledger_path=os.path.join(restored, sg.LEDGER_NAME),
+            dev_decisions_path=os.path.join(restored, sg.DEV_DECISIONS_NAME),
+            split_manifest_path=os.path.join(pregen,
+                                             "family_split_manifest.json"),
+            guard=guard, durability=m2)
+
+
+def test_a_missing_but_expected_ledger_refuses_a_fresh_opening(tmp_path):
+    """If the durable store lists the ledger but restore cannot produce it,
+    grant is refused."""
+    guard, pregen, out, shard, _ = campaign_dir(tmp_path)
+    frozen_decisions(guard, out)
+
+    class ListingMirror:
+        def restore_all(self):
+            return {"restored": 0}
+
+        @property
+        def store(self):
+            return self
+
+        def list_all(self):
+            return ["fl_durable/SEALED_OPENING_LEDGER.jsonl"]
+
+        def _rel(self, path):
+            return "fl_durable/" + os.path.basename(path)
+
+        def push_file(self, path):
+            pass
+
+    with pytest.raises(sg.LedgerError, match="missing but expected"):
+        sg.open_sealed(
+            **reopen_kwargs(pregen, out, guard),
+            durability=ListingMirror())
+
+
 # ---------------- the gate is the only decipher path ----------------
 
 def test_no_other_campaign_module_derives_the_sealed_key():

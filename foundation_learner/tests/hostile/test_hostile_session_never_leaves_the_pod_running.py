@@ -221,7 +221,14 @@ def test_a_mid_ladder_crash_resumes_and_completes_the_remaining_states(tmp_path)
         rebuilt[-1]["restored_states"]
 
 
-def test_the_resumed_allowance_is_never_larger_than_the_journalled_one(tmp_path):
+def test_the_resumed_allowance_comes_from_the_new_pods_authorization_not_dead_time(
+        tmp_path, monkeypatch):
+    """NEW contract: eviction dead time is not charged against the new pod.
+
+    The old test asserted ``resumed <= journalled`` after subtracting
+    ``time.time() - recorded_at``.  That charged the unbilled
+    eviction-to-reacquisition gap and could zero a replacement rental.
+    """
     marker = tmp_path / "TERMINATED.log"
     path = fixtures(tmp_path, marker)
 
@@ -230,10 +237,84 @@ def test_the_resumed_allowance_is_never_larger_than_the_journalled_one(tmp_path)
 
     first = make_supervisor(tmp_path, path, ladder_runner=crashing_ladder)
     first.run(resume=False)
-    journalled = first.state_results["COMPUTE_REMAINING_AUTHORIZED_TIME"][
-        "available_foundation_learner_seconds"]
+
+    # a long eviction gap must not zero the replacement pod's allowance
+    monkeypatch.setattr(
+        "foundation_learner.campaign.session_supervisor.time.time",
+        lambda: 2_000_000_000.0)
 
     second = make_supervisor(tmp_path, path)
     report = second.rebuild_state_results()
-    assert report["available_foundation_learner_seconds"] <= journalled
-    assert report["resume_wall_clock_gap_seconds"] >= 0.0
+    assert report["available_foundation_learner_seconds"] == pytest.approx(
+        3600.0, abs=1.0)
+    assert report["this_pod_authorized_seconds"] == 3600.0
+    assert report["same_pod"] is False
+    assert report["resume_wall_clock_gap_seconds"] > 0.0
+
+
+def test_a_replacement_pod_uses_its_own_remaining_allocation(
+        tmp_path, monkeypatch):
+    """zero_touch sets O1_SESSION_AUTHORIZED_SECONDS per acquisition as the
+    allocation NET of earlier pods' spend.  The config's whole-session figure
+    would let a replacement pod re-spend hours the evicted pod already
+    billed, and an over-estimated FL budget is the one error that can eat
+    the transfer reserve."""
+    marker = tmp_path / "TERMINATED.log"
+    path = fixtures(tmp_path, marker)
+
+    def crashing_ladder(scheduler, ctx):
+        raise RuntimeError("crash")
+
+    monkeypatch.setenv("RUNPOD_POD_ID", "pod-one")
+    first = make_supervisor(tmp_path, path, ladder_runner=crashing_ladder)
+    first.run(resume=False)
+
+    monkeypatch.setenv("RUNPOD_POD_ID", "pod-two")
+    monkeypatch.setenv("O1_SESSION_AUTHORIZED_SECONDS", "1200")
+    monkeypatch.setattr(
+        "foundation_learner.campaign.session_supervisor.time.time",
+        lambda: 2_000_000_000.0)
+    second = make_supervisor(tmp_path, path)
+    report = second.rebuild_state_results()
+    assert report["same_pod"] is False
+    assert report["authorized_seconds_source"] == "O1_SESSION_AUTHORIZED_SECONDS"
+    assert report["available_foundation_learner_seconds"] == pytest.approx(
+        1200.0, abs=1.0)
+
+
+def test_a_restart_on_the_same_pod_charges_the_gap(tmp_path, monkeypatch):
+    """A process crash on the SAME pod is not an eviction: the pod billed
+    for every second of the gap, so the allowance must shrink by it."""
+    marker = tmp_path / "TERMINATED.log"
+    path = fixtures(tmp_path, marker)
+
+    def crashing_ladder(scheduler, ctx):
+        raise RuntimeError("crash")
+
+    monkeypatch.setenv("RUNPOD_POD_ID", "pod-one")
+    first = make_supervisor(tmp_path, path, ladder_runner=crashing_ladder)
+    first.run(resume=False)
+    journalled = [r for r in first.read_journal()
+                  if r.get("event") == "STATE_COMPLETED"
+                  and r.get("state") == "COMPUTE_REMAINING_AUTHORIZED_TIME"]
+    assert journalled[-1]["result"]["pod_id"] == "pod-one"
+
+    import time as _time
+    now = _time.time()
+    monkeypatch.setattr(
+        "foundation_learner.campaign.session_supervisor.time.time",
+        lambda: now + 1000.0)
+    second = make_supervisor(tmp_path, path)
+    report = second.rebuild_state_results()
+    assert report["same_pod"] is True
+    assert report["available_foundation_learner_seconds"] <= 3600.0 - 999.0
+    assert report["available_foundation_learner_seconds"] > 0.0
+
+
+def test_a_garbage_pod_allowance_is_refused_not_guessed(tmp_path, monkeypatch):
+    marker = tmp_path / "TERMINATED.log"
+    path = fixtures(tmp_path, marker)
+    monkeypatch.setenv("O1_SESSION_AUTHORIZED_SECONDS", "lots")
+    sup = make_supervisor(tmp_path, path)
+    with pytest.raises(ss.SupervisorError):
+        sup._pod_authorized_seconds()

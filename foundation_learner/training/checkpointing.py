@@ -345,6 +345,30 @@ def list_checkpoints(out_dir: str) -> list[str]:
     return tags
 
 
+def latest_resume_tag(out_dir: str) -> str | None:
+    """Highest-step tag that has both payload and manifest, or ``None``.
+
+    ``final`` wins a step tie so a completed arm is resumed from its
+    completed snapshot rather than a cadence tag at the same step.
+    """
+    best_tag: str | None = None
+    best_step = -1
+    for tag in list_checkpoints(out_dir):
+        payload_path, manifest_path = checkpoint_paths(out_dir, tag)
+        if not os.path.isfile(payload_path) or not os.path.isfile(manifest_path):
+            continue
+        try:
+            with open(manifest_path, encoding="utf-8") as fh:
+                manifest = json.load(fh)
+            step = int(manifest.get("step", -1))
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            continue
+        if step > best_step or (step == best_step and tag == TAG_FINAL):
+            best_step = step
+            best_tag = tag
+    return best_tag
+
+
 def prune_checkpoints(out_dir: str, keep_tags: Sequence[str] = RETAINED_TAGS) -> list[str]:
     """Delete cadence snapshots that are not in ``keep_tags`` (§15 anti-spam).
 

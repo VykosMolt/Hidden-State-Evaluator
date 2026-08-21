@@ -7,7 +7,7 @@ import os
 import pytest
 
 from foundation_learner.campaign.durability import (
-    DurabilityError, FlDurableMirror, _LocalStore,
+    DurabilityError, FlDurableMirror, _LocalStore, parse_hf_destination,
 )
 
 
@@ -122,3 +122,64 @@ def test_push_failure_is_loud_but_not_fatal(tmp_path):
     _write(path, b"line\n")
     m.push_file(path)          # must not raise
     assert "FL_DURABILITY_PUSH_FAILED" in events
+
+
+def test_hf_destination_honours_the_documented_sub_path():
+    """F4a: hf://ns/repo/fl must not collapse to repo ns/repo."""
+    assert parse_hf_destination("hf://ns/repo/fl") == ("ns/repo", "fl")
+    assert parse_hf_destination("hf://ns/repo/fl/session") == (
+        "ns/repo", "fl/session")
+    assert parse_hf_destination("hf://ns/repo") == ("ns/repo", "")
+
+
+def test_durable_keys_are_scoped_by_session_id_so_two_sessions_do_not_collide(
+        tmp_path):
+    """F4b: two sessions sharing a dest must not restore each other's journal."""
+    dest = str(tmp_path / "durable")
+    pod_a = str(tmp_path / "pod_a")
+    pod_b = str(tmp_path / "pod_b")
+    m_a = FlDurableMirror(dest, pod_a, session_id="SESSION_A")
+    journal_a = os.path.join(pod_a, "FL_SESSION_JOURNAL.jsonl")
+    _write(journal_a, b'{"session_id":"SESSION_A"}\n')
+    m_a.push_file(journal_a)
+
+    m_b = FlDurableMirror(dest, pod_b, session_id="SESSION_B")
+    report = m_b.restore_all()
+    assert report["restored"] == 0
+    assert not os.path.exists(os.path.join(pod_b, "FL_SESSION_JOURNAL.jsonl"))
+
+
+def test_hf_subpath_and_session_id_appear_in_the_remote_key(tmp_path):
+    dest = str(tmp_path / "unused-local")
+    pod = str(tmp_path / "session")
+    # local dest has no hf sub-path; construct via the hf parser + _rel
+    m = FlDurableMirror(dest, pod, session_id="SID1")
+    journal = os.path.join(pod, "FL_SESSION_JOURNAL.jsonl")
+    _write(journal, b"x\n")
+    assert m._rel(journal) == "fl_durable/SID1/FL_SESSION_JOURNAL.jsonl"
+    m_hf = FlDurableMirror("hf://ns/repo/fl", pod, session_id="SID1")
+    assert m_hf._rel(journal) == "fl/fl_durable/SID1/FL_SESSION_JOURNAL.jsonl"
+    assert m_hf.store.repo_id == "ns/repo"
+    assert m_hf.store.list_prefix == "fl/fl_durable/SID1"
+
+
+def test_restore_refuses_a_path_escape(tmp_path):
+    """A remote key like fl_durable/../../x must not write outside run_root."""
+    dest = str(tmp_path / "durable")
+    pod = str(tmp_path / "session")
+    outside = tmp_path / "escaped.txt"
+
+    class EscapingStore(_LocalStore):
+        def list_all(self):
+            return ["fl_durable/../../escaped.txt"]
+
+        def fetch(self, rel, local):
+            os.makedirs(os.path.dirname(local) or ".", exist_ok=True)
+            with open(local, "wb") as fh:
+                fh.write(b"escaped")
+
+    m = FlDurableMirror(dest, pod)
+    m.store = EscapingStore(dest)
+    with pytest.raises(DurabilityError, match="path escape"):
+        m.restore_all()
+    assert not outside.exists()

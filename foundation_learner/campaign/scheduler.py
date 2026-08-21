@@ -30,11 +30,12 @@ import os
 import time
 import traceback
 from dataclasses import dataclass, field
-from typing import Any, Callable, Protocol, Sequence
+from typing import Any, Callable, Mapping, Protocol, Sequence
 
 from . import o1_isolation, stage_definitions
-from .affordability import (AffordabilityRefusal, CorePlan, admission_check,
-                            load_policy, plan_core_comparison, policy_sha256)
+from .affordability import (AffordabilityRefusal, BenchMeasurement, CorePlan,
+                            admission_check, load_policy, plan_core_comparison,
+                            policy_sha256)
 from .stage_definitions import (StageAbortedOverrun, StageContext,
                                 StageDefinition, StageError, StageWatchdog,
                                 planned_eval_episodes, project_stage_seconds,
@@ -61,6 +62,17 @@ STATE_SKIPPED = "SKIPPED_ENTRY_CONDITION"
 STATE_FAILED = "FAILED"
 STATE_BLOCKED = "BLOCKED_MISSING_PREREQUISITE"
 STATE_ABORTED_OVERRUN = "STAGE_ABORTED_OVERRUN"
+
+
+def _arm_config_from_mapping(data: Mapping[str, Any]):
+    """Rebuild an ``ArmConfig`` from a journalled / on-disk mapping."""
+    from ..training.arms import ArmConfig
+
+    fields = set(ArmConfig.__dataclass_fields__)
+    kwargs = {k: v for k, v in data.items() if k in fields}
+    if isinstance(kwargs.get("betas"), list):
+        kwargs["betas"] = tuple(kwargs["betas"])
+    return ArmConfig(**kwargs)
 
 
 class SchedulerError(RuntimeError):
@@ -130,6 +142,7 @@ class Scheduler:
     clock: Clock = field(default_factory=MonotonicClock)
     policy_path: str | None = None
     label: str = "FL_LADDER"
+    durability: Any = None
     policy: dict = field(init=False)
     journal_path: str = field(init=False)
     outcomes: list[StageOutcome] = field(default_factory=list, init=False)
@@ -144,6 +157,8 @@ class Scheduler:
         self.policy = load_policy(self.policy_path, guard=self.guard)
         self.guard.makedirs(self.out_dir)
         self.journal_path = os.path.join(self.out_dir, JOURNAL_NAME)
+        existing = self.read_journal()
+        self._journal_records = len(existing)
 
     # ---------------- clock + budget ----------------
 
@@ -225,6 +240,8 @@ class Scheduler:
                                           separators=(",", ":"),
                                           ensure_ascii=False))
         self._journal_records += 1
+        if self.durability is not None:
+            self.durability.push_file(self.journal_path)
         return record
 
     def read_journal(self) -> list[dict]:
@@ -441,6 +458,123 @@ class Scheduler:
         self.outcomes.append(outcome)
         return outcome
 
+    def _prior_terminal_outcomes(self) -> dict[str, StageOutcome]:
+        """Stages that already reached a terminal journal event.
+
+        ``STAGE_STARTED`` without a later terminal event means the stage
+        was in flight at eviction and must be re-run (training resumes
+        from the last atomic checkpoint).
+        """
+        terminal = {
+            "STAGE_COMPLETED": STATE_COMPLETE,
+            "STAGE_REFUSED": STATE_REFUSED,
+            "STAGE_SKIPPED": STATE_SKIPPED,
+            "STAGE_FAILED": STATE_FAILED,
+            "STAGE_BLOCKED": STATE_BLOCKED,
+            "STAGE_ABORTED_OVERRUN": STATE_ABORTED_OVERRUN,
+        }
+        found: dict[str, StageOutcome] = {}
+        for rec in self.read_journal():
+            sid = rec.get("stage_id")
+            ev = rec.get("event")
+            if not sid:
+                continue
+            if ev == "STAGE_STARTED":
+                found.pop(str(sid), None)
+            elif ev in terminal:
+                found[str(sid)] = StageOutcome(
+                    str(sid), terminal[ev],
+                    seconds=float(rec.get("seconds") or 0.0),
+                    admission=rec.get("admission"),
+                    projection=rec.get("projection"),
+                    entry=rec.get("entry"),
+                    error=rec.get("error"),
+                    fallback=tuple(rec.get("fallback") or ()))
+        return found
+
+    def _restore_core_plan_from_journal(self, ctx: StageContext) -> bool:
+        for rec in self.read_journal():
+            if rec.get("event") != "CORE_PLAN" or not rec.get("plan"):
+                continue
+            plan = rec["plan"]
+            self.plan = CorePlan(
+                scope=str(plan.get("scope") or ctx.scope),
+                updates=plan.get("updates"),
+                feasible=bool(plan.get("feasible", True)),
+                available_seconds=float(plan.get("available_seconds") or 0.0),
+                record=dict(plan))
+            ctx.scope = self.plan.scope
+            if self.plan.updates is not None:
+                ctx.updates = int(self.plan.updates)
+            return True
+        return False
+
+    def _restore_context_from_artifacts(self, ctx: StageContext) -> None:
+        """Repopulate ``ctx`` from on-disk stage outputs so skipped stages
+        still feed later entry conditions."""
+        bench_path = os.path.join(ctx.out_dir, "bench", "bench_measurement.json")
+        if os.path.isfile(self.guard.guard(bench_path, o1_isolation.MODE_READ)):
+            with open(bench_path, encoding="utf-8") as fh:
+                payload = json.load(fh)
+            ctx.results["BENCH"] = payload
+            for _scope, measurement in (payload.get("measurements") or {}).items():
+                if isinstance(measurement, Mapping):
+                    ctx.throughput.add(
+                        BenchMeasurement.from_dict(measurement))
+
+        decisions_path = os.path.join(ctx.out_dir, "DEV_DECISIONS_FROZEN.json")
+        if os.path.isfile(self.guard.guard(decisions_path,
+                                           o1_isolation.MODE_READ)):
+            with open(decisions_path, encoding="utf-8") as fh:
+                decisions = json.load(fh)
+            if decisions.get("chosen_learning_rate") is not None:
+                ctx.learning_rate = float(decisions["chosen_learning_rate"])
+            if decisions.get("chosen_scope"):
+                ctx.scope = str(decisions["chosen_scope"])
+            if decisions.get("updates_U") is not None:
+                ctx.updates = int(decisions["updates_U"])
+
+        from .promotion import DevMetrics
+        from .stage_definitions import CORE_ARM_STAGES
+
+        for stage in stages_in_priority_order():
+            for name in stage.outputs:
+                path = os.path.join(ctx.out_dir, stage.stage_id.lower(), name)
+                if not name.endswith(".json") or not os.path.isfile(path):
+                    continue
+                try:
+                    with open(self.guard.guard(path, o1_isolation.MODE_READ),
+                              encoding="utf-8") as fh:
+                        payload = json.load(fh)
+                except (OSError, json.JSONDecodeError):
+                    continue
+                ctx.results[stage.stage_id] = payload
+                arm_id = stage.arm_id or stage.stage_id
+                if stage.stage_id in CORE_ARM_STAGES:
+                    ctx.results[arm_id] = payload
+                    dev = payload.get("dev")
+                    if isinstance(dev, Mapping):
+                        ctx.results.setdefault("_dev_metrics", {})[arm_id] = (
+                            DevMetrics(
+                                stage=str(dev.get("stage") or arm_id),
+                                macro_aulc=dev.get("macro_aulc"),
+                                slope=dev.get("slope"),
+                                r_0=dev.get("r_0"),
+                                n_episodes=int(dev.get("n_episodes") or 0),
+                                family_ids=tuple(dev.get("family_ids") or ()),
+                                split=str(dev.get("split") or "DEVELOPMENT"),
+                                stability_events=tuple(
+                                    dev.get("stability_events") or ()),
+                                source=str(dev.get("source") or "restored"),
+                                extra=dict(dev.get("extra") or {})))
+                    arm_cfg = (payload.get("arm_result") or {}).get("arm_config")
+                    if isinstance(arm_cfg, Mapping):
+                        ctx.results.setdefault("_arm_configs", {})[arm_id] = (
+                            _arm_config_from_mapping(arm_cfg))
+                    ctx.results.setdefault("_arm_out_dirs", {})[arm_id] = (
+                        os.path.join(ctx.out_dir, arm_id.lower(), "arm"))
+                break
+
     def run_ladder(self, ctx: StageContext, *,
                    stage_ids: Sequence[str] | None = None,
                    stop_on_failure: bool = False) -> dict:
@@ -450,14 +584,27 @@ class Scheduler:
         ladder by default: the predeclared fallback work is recorded and the
         scheduler moves on (contract §10 — all remaining time goes to
         predeclared work only).
+
+        On resume, stages that already reached a terminal journal event are
+        not re-run; in-flight stages (started, no terminal event) are.
         """
         self.start()
         stages = stages_in_priority_order()
         if stage_ids is not None:
             wanted = list(stage_ids)
             stages = [s for s in stages if s.stage_id in wanted]
-        planned = False
+        prior = self._prior_terminal_outcomes()
+        if prior:
+            self._restore_context_from_artifacts(ctx)
+        planned = self._restore_core_plan_from_journal(ctx)
         for stage in stages:
+            if stage.stage_id in prior:
+                outcome = prior[stage.stage_id]
+                self.outcomes.append(outcome)
+                self.journal("STAGE_SKIPPED_RESUMED", {
+                    "stage_id": stage.stage_id,
+                    "prior_state": outcome.state})
+                continue
             if stage.projection != "BENCH" and not planned:
                 # the §11 scope + U rule runs exactly once, immediately after
                 # BENCH and before anything is projected from it
@@ -470,8 +617,10 @@ class Scheduler:
             if stop_on_failure and outcome.state == STATE_FAILED:
                 break
         summary = self.summary()
-        self.guard.write_json(os.path.join(self.out_dir, "LADDER_SUMMARY.json"),
-                              summary)
+        summary_path = os.path.join(self.out_dir, "LADDER_SUMMARY.json")
+        self.guard.write_json(summary_path, summary)
+        if self.durability is not None:
+            self.durability.push_file(summary_path)
         self.journal("SCHEDULER_COMPLETE", {"states": summary["states"]})
         return summary
 

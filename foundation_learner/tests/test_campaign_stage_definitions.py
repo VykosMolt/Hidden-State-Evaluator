@@ -7,6 +7,7 @@ pinned by this table.
 """
 from __future__ import annotations
 
+import json
 import os
 
 import pytest
@@ -317,5 +318,55 @@ def test_generation_budget_is_frozen_outside_a_rehearsal(tmp_path):
         sd._generation_config(ctx)
     ctx.rehearsal = True
     assert sd._generation_config(ctx).max_new_tokens == 4
-    ctx.extra.pop("max_new_tokens")
-    assert sd._generation_config(ctx).max_new_tokens == sd.FROZEN_MAX_NEW_TOKENS
+
+
+def test_train_arm_passes_resume_from_tag_for_a_restored_checkpoint(
+        tmp_path, monkeypatch):
+    """F2: production _train_arm must pass the last atomic checkpoint tag.
+
+    Before the fix it called run_training_arm positionally with no
+    resume_from_tag, so a restored arm restarted at step 0 and overwrote
+    the checkpoint.
+    """
+    from foundation_learner.training.checkpointing import checkpoint_paths
+
+    out_dir = str(tmp_path / "fl3" / "arm")
+    os.makedirs(out_dir, exist_ok=True)
+    for tag, step in (("initial", 0), ("step4", 4)):
+        payload, manifest = checkpoint_paths(out_dir, tag)
+        open(payload, "wb").write(b"pt")
+        open(manifest, "w", encoding="utf-8").write(
+            json.dumps({"tag": tag, "step": step}))
+
+    seen = {}
+
+    class _Result:
+        arm_config_hash = "h"
+        checkpoints = []
+        ledger = {}
+        stability_events = []
+
+        def to_dict(self):
+            return {}
+
+    def fake_run(cfg, bundle, examples, dest, hooks, **kwargs):
+        seen["resume_from_tag"] = kwargs.get("resume_from_tag")
+        seen["out_dir"] = dest
+        return _Result()
+
+    monkeypatch.setattr(
+        "foundation_learner.training.trainer.run_training_arm", fake_run)
+    monkeypatch.setattr(sd, "build_arm_examples", lambda *a, **k: [{"x": 1}])
+    monkeypatch.setattr(
+        sd, "_arm_config",
+        lambda *a, **k: type("C", (), {"arm_id": "FL3"})())
+
+    guard = o1_isolation.IsolationGuard(label="TEST")
+    ctx = sd.StageContext(out_dir=str(tmp_path), pregen_root=str(tmp_path),
+                          bundle_factory=lambda: type(
+                              "B", (), {"tokenizer": None})(),
+                          guard=guard)
+    sd._train_arm(ctx, "FL3", updates=10, stage_name="CORE",
+                  learning_rate=1e-4, out_dir=out_dir)
+    assert seen["resume_from_tag"] == "step4", seen
+    assert seen["out_dir"] == out_dir

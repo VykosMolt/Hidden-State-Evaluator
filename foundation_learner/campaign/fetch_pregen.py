@@ -85,7 +85,7 @@ def sha256_file(path: str) -> str:
     return h.hexdigest()
 
 
-def verify_tree(root: str) -> dict:
+def verify_tree(root: str, *, waive_package_anchor: bool = False) -> dict:
     """Re-hash every shard the manifest declares.  Raises on any defect."""
     sums_path = os.path.join(root, SHARD_SUMS_REL)
     manifest_path = os.path.join(root, PREGEN_MANIFEST_REL)
@@ -98,11 +98,24 @@ def verify_tree(root: str) -> dict:
     # Anchor FIRST: check the checksum files themselves against the digests
     # baked into the FL package, before trusting anything they claim.
     anchors = anchor_digests()
+    required = ("shard_sums_sha256", "pregen_manifest_sha256")
+    if not waive_package_anchor:
+        missing = [k for k in required if not anchors.get(k)]
+        if not anchors or missing:
+            raise PregenFetchError(
+                "package-manifest anchors are missing or incomplete "
+                f"{missing or list(required)}; refusing to verify a corpus "
+                "against itself. Pass waive_package_anchor=True only for an "
+                "explicitly labelled non-campaign check")
     for rel, key in ((SHARD_SUMS_REL, "shard_sums_sha256"),
                      (PREGEN_MANIFEST_REL, "pregen_manifest_sha256")):
         expected = anchors.get(key)
         if not expected:
-            continue
+            if waive_package_anchor:
+                continue
+            raise PregenFetchError(
+                f"package-manifest anchor {key} is missing; refusing "
+                "unanchored verification")
         got = sha256_file(os.path.join(root, rel))
         if got != expected:
             raise PregenFetchError(

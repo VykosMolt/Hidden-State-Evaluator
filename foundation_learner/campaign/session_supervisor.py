@@ -46,9 +46,12 @@ finding R-C2).
 ``state_results`` from the journal's ``STATE_COMPLETED`` payloads, so a session
 that crashed after ``COMPUTE_REMAINING_AUTHORIZED_TIME`` still knows its FL
 allowance instead of refusing ``RUN_FL_LADDER``.  The resumed allowance is
-additionally REDUCED by the wall-clock gap since that record was written: the
-pod kept billing while the process was gone, and an over-estimated budget is
-the one error that can consume the transfer reserve.
+taken from THIS pod's allowance (``O1_SESSION_AUTHORIZED_SECONDS``, the
+remaining allocation net of earlier pods' spend, capped by the config) minus
+this process's elapsed time.  The eviction-to-reacquisition interval is
+unbilled dead time and is not charged against a replacement rental; a restart
+on the SAME pod (``RUNPOD_POD_ID`` unchanged) does charge the gap, because the
+pod billed for it.
 """
 from __future__ import annotations
 
@@ -64,11 +67,13 @@ from typing import Any, Callable, Mapping, Sequence
 
 from ..ecology.base import sha256_file, sha256_tree
 from . import o1_isolation, result_verifier
+from .redaction import redact
 from .scheduler import MonotonicClock, Scheduler
 from .stage_definitions import StageContext
 
 __all__ = [
     "SupervisorError",
+    "NoStageAdmitted",
     "SessionConfigError",
     "STATES",
     "SESSION_CONFIG_SCHEMA",
@@ -112,10 +117,22 @@ O1_CLOSE_RECEIPT = "O1_CLOSE_RECEIPT.json"
 #: slow provider API is not a reason to give up on stopping the bill,
 #: but finite, because waiting forever costs money either way.
 TERMINATE_TIMEOUT_SECONDS = 900.0
+TRANSFER_TIMEOUT_SECONDS = 900.0
+#: Per-acquisition allowance the O1 zero-touch launcher sets on the pod:
+#: the REMAINING session allocation net of earlier pods' spend.
+POD_AUTHORIZED_SECONDS_ENV = "O1_SESSION_AUTHORIZED_SECONDS"
+#: RunPod sets this in every pod; it distinguishes a same-pod process
+#: restart (billed gap) from a replacement pod (unbilled gap).
+POD_ID_ENV = "RUNPOD_POD_ID"
+CLOSE_O1_TIMEOUT_SECONDS = 900.0
 
 
 class SupervisorError(RuntimeError):
     """A supervisor invariant refused."""
+
+
+class NoStageAdmitted(SupervisorError):
+    """The ladder ran but no stage was admitted; the session is not COMPLETE."""
 
 
 class SessionConfigError(SupervisorError):
@@ -390,7 +407,8 @@ class SessionSupervisor:
 
             self.durability = FlDurableMirror(
                 str(destination), self.out_dir, on_event=_mirror_event,
-                guard=self.guard.guard)
+                guard=self.guard.guard,
+                session_id=str(self.payload.get("session_id") or ""))
             try:
                 self.durability.restore_all()
             except Exception as exc:  # noqa: BLE001
@@ -399,6 +417,7 @@ class SessionSupervisor:
                 self.durability_events.append(
                     {"event": "FL_DURABILITY_RESTORE_FAILED",
                      "error": str(exc)[:300]})
+        self._assert_journal_session()
         self.completed = [r["state"] for r in self.read_journal()
                           if r.get("event") == "STATE_COMPLETED"]
 
@@ -434,6 +453,24 @@ class SessionSupervisor:
             self.durability.push_file(self.journal_path)
             self._drain_durability_events()
         return record
+
+    def _push_durable(self, path: str) -> None:
+        """Mirror one session file if a durable destination is configured."""
+        if self.durability is None or not os.path.isfile(path):
+            return
+        self.durability.push_file(path)
+        self._drain_durability_events()
+
+    def _assert_journal_session(self) -> None:
+        """Refuse a restored journal that belongs to a different session."""
+        expected = self.payload.get("session_id")
+        for record in self.read_journal():
+            got = record.get("session_id")
+            if got is not None and got != expected:
+                raise SupervisorError(
+                    f"REFUSED: restored journal session_id {got!r} does not "
+                    f"match this config's session_id {expected!r}; a foreign "
+                    "or stale session must not be resumed")
 
     def _drain_durability_events(self) -> None:
         """Journal buffered mirror events (failures included).
@@ -490,11 +527,14 @@ class SessionSupervisor:
         FL allowance — i.e. a crash anywhere in the middle silently cost the
         whole FL half of the session.
 
-        The restored allowance is REDUCED by the wall-clock gap between the
-        journalled record and now.  The pod billed for that gap; using the
-        stale value would be the one arithmetic error that can eat the final
-        transfer reserve.  This is an operational budget decision, not a
-        scientific path (contract §20).
+        On a REPLACEMENT pod the allowance is this pod's remaining allocation
+        (``O1_SESSION_AUTHORIZED_SECONDS``, already net of earlier pods'
+        spend) minus this process's elapsed time: eviction leaves a
+        wall-clock gap during which nothing was billed, and charging it would
+        zero the replacement before any FL stage could run.  On the SAME pod
+        (``RUNPOD_POD_ID`` unchanged) the gap WAS billed, so the journalled
+        figure minus the gap applies.  This is an operational budget
+        decision, not a scientific path (contract §20).
         """
         restored: dict[str, Any] = {}
         stamps: dict[str, Any] = {}
@@ -510,22 +550,47 @@ class SessionSupervisor:
                   "available_foundation_learner_seconds": None}
         compute = restored.get("COMPUTE_REMAINING_AUTHORIZED_TIME")
         if isinstance(compute, Mapping):
-            available = float(
+            journalled = float(
                 compute.get("available_foundation_learner_seconds") or 0.0)
             recorded_at = self._utc_seconds(
                 stamps.get("COMPUTE_REMAINING_AUTHORIZED_TIME"))
             gap = 0.0
             if recorded_at is not None:
                 gap = max(0.0, time.time() - recorded_at)
-            adjusted = max(0.0, available - gap)
-            self.state_results["available_foundation_learner_seconds"] = adjusted
+            authorized, source = self._pod_authorized_seconds()
+            elapsed = self._elapsed()
+            recorded_pod = compute.get("pod_id")
+            this_pod = os.environ.get(POD_ID_ENV) or None
+            same_pod = bool(recorded_pod) and recorded_pod == this_pod
+            if same_pod:
+                # a process restart on the SAME pod: the pod billed for the
+                # whole gap, so the journalled figure minus the gap is exact
+                available = max(0.0, min(journalled - gap,
+                                         authorized - elapsed))
+                rule = ("same pod restarted: the journalled FL allowance "
+                        "minus the wall-clock gap (the pod billed for it), "
+                        "capped by this pod's allowance")
+            else:
+                # a REPLACEMENT pod after eviction: its allowance is already
+                # net of every earlier pod's spend (zero_touch sets
+                # O1_SESSION_AUTHORIZED_SECONDS from the remaining
+                # allocation); the eviction-to-reacquisition gap was unbilled
+                available = max(0.0, authorized - elapsed)
+                rule = ("replacement pod: this pod's remaining allocation "
+                        "minus this process's elapsed time; the unbilled "
+                        "eviction gap is not charged")
+            self.state_results["available_foundation_learner_seconds"] = available
             report.update({
-                "available_foundation_learner_seconds": adjusted,
-                "journalled_available_seconds": available,
+                "available_foundation_learner_seconds": available,
+                "journalled_available_seconds": journalled,
+                "journalled_pod_id": recorded_pod,
+                "this_pod_id": this_pod,
+                "same_pod": same_pod,
+                "this_pod_authorized_seconds": authorized,
+                "authorized_seconds_source": source,
+                "this_pod_elapsed_seconds": round(elapsed, 6),
                 "resume_wall_clock_gap_seconds": round(gap, 3),
-                "rule": ("a resumed session re-derives its FL allowance from "
-                         "the journal and subtracts the wall-clock gap; the "
-                         "accelerator billed for it"),
+                "rule": rule,
             })
         if restored:
             self.journal("STATE_RESULTS_REBUILT", "START_SESSION", report)
@@ -597,8 +662,8 @@ class SessionSupervisor:
             "command": command if shell else list(command),
             "returncode": int(getattr(proc, "returncode", -1)),
             "seconds": round(seconds, 6),
-            "stdout_tail": (getattr(proc, "stdout", "") or "")[-2000:],
-            "stderr_tail": (getattr(proc, "stderr", "") or "")[-2000:],
+            "stdout_tail": redact((getattr(proc, "stdout", "") or "")[-2000:]),
+            "stderr_tail": redact((getattr(proc, "stderr", "") or "")[-2000:]),
         }
         return record
 
@@ -678,8 +743,9 @@ class SessionSupervisor:
             "transfer": record,
             "verification": self.state_results.get("VERIFY_O1_RECORDS"),
         }
-        self.guard.write_json(os.path.join(self.out_dir, O1_TRANSFER_RECEIPT),
-                              receipt)
+        receipt_path = os.path.join(self.out_dir, O1_TRANSFER_RECEIPT)
+        self.guard.write_json(receipt_path, receipt)
+        self._push_durable(receipt_path)
         return receipt
 
     def state_CLOSE_O1_PROCESS(self) -> dict:
@@ -687,7 +753,10 @@ class SessionSupervisor:
         close_command = self.payload.get("o1_close_command")
         record = None
         if close_command:
-            record = self._run_command(close_command, state="CLOSE_O1_PROCESS")
+            record = self._run_command(
+                close_command, state="CLOSE_O1_PROCESS",
+                timeout=float(self.payload.get("o1_close_timeout_seconds")
+                              or CLOSE_O1_TIMEOUT_SECONDS))
         receipt = {
             "schema": RECEIPT_SCHEMA,
             "session_id": self.payload.get("session_id"),
@@ -699,7 +768,9 @@ class SessionSupervisor:
                           "reload of the pristine checkpoint and never from an "
                           "O1-mutated process state"),
         }
-        self.guard.write_json(os.path.join(self.out_dir, O1_CLOSE_RECEIPT), receipt)
+        receipt_path = os.path.join(self.out_dir, O1_CLOSE_RECEIPT)
+        self.guard.write_json(receipt_path, receipt)
+        self._push_durable(receipt_path)
         return receipt
 
     def state_RELOAD_PRISTINE_OURO(self) -> dict:
@@ -727,13 +798,41 @@ class SessionSupervisor:
                                      else "rehearsal stand-in tree hash"),
                 "rehearsal": self.rehearsal}
 
-    def state_COMPUTE_REMAINING_AUTHORIZED_TIME(self) -> dict:
+    def _pod_authorized_seconds(self) -> tuple[float, str]:
+        """This pod's runtime allowance and where it came from.
+
+        ``O1_SESSION_AUTHORIZED_SECONDS`` is set per acquisition by the
+        zero-touch launcher as the REMAINING allocation net of every earlier
+        pod's spend, so it is the budget-true ceiling on a replacement pod.
+        The config's ``session_authorized_seconds`` is the operator's whole-
+        session ceiling; the smaller of the two wins.
+        """
         authorized = float(self.payload["session_authorized_seconds"])
-        elapsed = 0.0 if self._t0 is None else max(
+        source = "config.session_authorized_seconds"
+        raw = os.environ.get(POD_AUTHORIZED_SECONDS_ENV, "").strip()
+        if raw:
+            try:
+                pod_limit = float(raw)
+            except ValueError as exc:
+                raise SupervisorError(
+                    f"REFUSED: {POD_AUTHORIZED_SECONDS_ENV}={raw!r} is not "
+                    f"a number") from exc
+            if pod_limit < authorized:
+                authorized, source = pod_limit, POD_AUTHORIZED_SECONDS_ENV
+        return authorized, source
+
+    def _elapsed(self) -> float:
+        return 0.0 if self._t0 is None else max(
             0.0, self.clock.monotonic() - self._t0)
+
+    def state_COMPUTE_REMAINING_AUTHORIZED_TIME(self) -> dict:
+        authorized, source = self._pod_authorized_seconds()
+        elapsed = self._elapsed()
         available = max(0.0, authorized - elapsed)
         record = {
             "session_authorized_seconds": authorized,
+            "authorized_seconds_source": source,
+            "pod_id": os.environ.get(POD_ID_ENV) or None,
             "elapsed_seconds": round(elapsed, 6),
             "available_foundation_learner_seconds": round(available, 6),
             "rule": ("FL receives what remains after O1 closes; it never "
@@ -759,11 +858,17 @@ class SessionSupervisor:
         scheduler = Scheduler(
             available_foundation_learner_seconds=float(available),
             out_dir=os.path.join(self.out_dir, "ladder"),
-            guard=self.guard, clock=self.clock, label=self.label())
+            guard=self.guard, clock=self.clock, label=self.label(),
+            durability=self.durability)
         runner = self.ladder_runner or (lambda sch, c: sch.run_ladder(c))
         summary = runner(scheduler, ctx)
         self.state_results["_ctx"] = ctx
         self.state_results["_scheduler"] = scheduler
+        if not _ladder_admitted_a_stage(summary):
+            raise NoStageAdmitted(
+                "REFUSED: the FL ladder admitted no stage; the session "
+                "cannot report COMPLETE and RUN_FL_LADDER is not recorded "
+                "as complete so a replacement pod may retry")
         return summary
 
     def state_CHECKPOINT_AND_VERIFY(self) -> dict:
@@ -784,7 +889,10 @@ class SessionSupervisor:
         command = self.payload.get("fl_transfer_command")
         transfer = None
         if command:
-            transfer = self._run_command(command, state="TRANSFER_FL_ARTIFACTS")
+            transfer = self._run_command(
+                command, state="TRANSFER_FL_ARTIFACTS",
+                timeout=float(self.payload.get("fl_transfer_timeout_seconds")
+                              or TRANSFER_TIMEOUT_SECONDS))
             if transfer["returncode"] != 0:
                 raise SupervisorError(
                     f"FL transfer command failed with rc={transfer['returncode']}")
@@ -897,13 +1005,19 @@ class SessionSupervisor:
         finally:
             self.close_out = self._emergency_close(failed_state)
 
+        if failed_state is None:
+            outcome = "COMPLETE"
+        elif failed_state == "RUN_FL_LADDER" and (
+                (failure or "").find("NoStageAdmitted") >= 0):
+            outcome = "NO_STAGE_ADMITTED"
+        else:
+            outcome = f"ABORTED_AT_{failed_state}"
         status = {
             "schema": FINAL_STATUS_SCHEMA,
             "session_id": self.payload.get("session_id"),
             "label": self.label(),
             "rehearsal": self.rehearsal,
-            "outcome": "COMPLETE" if failed_state is None
-                       else f"ABORTED_AT_{failed_state}",
+            "outcome": outcome,
             "failed_state": failed_state,
             "failure": failure,
             "states_completed": list(self.completed),
@@ -922,6 +1036,25 @@ class SessionSupervisor:
                      {"outcome": status["outcome"],
                       "close_out": self.close_out})
         return status
+
+
+def _ladder_admitted_a_stage(summary: Any) -> bool:
+    """True when the ladder actually admitted work (not only refusals).
+
+    A stub runner that returns no ``states`` mapping is treated as admitted
+    so explicitly injected test/rehearsal runners are not reclassified.
+    An empty ``states`` mapping, or one whose every value is a refusal /
+    skip / block, is not an admission.
+    """
+    if not isinstance(summary, Mapping):
+        return True
+    if "states" not in summary:
+        return True
+    states = summary.get("states") or {}
+    if not states:
+        return False
+    admitted = {"COMPLETE", "FAILED", "STAGE_ABORTED_OVERRUN"}
+    return any(str(value) in admitted for value in states.values())
 
 
 def _jsonable(value: Any) -> Any:

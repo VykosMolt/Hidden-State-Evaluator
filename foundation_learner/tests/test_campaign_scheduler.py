@@ -7,6 +7,7 @@ table itself is checked separately in ``test_campaign_stage_definitions.py``.
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 
@@ -296,3 +297,63 @@ def test_summary_records_the_reserve_and_states(tmp_path):
                                  "B": sched.STATE_FAILED}
     assert summary["final_transfer_reserve_seconds"] == 1200.0
     assert summary["safety_factor"] == 1.25
+
+
+def test_run_ladder_skips_stages_already_completed_in_the_journal(
+        tmp_path, monkeypatch):
+    """F2: a resumed ladder must not re-run a stage the journal completed."""
+    CALLS.clear()
+    ctx, guard = context(tmp_path, spu=0.01, eval_per_episode=0.0,
+                         model_load=0.0)
+    stages = [stage(stage_id="A", projection="BENCH"),
+              stage(stage_id="B", projection="BENCH")]
+    monkeypatch.setattr(sched, "stages_in_priority_order", lambda: stages)
+    s = make_scheduler(tmp_path, 1e6, guard)
+    s.run_ladder(ctx)
+    assert CALLS == ["A", "B"]
+
+    CALLS.clear()
+    s2 = make_scheduler(tmp_path, 1e6, guard)
+    s2.run_ladder(ctx)
+    assert CALLS == [], (
+        "a resumed ladder re-ran completed stages; the journal was ignored")
+    skipped = [r for r in s2.read_journal()
+               if r.get("event") == "STAGE_SKIPPED_RESUMED"]
+    assert {r["stage_id"] for r in skipped} == {"A", "B"}
+
+
+def test_run_ladder_reruns_a_started_but_unfinished_stage(
+        tmp_path, monkeypatch):
+    CALLS.clear()
+    ctx, guard = context(tmp_path, spu=0.01, eval_per_episode=0.0,
+                         model_load=0.0)
+    stages = [stage(stage_id="A", projection="BENCH"),
+              stage(stage_id="B", projection="BENCH")]
+    monkeypatch.setattr(sched, "stages_in_priority_order", lambda: stages)
+    s = make_scheduler(tmp_path, 1e6, guard)
+    s.start()
+    s.journal("STAGE_STARTED", {"stage_id": "A", "work": "stub"})
+    s2 = make_scheduler(tmp_path, 1e6, guard)
+    s2.run_ladder(ctx)
+    assert CALLS == ["A", "B"]
+
+
+def test_scheduler_journal_is_mirrored_on_every_append(tmp_path):
+    dest = str(tmp_path / "durable")
+    ctx, guard = context(tmp_path)
+    mirror = __import__(
+        "foundation_learner.campaign.durability",
+        fromlist=["FlDurableMirror"]).FlDurableMirror(
+            dest, str(tmp_path / "ladder"), session_id="SID")
+    s = sched.Scheduler(
+        available_foundation_learner_seconds=1000.0,
+        out_dir=str(tmp_path / "ladder"), guard=guard,
+        durability=mirror)
+    s.start()
+    restored = str(tmp_path / "pod2")
+    m2 = __import__(
+        "foundation_learner.campaign.durability",
+        fromlist=["FlDurableMirror"]).FlDurableMirror(
+            dest, restored, session_id="SID")
+    m2.restore_all()
+    assert os.path.isfile(os.path.join(restored, sched.JOURNAL_NAME))

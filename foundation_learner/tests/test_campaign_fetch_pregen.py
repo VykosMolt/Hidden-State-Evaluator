@@ -9,8 +9,9 @@ import pytest
 
 from foundation_learner.campaign import fetch_pregen as fp
 
-#: The real anchor, captured before the autouse fixture below neutralises it.
+#: The real helpers, captured before the autouse fixture below waives them.
 REAL_ANCHOR_DIGESTS = fp.anchor_digests
+REAL_VERIFY_TREE = fp.verify_tree
 
 
 @pytest.fixture(autouse=True)
@@ -19,8 +20,13 @@ def _synthetic_trees_have_no_package_anchor(monkeypatch):
 
     The package anchor pins the digests of the REAL corpus's checksum files,
     so every synthetic tree here would (correctly) be refused by it.  Tests
-    that exercise the anchor itself re-enable it explicitly.
+    that exercise the new unanchored-refusal contract call REAL_VERIFY_TREE
+    directly.  Synthetic trees explicitly waive the package anchor.
     """
+    def _waived(root, *a, waive_package_anchor=True, **k):
+        return REAL_VERIFY_TREE(root, *a,
+                                waive_package_anchor=waive_package_anchor, **k)
+    monkeypatch.setattr(fp, "verify_tree", _waived)
     monkeypatch.setattr(fp, "anchor_digests", lambda *a, **k: {})
 
 
@@ -74,6 +80,16 @@ def test_the_package_manifest_really_pins_the_corpus_checksums():
         "re-staged corpus could not be distinguished from the frozen one")
 
 
+def test_a_missing_or_unreadable_package_manifest_refuses_unanchored_verification(
+        tmp_path, monkeypatch):
+    """The concrete failure: empty anchors used to silently self-check."""
+    root = str(tmp_path / "pregen")
+    build_tree(root)
+    monkeypatch.setattr(fp, "anchor_digests", lambda *a, **k: {})
+    with pytest.raises(fp.PregenFetchError, match="anchors"):
+        REAL_VERIFY_TREE(root)
+
+
 def test_a_reseeded_corpus_is_refused_even_though_it_is_self_consistent(
         tmp_path, monkeypatch):
     """The exact attack the anchor exists to stop."""
@@ -94,11 +110,17 @@ def test_a_reseeded_corpus_is_refused_even_though_it_is_self_consistent(
             shard["bytes"] = os.path.getsize(path)
     with open(sums_path, "w", encoding="utf-8") as fh:
         json.dump(sums, fh)
-    fp.verify_tree(root)          # self-consistent: passes with no anchor
+    # NEW contract: an empty/missing package-manifest anchor set refuses
+    # unless explicitly waived.  The old behaviour (self-consistent tree
+    # passes with no anchor) is the defect this test now forbids.
+    with pytest.raises(fp.PregenFetchError, match="anchors"):
+        REAL_VERIFY_TREE(root, waive_package_anchor=False)
+    REAL_VERIFY_TREE(root, waive_package_anchor=True)
     monkeypatch.setattr(fp, "anchor_digests",
-                        lambda *a, **k: {"shard_sums_sha256": "0" * 64})
+                        lambda *a, **k: {"shard_sums_sha256": "0" * 64,
+                                         "pregen_manifest_sha256": "1" * 64})
     with pytest.raises(fp.PregenFetchError, match="pinned by the FL package"):
-        fp.verify_tree(root)
+        REAL_VERIFY_TREE(root, waive_package_anchor=False)
 
 
 def test_a_shard_path_cannot_escape_the_corpus_root(tmp_path):

@@ -163,6 +163,15 @@ The USD 45.00 total session budget remains authoritative at session level, and
 **rental confirmation remains NOT AUTHORIZED**. Nothing in this package
 contacts a provider, quotes an instance, or spends money.
 
+**FL allowance on the pod.** `COMPUTE_REMAINING_AUTHORIZED_TIME` takes the
+smaller of the config's `session_authorized_seconds` and the per-acquisition
+`O1_SESSION_AUTHORIZED_SECONDS` that the O1 zero-touch launcher sets on every
+pod (the remaining allocation, net of what earlier pods in the session already
+spent), minus the supervisor's own elapsed time. On resume the journalled
+`RUNPOD_POD_ID` decides the rule: a restart on the **same** pod subtracts the
+wall-clock gap (the pod billed for it); a **replacement** pod after eviction
+uses its own allocation and does not charge the unbilled gap.
+
 ## 7. Local validation status
 
 `scripts/run_all_tests.py` runs the unit suite, the hostile fixtures, the

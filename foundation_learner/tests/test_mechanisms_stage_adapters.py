@@ -10,6 +10,7 @@ about the competence of a randomly initialised model.
 """
 from __future__ import annotations
 
+import json
 import os
 
 import pytest
@@ -18,6 +19,7 @@ from foundation_learner.campaign import o1_isolation, promotion
 from foundation_learner.campaign.stage_definitions import (
     STAGES_BY_ID,
     StageContext,
+    StageError,
     fl4_entry,
     fl4_work,
     fl5_work,
@@ -188,6 +190,8 @@ def test_fl4_targets_come_from_the_fl3_checkpoint_when_one_exists(tmp_path):
     from foundation_learner.training.trainer import run_training_arm
 
     ctx = make_ctx(tmp_path)
+    ctx.updates = 1
+    ctx.learning_rate = 1e-4
     bundle = ctx.bundle_factory()
     episodes = _s.train_episodes(ctx, 1)
     examples = list(iter_examples(episodes, bundle.tokenizer, "FL3"))
@@ -204,6 +208,38 @@ def test_fl4_targets_come_from_the_fl3_checkpoint_when_one_exists(tmp_path):
     assert state["trained_scope"] == ctx.scope
     assert state["manifest_hash"]
     assert state["model"] == "FL3_final"
+
+
+def test_arm_checkpoint_state_refuses_a_stale_hash_or_identity(tmp_path):
+    """F2b: a restored checkpoint must not become this session's result
+    unless arm_config_hash and base identity match (same gates as the trainer).
+    """
+    from foundation_learner.training.arms import STAGE_SMOKE, make_arm_config
+    from foundation_learner.training.tokenization import iter_examples
+    from foundation_learner.training.trainer import run_training_arm
+
+    ctx = make_ctx(tmp_path)
+    ctx.updates = 1
+    ctx.learning_rate = 1e-4
+    bundle = ctx.bundle_factory()
+    episodes = _s.train_episodes(ctx, 1)
+    examples = list(iter_examples(episodes, bundle.tokenizer, "FL3"))
+    cfg = make_arm_config("FL3", learning_rate=1e-4, updates=1,
+                          max_tokens_per_batch=2048, peft_mode=ctx.scope,
+                          seed=int(ctx.root_seed), stage=STAGE_SMOKE)
+    out_dir = os.path.join(ctx.out_dir, "fl3", "arm")
+    run_training_arm(cfg, bundle, examples, out_dir, None)
+
+    # this session's intended config disagrees with the stored hash
+    ctx.learning_rate = 3e-4
+    with pytest.raises(StageError, match="arm_config_hash"):
+        _s.arm_checkpoint_state(ctx, ctx.bundle_factory(), "FL3")
+
+    # same config, different backbone identity
+    ctx.learning_rate = 1e-4
+    other = fresh_tiny_bundle(seed=999)
+    with pytest.raises(StageError, match="base identity"):
+        _s.arm_checkpoint_state(ctx, other, "FL3")
 
 
 # --------------------------------------------------------------------------
