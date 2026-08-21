@@ -217,10 +217,12 @@ def run() -> Runner:
         not read the O1 phase (or any quoted/prefixed occurrence) as the
         pod's verdict."""
         from o1_b200.provider.runpod.zero_touch import completion_verdict
+        # the FL supervisor rewrites O1's markers to O1_PHASE_*; the literal
+        # never appears in a combined session's log until the session ends
         mid_session = (
             "[supervisor] RUN_O1_CALIBRATION\n"
             "O1_PHASE_COMPLETE\n"
-            "note: child printed 'ZERO_TOUCH_COMPLETE' earlier\n"
+            "note: child printed O1_PHASE_ABORTED_AT_X earlier\n"
             "[supervisor] RUN_FL_LADDER ...\n")
         assert completion_verdict(mid_session) is None
         assert completion_verdict("") is None
@@ -232,7 +234,15 @@ def run() -> Runner:
         assert completion_verdict("O1_PHASE_ABORTED_AT_X\n") is None
         assert completion_verdict("  ZERO_TOUCH_ABORTED_AT_PRE_ENTRY_HF_SCOPE  \n") \
             == "PRE_ENTRY_HF_SCOPE"
-    r.check("the completion witness is a whole-line, session-level marker",
+        # provider log shapes: timestamp prefixes and a JSON-collapsed body
+        assert completion_verdict(
+            "2026-08-21T10:00:00Z ZERO_TOUCH_COMPLETE") == "COMPLETE"
+        assert completion_verdict(
+            '[{"t": 1, "m": "O1_PHASE_COMPLETE"}, {"t": 2, "m": '
+            '"ZERO_TOUCH_ABORTED_AT_RUN_FL_LADDER"}]') == "RUN_FL_LADDER"
+        assert completion_verdict("x_ZERO_TOUCH_COMPLETE") is None
+        assert completion_verdict("ZERO_TOUCH_COMPLETE_X") is None
+    r.check("the completion witness is a delimited, session-level marker",
             completion_witness_is_whole_line_and_session_level)
 
     return r

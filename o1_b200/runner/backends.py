@@ -403,10 +403,13 @@ class ReplicaBackend(Backend):
         Task affinity keeps a task's baseline bank and its intervention rows
         in one worker, so the sealed h_base pairing never crosses processes.
         Whole task groups go, in order, to the least-loaded worker (ties to
-        the lowest index), instead of ``g mod W``: with 12 tasks and 8
-        workers the modulo rule gave half the workers twice the rows, and
-        their decode rate doubled once the others finished — read by the
-        stability gate as a healthy accelerator being unstable.
+        the lowest index).  For EQUAL-sized groups this is identical to the
+        ``g mod W`` rule it replaced: with 12 equal tasks and 8 workers the
+        imbalance (four workers with two tasks, four with one) is inherent
+        to task affinity and is NOT removed here.  It is neutralised where
+        it matters — the stability gate measures per worker stream — and
+        it is charged honestly to completed_rows_per_second.  The greedy
+        rule only helps for unequal groups.
         """
         groups = group_specs_by_task(row_specs)
         W = self.config.worker_count

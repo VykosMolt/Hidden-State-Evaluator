@@ -29,6 +29,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 
 from .hf_transfer import child_env
 
@@ -71,23 +72,35 @@ def parse_hf_source(uri: str) -> str:
     return "/".join(parts[:2])
 
 
-def _run_helper(args: list[str], timeout: float) -> dict:
-    proc = subprocess.run(
-        [sys.executable, "-m", "o1_b200.runner.hf_transfer", *args],
-        capture_output=True, text=True, timeout=timeout,
-        env=child_env(os.environ.get("HF_TOKEN")))
-    if proc.returncode != 0:
-        from ..provider.runpod.redaction import redact
-        from .check_hf_scope import (DETERMINISTIC_STATUSES, _helper_error,
-                                     http_status)
+FETCH_ATTEMPTS = 4
+
+
+def _run_helper(args: list[str], timeout: float, attempts: int = FETCH_ATTEMPTS,
+                sleep=time.sleep) -> dict:
+    """Same retry/backoff as check_hf_scope: a single 5xx/429/reset partway
+    through a 5 GB snapshot must cost seconds, not a whole acquisition."""
+    from ..provider.runpod.redaction import redact
+    from .check_hf_scope import (DETERMINISTIC_STATUSES, _helper_error,
+                                 http_status)
+    last = ""
+    for attempt in range(1, attempts + 1):
+        proc = subprocess.run(
+            [sys.executable, "-m", "o1_b200.runner.hf_transfer", *args],
+            capture_output=True, text=True, timeout=timeout,
+            env=child_env(os.environ.get("HF_TOKEN")))
+        if proc.returncode == 0:
+            break
         combined = proc.stdout + proc.stderr
-        msg = redact(f"artifact fetch failed: {_helper_error(combined)}")
+        last = redact(f"artifact fetch failed: {_helper_error(combined)}")
         # 401/403/404 repeat on every pod; anything else (5xx, reset,
-        # timeout, rate limit) is a hub/network condition a new pod may
-        # not see
+        # timeout, rate limit) is a hub/network condition worth a retry,
+        # and if it persists, one a new pod may not see
         if http_status(combined) in DETERMINISTIC_STATUSES:
-            raise ArtifactFetchError(msg)
-        raise TransientFetchError(msg)
+            raise ArtifactFetchError(last)
+        if attempt < attempts:
+            sleep(min(30.0, 2.0 ** attempt))
+    else:
+        raise TransientFetchError(f"{last} (after {attempts} attempts)")
     try:
         return json.loads(proc.stdout.strip().splitlines()[-1])
     except (json.JSONDecodeError, IndexError):

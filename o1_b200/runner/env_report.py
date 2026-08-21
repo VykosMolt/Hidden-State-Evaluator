@@ -112,7 +112,7 @@ def collect_pod_report(container_image_digest: str = "UNKNOWN",
         "schema": "o1b200.environment_report.v1",
         "status": "RESOLVED_ON_POD",
         "gpu_name": props.name,
-        "gpu_uuid": _safe(lambda: str(props.uuid)),
+        "gpu_uuid": str(props.uuid),   # identity: never a placeholder
         "gpu_count": torch.cuda.device_count(),
         "hbm_capacity_bytes": int(props.total_memory),
         "nvidia_driver": _driver_version(),
@@ -152,8 +152,10 @@ def collect_pod_report(container_image_digest: str = "UNKNOWN",
 
 
 def _safe(fn, default: str = "UNAVAILABLE"):
-    """Diagnostic fields must not abort ENVIRONMENT_VERIFY after the pod and
-    the checkpoint fetch have been paid for."""
+    """DIAGNOSTIC fields (cudnn/nccl versions) must not abort
+    ENVIRONMENT_VERIFY after the pod and the checkpoint fetch have been paid
+    for.  Never used for identity fields: a placeholder there would be
+    hashed into environment_digest_sha256 and pass validation."""
     try:
         return fn()
     except Exception:  # noqa: BLE001

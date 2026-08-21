@@ -79,13 +79,20 @@ REQUIRED_CONFIG_KEYS = (
 #: rewrites O1's own markers (O1_PHASE_COMPLETE) and prints the session's
 #: marker once at its end; a substring match would have read a quoted,
 #: prefixed or mid-line occurrence as the verdict.
-_WITNESS_RE = re.compile(r"^\s*ZERO_TOUCH_(COMPLETE|ABORTED_AT_([A-Z0-9_]+))\s*$",
-                         re.MULTILINE)
+# Delimiter-guarded, NOT line-anchored: the provider's log endpoint may
+# return a JSON list of line objects or timestamp-prefixed lines (the
+# adapter json.dumps a non-string body), and a line anchor would then read
+# EVERY verdict — abort and completion alike — as "no verdict" = eviction.
+# The guards still reject O1_PHASE_COMPLETE, ..._ZERO_TOUCH_COMPLETE and
+# ZERO_TOUCH_COMPLETE_X.
+_WITNESS_RE = re.compile(
+    r"(?<![A-Za-z0-9_])ZERO_TOUCH_(COMPLETE|ABORTED_AT_([A-Z0-9_]+))"
+    r"(?![A-Za-z0-9_])")
 
 
 def completion_verdict(log_tail: str) -> str | None:
     """``"COMPLETE"``, the abort state name, or None (no verdict yet).
-    The LAST whole-line marker wins."""
+    The LAST delimited marker wins."""
     verdict = None
     for m in _WITNESS_RE.finditer(log_tail or ""):
         verdict = "COMPLETE" if m.group(1) == "COMPLETE" else (
@@ -370,7 +377,14 @@ def run_session(*, authorization_path: str, out_dir: str,
                     raise DeterministicPodFailure(
                         f"the pod aborted deterministically at {verdict}; "
                         f"reacquisition would repeat it")
-                return verdict == "COMPLETE"
+                if verdict == "COMPLETE":
+                    return True
+                if verdict is None and result_witness is not None \
+                        and getattr(pod, "status", None) == "EXITED":
+                    # the log may have rolled past the marker; the durable
+                    # result archive is the second witness
+                    return bool(result_witness())
+                return False
             except DeterministicPodFailure:
                 raise
             except Exception:  # noqa: BLE001 - log endpoint may lag

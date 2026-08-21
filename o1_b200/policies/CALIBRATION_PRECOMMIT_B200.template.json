@@ -1,6 +1,6 @@
 {
   "schema": "o1b200.calibration_precommit_template.v1",
-  "status": "TEMPLATE — NOT a calibration precommit. Finalization is refused while any field below is UNRESOLVED. No real calibration may run against this template.",
+  "status": "TEMPLATE \u2014 NOT a calibration precommit. Finalization is refused while any field below is UNRESOLVED. No real calibration may run against this template.",
   "frozen_scientific_identity": {
     "note": "Everything scientific is already frozen and hashed; the B200 session may not touch any of it.",
     "base_package": "O1_oracle_reachability_v2.1.0",
@@ -14,7 +14,7 @@
     "checkpoint_tree_sha256": "a701f7a75300ddf57098572fef3894bef59d5179580ec7eae7cd561a36056889",
     "calibration_task_manifest_sha256": "fb45e6b931edfaeabeea3723e0fe0ac040a22e2966564cff7ad7485f1e5fed0c",
     "transformers_version": "4.54.1",
-    "design_constants": "A1-A4 axes, structured/random bytes, Gram-matched random bank, both signs, K=8, CRN mapping, Latin-square stream assignment, task populations, seed policy, alpha grid, largest-passing-alpha rule, coherence rules, malformed=0, transport diagnostic-only, delta_target=0.05, q_disc upper-bound power sizing, exact McNemar, difficulty bands, arm drop order, H_reach primary endpoint, D2 exclusion, interpretation addendum — ALL UNCHANGED from the sealed v2.1 precommit",
+    "design_constants": "A1-A4 axes, structured/random bytes, Gram-matched random bank, both signs, K=8, CRN mapping, Latin-square stream assignment, task populations, seed policy, alpha grid, largest-passing-alpha rule, coherence rules, malformed=0, transport diagnostic-only, delta_target=0.05, q_disc upper-bound power sizing, exact McNemar, difficulty bands, arm drop order, H_reach primary endpoint, D2 exclusion, interpretation addendum \u2014 ALL UNCHANGED from the sealed v2.1 precommit",
     "attempt_ledger_policy": "the 403-row 2026-07-31 laptop attempt is ABORTED_BEFORE_CALIBRATION_ANALYSIS; NO ROWS REUSED"
   },
   "unresolved_hardware_facts": {
@@ -29,7 +29,8 @@
     "actual_hourly_rate_usd": "UNRESOLVED",
     "computed_hard_runtime_seconds": "UNRESOLVED",
     "environment_digest_sha256": "UNRESOLVED",
-    "final_backend_benchmark_report_sha256": "UNRESOLVED"
+    "final_backend_benchmark_report_sha256": "UNRESOLVED",
+    "benchmark_provenance": "UNRESOLVED (MEASURED_ON_THIS_POD or RESTORED_FROM_<instance_id>@<utc>: whether the benchmark/equivalence named above were measured on this instance or restored from an earlier acquisition of the same session)"
   },
   "finalization_rule": "runner/precommit_template.py::finalize() raises while any unresolved_hardware_facts value equals 'UNRESOLVED'; the finalized precommit must then be externally committed and remote-verified BEFORE calibration (runbook steps 10-13)."
 }

@@ -321,7 +321,9 @@ def benchmark_config(entry: dict, corpus_dir: str, out_dir: str,
 def _oom_types() -> tuple:
     """A CUDA OOM is torch.cuda.OutOfMemoryError (a RuntimeError subclass in
     current torch), NOT MemoryError; catching MemoryError alone recorded
-    real OOMs as integrity failures and the no_oom gate could never fire."""
+    real OOMs as integrity failures.  Exclusion of an OOM'd stage happens
+    through its stub entry (``benchmark_candidates``); this only makes the
+    recorded label truthful and the stop rule fire for the right reason."""
     types: list = [MemoryError]
     try:
         import torch
@@ -345,8 +347,9 @@ def run_benchmarks(corpus_dir: str, out_dir: str, *, mode: str,
     is estimated as ``stage_cost_estimate_seconds`` (the reference pass's
     measured time, refined by this run's own measurements) and a stage
     that would overrun the budget is skipped, in order, before it starts.
-    The reference stage always runs: it is the terminal fallback."""
-    """mode: "local-synthetic" (harness validation, CPU, fake model) or
+    The reference stage always runs: it is the terminal fallback.
+
+    mode: "local-synthetic" (harness validation, CPU, fake model) or
     "real-hardware" (the accelerator session: real Ouro-RLTT on CUDA,
     frozen stage order, stop rules enforced, conditional deep-batch stages
     only under the frozen extension rule)."""
@@ -408,7 +411,10 @@ def run_benchmarks(corpus_dir: str, out_dir: str, *, mode: str,
                                    task_subset=task_subset, device=device)
         except _oom_types():
             clean_so_far = False
-            results.append({"config_id": entry["config_id"], "oom": True})
+            # the stub is what excludes the stage (benchmark_candidates);
+            # oom_count is recorded so the gate name matches reality
+            results.append({"config_id": entry["config_id"], "oom": True,
+                            "oom_count": 1})
             continue   # stop rule: larger configs are conditional-skipped
         except Exception as exc:  # noqa: BLE001 - integrity failure = stop
             clean_so_far = False

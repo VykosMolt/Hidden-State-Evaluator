@@ -46,13 +46,14 @@ from .benchmark_o1_b200 import _oom_types, load_benchmark_order
 from .identity import domain_sha256
 from .selection import benchmark_candidates, derive_gates, select_backend
 
+from .state_machine import ZeroTouchStateMachine
+from .validation_corpus import disjointness_report, load_corpus
+from . import sealed_import
+
 #: BENCHMARK_ORDER amendment 2: the pre-calibration phase (equivalence +
 #: benchmark) may use at most this fraction of the runtime remaining when
 #: it starts; stages run in the frozen order until the budget is spent.
 PRECALIBRATION_BUDGET_FRACTION = 0.25
-from .state_machine import ZeroTouchStateMachine
-from .validation_corpus import disjointness_report, load_corpus
-from . import sealed_import
 
 ROOT = sealed_import.WORKTREE_ROOT
 CHECKPOINT_DIR = os.environ.get("O1_CHECKPOINT_DIR",
@@ -109,7 +110,32 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
         baked = os.path.join(ROOT, "o1_b200", "deploy",
                              "POD_TRANSFER_MANIFEST.json")
         default_manifest = baked
-        if staged:
+        if staged.startswith("hf://"):
+            # The production shape: an hf:// INGESTION URI, already consumed
+            # by runner/fetch_artifacts.py before this process started.
+            # It is consumed here by asserting the fetch report names the
+            # same source; the baked POD manifest then verifies the bytes.
+            # (Treating it as a manifest locator refused on every real pod,
+            # after the pod and the checkpoint fetch were paid for.)
+            fetch_report = os.path.join(out_dir, "ARTIFACT_FETCH_REPORT.json")
+            try:
+                with open(fetch_report, encoding="utf-8") as fh:
+                    fetched = json.load(fh)
+            except (OSError, ValueError) as exc:
+                raise ProductionEntryError(
+                    f"O1_B200_ARTIFACT_SOURCE={staged!r} is an hf:// source "
+                    f"but no artifact fetch report exists at {fetch_report} "
+                    f"({exc!r}); the entrypoint did not ingest it") from None
+            fetched_repo = str(fetched.get("repo") or "")
+            if fetched_repo and fetched_repo not in staged:
+                raise ProductionEntryError(
+                    f"the artifact fetch report names repo {fetched_repo!r} "
+                    f"but the identity-bound source is {staged!r}")
+            ctx["artifact_source_consumed"] = {
+                "source": staged, "fetch_report": fetch_report,
+                "fetched": fetched.get("fetched"),
+                "already_present": fetched.get("already_present")}
+        elif staged:
             candidate = (staged if staged.endswith(".json")
                          else os.path.join(staged, "TRANSFER_MANIFEST.json"))
             if not os.path.exists(candidate):
@@ -222,7 +248,20 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
         # is exhausted; the reference always runs.  Without this the phase
         # was ~55% of the calibration workload, unbounded, and only checked
         # for affordability after it had been paid for.
-        budget = PRECALIBRATION_BUDGET_FRACTION * remaining_at_start
+        # BOTH reference passes (this one, and the benchmark's reference
+        # stage) are charged to the budget up front: they are the slowest
+        # configuration and were previously uncounted, so the phase could
+        # exceed the declared bound by 2 x T_ref.
+        budget = PRECALIBRATION_BUDGET_FRACTION * remaining_at_start \
+            - 2.0 * ref_seconds
+        if budget < 0:
+            # the phase cannot fit even its two mandatory passes: say so now,
+            # not after the benchmark's reference pass has also been paid
+            ctx["precalibration_overrun"] = {
+                "reference_pass_seconds": ref_seconds,
+                "declared_budget_seconds":
+                    PRECALIBRATION_BUDGET_FRACTION * remaining_at_start}
+            budget = 0.0
         ctx["precalibration"] = {
             "remaining_at_start_seconds": remaining_at_start,
             "budget_seconds": budget,
@@ -348,22 +387,38 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
 
     PRECAL_REMOTE_REL = "durable_o1_precalibration/PRECALIBRATION_RESULT.json"
 
-    def _precal_identity() -> dict:
+    def _precal_identity(ctx) -> dict:
         return {"image_digest": os.environ.get("O1_IMAGE_DIGEST", "UNKNOWN"),
                 "profile": profile_key,
                 "benchmark_order_sha256": domain_sha256(
-                    "o1b200.benchmark_order.v1", load_benchmark_order())}
+                    "o1b200.benchmark_order.v1", load_benchmark_order()),
+                # the measurements are OF these artifacts: a restore must
+                # never carry verdicts measured against a different
+                # checkpoint or corpus
+                "checkpoint_tree_sha256": ctx.get("checkpoint_tree_sha256"),
+                "corpus_config_sha256": domain_sha256(
+                    "o1b200.corpus_config", ctx.get("corpus_config") or {}),
+                # the session this phase was measured for: identity env
+                # values differ per launch, so another session against the
+                # same result prefix never restores this one's phase
+                "result_destination": result_destination,
+                "artifact_source": os.environ.get("O1_B200_ARTIFACT_SOURCE",
+                                                  "")}
 
     def _persist_precalibration(ctx) -> None:
         payload = {
             "schema": "o1b300.precalibration_result.v1",
-            "identity": _precal_identity(),
+            "identity": _precal_identity(ctx),
             "equivalence": ctx["equivalence"],
             "corpus_row_count": ctx["corpus_row_count"],
             "benchmark_report_text": open(
                 os.path.join(out_dir, "BENCHMARK_REPORT.real.json"),
                 encoding="utf-8").read(),
             "precalibration": ctx.get("precalibration"),
+            "measured_on": {"instance_id": os.environ.get("RUNPOD_POD_ID",
+                                                          "POD"),
+                            "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                                                 time.gmtime())},
         }
         local = os.path.join(out_dir, "PRECALIBRATION_RESULT.json")
         atomic_write_text(local, json.dumps(payload, sort_keys=True,
@@ -380,13 +435,20 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
             store.fetch_file(PRECAL_REMOTE_REL, local)
             with open(local, encoding="utf-8") as fh:
                 payload = json.load(fh)
-        except Exception:  # noqa: BLE001 - absent or unreadable: measure
+        except Exception as exc:  # noqa: BLE001 - absent or unreadable: measure
+            atomic_write_text(
+                os.path.join(out_dir, "PRECALIBRATION_RESTORE_SKIPPED.txt"),
+                f"no durable pre-calibration result restored: {exc!r}\n")
             return False
         if payload.get("schema") != "o1b300.precalibration_result.v1":
             return False
-        if payload.get("identity") != _precal_identity():
-            # a different image or accelerator class: measurements do not
-            # transfer; measure again
+        if os.environ.get("O1_IMAGE_DIGEST", "UNKNOWN") == "UNKNOWN":
+            # two different images lacking the digest would share an
+            # identity; never restore unbound
+            return False
+        if payload.get("identity") != _precal_identity(ctx):
+            # a different image, accelerator class, checkpoint, corpus or
+            # session: measurements do not transfer; measure again
             return False
         ctx["equivalence"] = payload["equivalence"]
         ctx["corpus_row_count"] = int(payload["corpus_row_count"])
@@ -399,6 +461,8 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
             open(report_path, "rb").read()).hexdigest()
         ctx["precalibration"] = payload.get("precalibration")
         ctx["precalibration_restored"] = True
+        ctx["precalibration_source"] = {
+            "restored": True, **(payload.get("measured_on") or {})}
         atomic_write_text(
             os.path.join(out_dir, "EQUIVALENCE_REPORT.real.json"),
             json.dumps(ctx["equivalence"], indent=2, sort_keys=True,
@@ -435,6 +499,15 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
                 ctx["environment_report"]["environment_digest_sha256"],
             # the BENCHMARK it names, not a second copy of the gate hash
             "final_backend_benchmark_report_sha256": ctx["benchmark_sha256"],
+            # a restored pre-calibration mixes two pods in one document
+            # (instance/gpu from THIS pod, benchmark from an earlier one);
+            # the document must say so
+            "benchmark_provenance": (
+                "MEASURED_ON_THIS_POD" if not ctx.get("precalibration_restored")
+                else "RESTORED_FROM_{}@{}".format(
+                    (ctx.get("precalibration_source") or {}).get(
+                        "instance_id", "?"),
+                    (ctx.get("precalibration_source") or {}).get("utc", "?"))),
         }, mock=False)
         ctx["finalized_precommit"] = finalize(resolved)
         path = os.path.join(out_dir, "CALIBRATION_PRECOMMIT.deployed.json")
@@ -965,13 +1038,22 @@ def main() -> int:
     os.makedirs(out_dir, exist_ok=True)
     t0 = time.monotonic()
     clock = lambda: time.monotonic() - t0  # noqa: E731
-    provider = LocalProviderAdapter(out_dir)
-    handlers = build_production_handlers(out_dir, provider, clock)
-    watchdog = BudgetWatchdog(
-        int(float(_require_env("O1_SESSION_AUTHORIZED_SECONDS"))),
-        clock=clock)
-    machine = ZeroTouchStateMachine(provider, out_dir, handlers,
-                                    watchdog=watchdog, clock=clock)
+    try:
+        provider = LocalProviderAdapter(out_dir)
+        handlers = build_production_handlers(out_dir, provider, clock)
+        watchdog = BudgetWatchdog(
+            int(float(_require_env("O1_SESSION_AUTHORIZED_SECONDS"))),
+            clock=clock)
+        machine = ZeroTouchStateMachine(provider, out_dir, handlers,
+                                        watchdog=watchdog, clock=clock)
+    except Exception as exc:  # noqa: BLE001 - deterministic: env/config
+        # a missing identity env, a malformed result destination: the same
+        # on every pod this launch produces, so the driver must not pay to
+        # reacquire.  Written literally, like the markers below.
+        print("ZERO_TOUCH_ABORTED_AT_PRE_ENTRY_CONFIG")
+        print(f"REFUSED: production entry setup failed: {exc!r}",
+              file=sys.stderr)
+        return 1
     status = machine.run()
     # The off-pod driver greps these markers.  Both are written literally
     # (not assembled) so the marker the driver looks for and the marker the

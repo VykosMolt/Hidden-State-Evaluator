@@ -218,6 +218,7 @@ def build_handlers(corpus_dir: str, work_dir: str, provider: MockProviderAdapter
             "computed_hard_runtime_seconds": ctx["runtime_limit"],
             "environment_digest_sha256": "1" * 64,
             "final_backend_benchmark_report_sha256": "2" * 64,
+            "benchmark_provenance": "MEASURED_ON_THIS_POD (rehearsal)",
         }, mock=True)
         ctx["finalized_precommit"] = finalize(resolved)
         return {"finalized": True, "mock": True,

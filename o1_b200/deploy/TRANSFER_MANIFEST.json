@@ -39,7 +39,7 @@
     "deploy_scripts": {
       "kind": "tree",
       "path": "/home/moloch/ouro_worktrees/o1-v2-b200-runner/o1_b200/deploy",
-      "sha256": "287ba6ff6f2e4b626e2258d72df70dbee7cabfb56933667695529684493b40fa",
+      "sha256": "54e656ad5e853dbb9ec19b7d0c4908de297a3a129a6e27efc8fc91a0787aecb8",
       "transfer_out_of_band": false
     },
     "freeze_manifest": {
@@ -69,13 +69,13 @@
     "policies": {
       "kind": "tree",
       "path": "/home/moloch/ouro_worktrees/o1-v2-b200-runner/o1_b200/policies",
-      "sha256": "29f8e9efd1f2d9042d6273f9159378fb50e3326699931ba4e25527008dfd6bac",
+      "sha256": "549da846741312d25c10d849b5b1178608a0bb2e7b9175cde8f3228247bb78d9",
       "transfer_out_of_band": false
     },
     "runner_source": {
       "kind": "tree",
       "path": "/home/moloch/ouro_worktrees/o1-v2-b200-runner/o1_b200/runner",
-      "sha256": "12fc83daf9e968a91ac522b7ea3b81f890019cb90ee470ee7abb7eb3b1fbe979",
+      "sha256": "3ed677021da1e304d165ea52468498c41e016b3c00f52a6ae8f8fe7a53d7d43b",
       "transfer_out_of_band": false
     },
     "tokenizer_binding": {

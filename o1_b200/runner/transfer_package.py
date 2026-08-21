@@ -64,7 +64,12 @@ def _filtered_tree_digest(path: str) -> str:
                 if not tree_digest_includes(rel.replace(os.sep, "/"), n):
                     out.add(n)
             return out
-        shutil.copytree(path, staged, symlinks=True, ignore=_ignore)
+        # symlink, never copy: the checkpoint tree is 5 GB and /tmp may be
+        # a 16 GB tmpfs.  sha256_file follows symlinks, so the sealed
+        # hashing implementation still does all the hashing.
+        shutil.copytree(path, staged, symlinks=True, ignore=_ignore,
+                        copy_function=lambda src, dst: os.symlink(
+                            os.path.realpath(src), dst))
         return sha256_tree(staged)
 
 

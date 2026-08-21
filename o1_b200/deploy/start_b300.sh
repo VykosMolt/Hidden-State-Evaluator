@@ -38,7 +38,10 @@ export HF_HUB_OFFLINE=1
 export CUBLAS_WORKSPACE_CONFIG=":4096:8"
 export PYTHONPATH="$ROOT"
 
-mkdir -p "$OUT" "$ARTIFACTS"
+if ! mkdir -p "$OUT" "$ARTIFACTS"; then
+  echo "ZERO_TOUCH_ABORTED_AT_PRE_ENTRY_MKDIR"
+  exit 1
+fi
 
 # Every pre-entry step below fails DETERMINISTICALLY (same image, same
 # config, same artifacts -> same refusal), so a non-zero exit must carry the
@@ -110,6 +113,7 @@ if [[ -n "$FL_CONFIG" ]]; then
     echo "            which does not exist on this pod.  A combined session" >&2
     echo "            was requested and cannot be honoured; refusing now" >&2
     echo "            rather than after the accelerator is paid for." >&2
+    echo "ZERO_TOUCH_ABORTED_AT_PRE_ENTRY_FL_HANDOVER"
     exit 78
   fi
   if [[ ! -x "$FL_ENTRY" ]]; then
@@ -117,6 +121,7 @@ if [[ -n "$FL_CONFIG" ]]; then
     echo "            $FL_ENTRY is absent — a combined session was requested" >&2
     echo "            and cannot be honoured; refusing rather than silently" >&2
     echo "            running O1 only." >&2
+    echo "ZERO_TOUCH_ABORTED_AT_PRE_ENTRY_FL_HANDOVER"
     exit 78
   fi
   echo "[start_b300] combined session: handing over to the FL supervisor"

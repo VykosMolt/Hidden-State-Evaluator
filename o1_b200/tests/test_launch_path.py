@@ -406,6 +406,78 @@ def run() -> Runner:
             "with the deterministic marker",
             scope_preflight_treats_a_corrupt_manifest_as_deterministic)
 
+    def artifact_verify_consumes_an_hf_source_without_treating_it_as_a_path():
+        """The production config sets artifact_source=hf://…, injected as
+        O1_B200_ARTIFACT_SOURCE.  artifact_verify joined it with
+        TRANSFER_MANIFEST.json and refused on every real pod — after the
+        pod and the 5 GB fetch were paid for.  An hf:// source is the
+        ingestion URI fetch_artifacts already consumed; it is consumed here
+        by cross-checking the fetch report, and the baked POD manifest
+        verifies the bytes."""
+        import json as _json
+        from o1_b200.runner import production_entry as pe
+        d = fresh_dir("av_hf_source")
+        out = os.path.join(d, "out")
+        os.makedirs(out)
+        saved = {k: os.environ.get(k) for k in (
+            "O1_ACQUIRED_PROFILE", "O1_SESSION_AUTHORIZED_SECONDS",
+            "O1_B200_RESULT_DESTINATION", "O1_B200_ARTIFACT_SOURCE",
+            "O1_B200_TRANSFER_MANIFEST")}
+        os.environ.update({
+            "O1_ACQUIRED_PROFILE": "B300",
+            "O1_SESSION_AUTHORIZED_SECONDS": "3600",
+            "O1_B200_RESULT_DESTINATION": os.path.join(d, "results"),
+            "O1_B200_ARTIFACT_SOURCE": "hf://Vykos/o1-b200-staging",
+            # the HOST manifest resolves on this machine; the pod uses the
+            # baked container-path one — same verifier either way
+            "O1_B200_TRANSFER_MANIFEST": HOST_MANIFEST})
+        saved_ckpt = pe.CHECKPOINT_DIR
+        with open(HOST_MANIFEST, encoding="utf-8") as fh:
+            pe.CHECKPOINT_DIR = _json.load(fh)["artifacts"][
+                "ouro_rltt_checkpoint"]["path"]
+        try:
+            class P:
+                def start_instance(self):
+                    return "local"
+            handlers = pe.build_production_handlers(out, P(), lambda: 0.0)
+            ctx = {}
+            # no fetch report: the source cannot be shown consumed -> refuse
+            try:
+                handlers["ARTIFACT_VERIFY"](ctx)
+            except pe.ProductionEntryError as exc:
+                assert "fetch report" in str(exc)
+            else:
+                raise AssertionError("an unconsumed hf:// source was accepted")
+            # with the entrypoint's fetch report naming the same repo: pass
+            with open(os.path.join(out, "ARTIFACT_FETCH_REPORT.json"), "w",
+                      encoding="utf-8") as fh:
+                _json.dump({"repo": "Vykos/o1-b200-staging",
+                            "fetched": [], "already_present": ["x"]}, fh)
+            res = handlers["ARTIFACT_VERIFY"](ctx)
+            assert res["artifacts_verified"] is True
+            assert ctx["artifact_source_consumed"]["source"].startswith("hf://")
+            assert ctx["artifact_manifest"] == HOST_MANIFEST
+            # a report naming a DIFFERENT repo is an identity mismatch
+            with open(os.path.join(out, "ARTIFACT_FETCH_REPORT.json"), "w",
+                      encoding="utf-8") as fh:
+                _json.dump({"repo": "someone/else", "fetched": []}, fh)
+            try:
+                handlers["ARTIFACT_VERIFY"]({})
+            except pe.ProductionEntryError as exc:
+                assert "identity-bound source" in str(exc)
+            else:
+                raise AssertionError("a foreign fetch report was accepted")
+        finally:
+            pe.CHECKPOINT_DIR = saved_ckpt
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+    r.check("ARTIFACT_VERIFY consumes an hf:// artifact source by "
+            "cross-checking the fetch report, never as a manifest path",
+            artifact_verify_consumes_an_hf_source_without_treating_it_as_a_path)
+
     def the_transfer_manifests_describe_the_current_tree():
         """Round 5 changed policies/, runner/ and deploy/ without
         regenerating the manifests; verify_artifacts.py would then refuse

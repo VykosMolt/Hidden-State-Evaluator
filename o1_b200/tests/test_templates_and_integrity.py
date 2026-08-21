@@ -31,6 +31,7 @@ _FULL_FACTS = {
     "computed_hard_runtime_seconds": 48160,
     "environment_digest_sha256": "1" * 64,
     "final_backend_benchmark_report_sha256": "2" * 64,
+    "benchmark_provenance": "MEASURED_ON_THIS_POD",
 }
 
 
@@ -94,7 +95,7 @@ def run() -> Runner:
             sealed_import.BASE_PACKAGE_ZIP_SHA256
         assert f["source_commit"] == sealed_import.SOURCE_COMMIT
         assert f["transformers_version"] == "4.54.1"
-        assert len(unresolved_fields(t)) == 12
+        assert len(unresolved_fields(t)) == 13
     r.check("precommit template freezes all scientific hashes; exactly the "
             "12 hardware facts are unresolved", template_scientific_hashes_frozen)
 

@@ -192,10 +192,13 @@
         "HOSTILE secret material is refused by the transfer tooling",
         "HOSTILE corrupted artifact (hash mismatch) refused by manifest builder"
       ],
-      "failed": 0,
-      "failures": [],
+      "failed": 2,
+      "failures": [
+        "fully resolved MOCK precommit finalizes but remains marked mock",
+        "precommit template freezes all scientific hashes; exactly the 12 hardware facts are unresolved"
+      ],
       "module": "test_templates_and_integrity",
-      "passed": 14
+      "passed": 12
     },
     {
       "checks": [
@@ -282,10 +285,12 @@
         "24. output-transfer failure -> pod still terminated, loud abort",
         "the completion witness is a whole-line, session-level marker"
       ],
-      "failed": 0,
-      "failures": [],
+      "failed": 1,
+      "failures": [
+        "the completion witness is a whole-line, session-level marker"
+      ],
       "module": "test_runpod_zero_touch",
-      "passed": 6
+      "passed": 5
     },
     {
       "checks": [
@@ -331,6 +336,7 @@
         "a mounted durable destination is proven by actually writing to it",
         "the scope preflight requires a token only when a hub repo is actually named",
         "the scope preflight refuses a corrupt or absent pod manifest with the deterministic marker",
+        "ARTIFACT_VERIFY consumes an hf:// artifact source by cross-checking the fetch report, never as a manifest path",
         "the transfer manifests describe the committed tree (pod ARTIFACT_VERIFY would pass)",
         "the entrypoint proves the credential scope before fetching anything",
         "the image record's FL digest describes the FL tree the build would actually stage",
@@ -345,10 +351,13 @@
         "a session prefix in the durable destination scopes every key, so a fresh run cannot silently resume an old one",
         "an expired authorization still permits TERMINATION while refusing acquisition"
       ],
-      "failed": 0,
-      "failures": [],
+      "failed": 2,
+      "failures": [
+        "ARTIFACT_VERIFY consumes an hf:// artifact source by cross-checking the fetch report, never as a manifest path",
+        "the image record's FL digest describes the FL tree the build would actually stage"
+      ],
       "module": "test_launch_path",
-      "passed": 31
+      "passed": 30
     },
     {
       "checks": [
@@ -420,16 +429,18 @@
         "mock server still 401s any key other than the synthetic mock credential (auth not weakened)",
         "independent watchdog path never sends the operator credential to a non-production host"
       ],
-      "failed": 0,
-      "failures": [],
+      "failed": 1,
+      "failures": [
+        "complete local/mock RunPod suite passes IDENTICALLY with no credential vars, fake RUNPOD_API_KEY, fake key+file, and a world-readable key file"
+      ],
       "module": "test_credential_isolation",
-      "passed": 5
+      "passed": 4
     }
   ],
   "schema": "o1b200.test_report.v1",
   "scope_note": "Hardware-independent local validation only: synthetic runtime + non-O1 corpus + mocked provider/clock. No B200 hardware claim is made or implied.",
-  "total_failed": 0,
-  "total_passed": 273,
-  "utc": "2026-08-21T20:04:24Z",
-  "verdict": "ALL O1 B200 RUNNER TESTS PASSED"
+  "total_failed": 6,
+  "total_passed": 268,
+  "utc": "2026-08-21T21:48:44Z",
+  "verdict": "6 FAILURES"
 }
