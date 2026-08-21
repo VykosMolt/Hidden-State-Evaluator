@@ -1,4 +1,4 @@
-# O1_B300_RUNNER v0.3.5
+# O1_B300_RUNNER v0.3.6
 
 Status: **B300 PREEMPTIBLE SOFTWARE COMPLETE / HARDWARE UNVALIDATED**
 
@@ -65,8 +65,8 @@ COMPLETE. 21-point failure injection: all-terminal. Master pre-rental
 readiness: PASS. Live GET-only preflight: PASS, with B300 and B200 both
 showing Low stock (B300 $7.89/h, B200 $6.79/h secure spot; Secure-filtered
 minimum bids equal to those figures). Container image
-`o1-b300-runner:v0.3.5`, local id
-`sha256:6ddf92b948973f2f3a5368c052b6be188bd7504479deda5d73e7f4664cf4bdc2`,
+`o1-b300-runner:v0.3.6`, local id
+`sha256:30474495b286ee7fd6269a744195eabb273e6ec2bb80ee204e7fbdb9dc1d449f`,
 registry digest UNRESOLVED until the operator pushes.
 
 ## Base identity
