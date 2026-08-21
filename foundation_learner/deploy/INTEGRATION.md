@@ -172,6 +172,29 @@ spent), minus the supervisor's own elapsed time. On resume the journalled
 wall-clock gap (the pod billed for it); a **replacement** pod after eviction
 uses its own allocation and does not charge the unbilled gap.
 
+### Giving the ladder the accelerator
+
+Two numbers in the session config decide how much of the rental the FL
+ladder gets. With the USD 40 compute allocation at the live B200 rate
+($6.79/h) one pod's allowance is ~21,000 s; at the B300 rate ($7.89/h)
+~18,000 s. `O1_SESSION_AUTHORIZED_SECONDS` carries the exact figure onto
+the pod.
+
+| field | set it to | why |
+|---|---|---|
+| `session_authorized_seconds` | the per-pod allowance (same figure the driver computes) | the supervisor takes `min(config, O1_SESSION_AUTHORIZED_SECONDS)` anyway |
+| `o1_timeout_seconds` | **≤ 45 % of the allowance** (≈ 9,000 s on B200) | bounds the O1 phase; `validate()` refuses if it does not leave `o1_timeout + 3,000 s` below the allowance |
+| `fl_minimum_seconds` | leave at the default (3,000 s) | the frozen 1,200 s transfer reserve plus one minimal stage |
+
+With those values the ladder receives ≥ 55 % of every pod's allowance,
+and on a replacement pod (O1 already complete and skipped on resume) it
+receives the whole remaining allocation. The O1 phase's own affordability
+gate projects at the serial rate; if O1 cannot fit in its timeout it
+aborts at `CALIBRATION_AFFORDABILITY_CHECK` *before* calibration starts,
+and the session reports `ABORTED_AT_O1_HALT_OR_COMPLETE` with the pod
+terminated — no FL time is spent on a session that could not have
+completed O1.
+
 ## 7. Local validation status
 
 `scripts/run_all_tests.py` runs the unit suite, the hostile fixtures, the
