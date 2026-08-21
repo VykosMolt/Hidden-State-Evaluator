@@ -38,6 +38,36 @@ def _check_no_secrets(path: str) -> None:
                 f"{pat!r}")
 
 
+def _filtered_tree_digest(path: str) -> str:
+    """The sealed ``sha256_tree`` over a staged copy of ``path`` with the
+    transfer manifests and bytecode removed — the same exclusion rule the
+    pod-side ``deploy/verify_artifacts.py`` applies.  Without it the deploy
+    tree contained its own digest (no fixed point) and host bytecode (absent
+    from the image), so ARTIFACT_VERIFY refused deterministically."""
+    import shutil
+    import tempfile
+    from ..deploy.verify_artifacts import (TREE_DIGEST_EXCLUDED_DIRS,
+                                           tree_digest_includes)
+    with tempfile.TemporaryDirectory(prefix="tree_digest_") as tmp:
+        staged = os.path.join(tmp, os.path.basename(path.rstrip(os.sep)))
+
+        def _ignore(directory, names):
+            rel_dir = os.path.relpath(directory, path)
+            out = set()
+            for n in names:
+                full = os.path.join(directory, n)
+                if os.path.isdir(full):
+                    if n in TREE_DIGEST_EXCLUDED_DIRS:
+                        out.add(n)
+                    continue
+                rel = n if rel_dir == "." else os.path.join(rel_dir, n)
+                if not tree_digest_includes(rel.replace(os.sep, "/"), n):
+                    out.add(n)
+            return out
+        shutil.copytree(path, staged, symlinks=True, ignore=_ignore)
+        return sha256_tree(staged)
+
+
 def build_manifest(entries: dict[str, dict], out_path: str) -> dict:
     """entries: {name: {"path": ..., "kind": "file"|"tree"|"reference",
     "expected_sha256": optional}}.
@@ -52,7 +82,8 @@ def build_manifest(entries: dict[str, dict], out_path: str) -> dict:
         _check_no_secrets(path)
         if not os.path.exists(path):
             raise TransferError(f"{name}: missing artifact {path}")
-        digest = sha256_tree(path) if os.path.isdir(path) else sha256_file(path)
+        digest = (_filtered_tree_digest(path) if os.path.isdir(path)
+                  else sha256_file(path))
         want = spec.get("expected_sha256")
         if want is not None and digest != want:
             raise TransferError(

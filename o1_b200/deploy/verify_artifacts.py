@@ -22,14 +22,35 @@ def sha256_file(path: str) -> str:
     return h.hexdigest()
 
 
+#: Excluded from every tree digest, on the build host AND on the pod:
+#: the two manifests (a tree that contains its own digest has no fixed
+#: point) and bytecode (present on a host that ran the tests, absent from
+#: the image by .dockerignore).  make_transfer_manifest applies the same
+#: rule; the two MUST agree or ARTIFACT_VERIFY refuses every pod.
+TREE_DIGEST_EXCLUDED_NAMES = frozenset(
+    {"TRANSFER_MANIFEST.json", "POD_TRANSFER_MANIFEST.json"})
+TREE_DIGEST_EXCLUDED_DIRS = frozenset({"__pycache__"})
+
+
+def tree_digest_includes(rel: str, name: str) -> bool:
+    if name.endswith(".pyc"):
+        return False
+    if name in TREE_DIGEST_EXCLUDED_NAMES and os.sep not in rel and "/" not in rel:
+        return False
+    return True
+
+
 def sha256_tree(path: str) -> str:
     if os.path.isfile(path):
         return sha256_file(path)
     h = hashlib.sha256()
     for root, dirs, files in os.walk(path):
-        dirs.sort()
+        dirs[:] = sorted(d for d in dirs if d not in TREE_DIGEST_EXCLUDED_DIRS)
         for name in sorted(files):
             full = os.path.join(root, name)
+            if not tree_digest_includes(
+                    os.path.relpath(full, path).replace(os.sep, "/"), name):
+                continue
             rel = os.path.relpath(full, path).replace(os.sep, "/")
             h.update(rel.encode("utf-8"))
             h.update(b"\0")

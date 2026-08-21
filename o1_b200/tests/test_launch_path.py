@@ -635,9 +635,8 @@ def run() -> Runner:
         marker_at = text.index("ZERO_TOUCH_ABORTED_AT_HF_SCOPE")
         transient_at = text.index("REFUSED (transient)")
         assert marker_at < transient_at or "TransientScopeError" in text
-        zt = open(os.path.join(_ROOT, "o1_b200", "provider", "runpod",
-                               "zero_touch.py"), encoding="utf-8").read()
-        assert "ZERO_TOUCH_ABORTED_AT_" in zt
+        from o1_b200.provider.runpod.zero_touch import completion_verdict
+        assert completion_verdict("ZERO_TOUCH_ABORTED_AT_HF_SCOPE\n") == "HF_SCOPE"
     r.check("a deterministic credential refusal emits the abort marker; a "
             "transient one deliberately does not",
             a_wrong_credential_stops_the_session_instead_of_reacquiring)
@@ -681,10 +680,14 @@ def run() -> Runner:
             os.path.join(_ROOT, "o1_b200", "runner", "production_entry.py"),
             encoding="utf-8").read(), "the pod no longer emits the marker"
         source = open(zt.__file__, encoding="utf-8").read()
-        assert "ZERO_TOUCH_ABORTED_AT_" in source, (
-            "the session driver does not look for the pod's deterministic "
+        # the driver recognises the pod's marker as a whole line and turns
+        # it into a verdict that stops reacquisition
+        assert zt.completion_verdict(
+            "stuff\nZERO_TOUCH_ABORTED_AT_ARTIFACT_VERIFY\n") == "ARTIFACT_VERIFY", (
+            "the session driver does not recognise the pod's deterministic "
             "abort marker, so it would reacquire against a reproducible "
             "failure until the budget or slots ran out")
+        assert zt.completion_verdict("O1_PHASE_ABORTED_AT_X\n") is None
         assert issubclass(DeterministicPodFailure, RuntimeError)
         assert "ABORTED_DETERMINISTIC_POD_FAILURE" in source
     r.check("a deterministic pod abort is recognised and stops the session "
