@@ -39,6 +39,7 @@ MODULES = [
     "test_preemption",
     "test_review_repairs",
     "test_credential_isolation",
+    "test_combined_session_seam",
 ]
 
 # Longest first: with a bounded pool the long poles must start immediately or
