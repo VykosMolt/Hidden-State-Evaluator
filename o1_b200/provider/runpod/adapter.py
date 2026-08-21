@@ -78,6 +78,38 @@ TERMINATE_AFTER_MARGIN_SECONDS = 30 * 60
 TERMINATE_AFTER_READ_BACK = "IMPOSSIBLE: not a Pod field (verified 2026-08-21)"
 
 
+def normalize_log_body(raw) -> str:
+    """The provider's log body as newline-delimited lines of text.
+
+    The endpoint may return a bare string, ``{"logs": "..."}``, a list of
+    lines, or a list of objects each carrying a message field.  The
+    completion witness is LINE-anchored, so a list must become real lines:
+    json.dumps of the body produced one escaped line in which no verdict
+    could ever match.
+    """
+    if isinstance(raw, dict):
+        raw = raw.get("logs", raw.get("lines", raw))
+    if isinstance(raw, str):
+        return raw
+    if isinstance(raw, list):
+        lines = []
+        for item in raw:
+            if isinstance(item, str):
+                lines.append(item)
+            elif isinstance(item, dict):
+                msg = None
+                for key in ("message", "msg", "line", "text", "log"):
+                    if isinstance(item.get(key), str):
+                        msg = item[key]
+                        break
+                lines.append(msg if msg is not None
+                             else json.dumps(item, sort_keys=True))
+            else:
+                lines.append(str(item))
+        return "\n".join(lines)
+    return json.dumps(raw, sort_keys=True)
+
+
 class RunpodAdapterError(RuntimeError):
     def __init__(self, msg: str):
         super().__init__(redact(msg))
@@ -211,9 +243,7 @@ class RunpodV2Adapter:
     def _logs(self, pod_id: str, source: str, tail: int) -> str:
         raw = self.readonly.get(
             f"/v2/pods/{pod_id}/logs?source={source}&tail={int(tail)}")
-        if isinstance(raw, dict):
-            raw = raw.get("logs", raw)
-        return redact(json.dumps(raw) if not isinstance(raw, str) else raw)
+        return redact(normalize_log_body(raw))
 
     def get_billing_usage(self, pod_id: str | None = None) -> dict:
         path = "/v2/billing/pods"

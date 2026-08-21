@@ -127,7 +127,9 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
                     f"but no artifact fetch report exists at {fetch_report} "
                     f"({exc!r}); the entrypoint did not ingest it") from None
             fetched_repo = str(fetched.get("repo") or "")
-            if fetched_repo and fetched_repo not in staged:
+            from .fetch_artifacts import parse_hf_source as _parse_source
+            expected_repo = _parse_source(staged)
+            if fetched_repo and fetched_repo != expected_repo:
                 raise ProductionEntryError(
                     f"the artifact fetch report names repo {fetched_repo!r} "
                     f"but the identity-bound source is {staged!r}")
@@ -176,7 +178,8 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
         # disjointness report is DISJOINT, so the scientific inputs are
         # provably the frozen ones (fed to the selection gates)
         ctx["corpus_config_verified"] = True
-        return {"artifacts_verified": True, "disjointness": rep["verdict"]}
+        return {"artifacts_verified": True, "disjointness": rep["verdict"],
+                "artifact_source_consumed": ctx.get("artifact_source_consumed")}
 
     def environment_verify(ctx):
         from o1_b200.deploy.hardware_gate import (
@@ -334,8 +337,12 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
         atomic_write_text(
             os.path.join(out_dir, "EQUIVALENCE_REPORT.real.json"),
             json.dumps(comp, indent=2, sort_keys=True, default=str) + "\n")
-        return {cid: v.get("eligible_structurally")
-                for cid, v in sorted(comp.items())}
+        ran = [cid for cid, v in comp.items()
+               if not v.get("skipped") and not v.get("is_reference")]
+        return {**{cid: v.get("eligible_structurally")
+                   for cid, v in sorted(comp.items())},
+                "precalibration_overrun": ctx.get("precalibration_overrun"),
+                "no_stage_affordable": (budget > 0 and not ran)}
 
     def non_o1_benchmark(ctx):
         if ctx.get("precalibration_restored"):
@@ -398,9 +405,11 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
                 "checkpoint_tree_sha256": ctx.get("checkpoint_tree_sha256"),
                 "corpus_config_sha256": domain_sha256(
                     "o1b200.corpus_config", ctx.get("corpus_config") or {}),
-                # the session this phase was measured for: identity env
-                # values differ per launch, so another session against the
-                # same result prefix never restores this one's phase
+                # the deployment this phase was measured for.  These are
+                # deployment identity (stable across launches of the same
+                # config): a later authorization against the same config
+                # MAY restore, and the precommit then discloses it as
+                # RESTORED_FROM_<pod>@<utc>
                 "result_destination": result_destination,
                 "artifact_source": os.environ.get("O1_B200_ARTIFACT_SOURCE",
                                                   "")}
@@ -442,7 +451,8 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
             return False
         if payload.get("schema") != "o1b300.precalibration_result.v1":
             return False
-        if os.environ.get("O1_IMAGE_DIGEST", "UNKNOWN") == "UNKNOWN":
+        digest = os.environ.get("O1_IMAGE_DIGEST", "").strip()
+        if not digest or digest.upper() == "UNKNOWN":
             # two different images lacking the digest would share an
             # identity; never restore unbound
             return False

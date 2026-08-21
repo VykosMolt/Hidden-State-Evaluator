@@ -478,6 +478,25 @@ def run() -> Runner:
             "cross-checking the fetch report, never as a manifest path",
             artifact_verify_consumes_an_hf_source_without_treating_it_as_a_path)
 
+    def the_documents_name_the_recorded_image_id():
+        """Four operator documents quote the local image id; after two
+        rebuilds they named an image that no longer existed, and the
+        documented cross-check pointed at nothing."""
+        import re as _re
+        rec_path = os.path.join(_ROOT, "o1_b200", "provider", "runpod",
+                                "CONTAINER_IMAGE_RECORD.json")
+        with open(rec_path, encoding="utf-8") as fh:
+            image_id = json.load(fh)["image_id_local"]
+        for rel in ("README.md", "deploy/README.md",
+                    "provider/runpod/PRE_RENTAL_PREREQUISITES.md",
+                    "provider/runpod/REGISTRY_PUSH_PROCEDURE.md"):
+            text = open(os.path.join(_ROOT, "o1_b200", rel),
+                        encoding="utf-8").read()
+            ids = set(_re.findall(r"sha256:[0-9a-f]{64}", text))
+            assert ids == {image_id}, (rel, ids, image_id)
+    r.check("every document quoting the local image id names the recorded "
+            "one", the_documents_name_the_recorded_image_id)
+
     def the_transfer_manifests_describe_the_current_tree():
         """Round 5 changed policies/, runner/ and deploy/ without
         regenerating the manifests; verify_artifacts.py would then refuse

@@ -38,8 +38,15 @@ export HF_HUB_OFFLINE=1
 export CUBLAS_WORKSPACE_CONFIG=":4096:8"
 export PYTHONPATH="$ROOT"
 
-if ! mkdir -p "$OUT" "$ARTIFACTS"; then
-  echo "ZERO_TOUCH_ABORTED_AT_PRE_ENTRY_MKDIR"
+if ! mkdir -p "$OUT" "$ARTIFACTS" 2>"${TMPDIR:-/tmp}/.mkdir_err"; then
+  # an unattached volume or a full container disk is a per-pod condition a
+  # replacement may not repeat (transient: no marker, the driver may
+  # reacquire); a read-only rootfs is the image's own (deterministic)
+  if grep -qiE "read-only file system" "${TMPDIR:-/tmp}/.mkdir_err"; then
+    echo "ZERO_TOUCH_ABORTED_AT_PRE_ENTRY_MKDIR"
+  else
+    echo "REFUSED (transient): cannot create $OUT / $ARTIFACTS: $(cat "${TMPDIR:-/tmp}/.mkdir_err")" >&2
+  fi
   exit 1
 fi
 

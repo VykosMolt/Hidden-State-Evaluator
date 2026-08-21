@@ -83,10 +83,18 @@ def _run_helper(args: list[str], timeout: float, attempts: int = FETCH_ATTEMPTS,
     from .check_hf_scope import (DETERMINISTIC_STATUSES, _helper_error,
                                  http_status)
     last = ""
+    # one wall-clock deadline across ALL attempts: four full timeouts in a
+    # reset-at-90% pattern would burn 4x the fetch window on paid time
+    deadline = time.monotonic() + timeout
     for attempt in range(1, attempts + 1):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TransientFetchError(
+                f"{last or 'artifact fetch'}: aggregate fetch deadline "
+                f"({timeout:.0f}s) exhausted after {attempt - 1} attempts")
         proc = subprocess.run(
             [sys.executable, "-m", "o1_b200.runner.hf_transfer", *args],
-            capture_output=True, text=True, timeout=timeout,
+            capture_output=True, text=True, timeout=remaining,
             env=child_env(os.environ.get("HF_TOKEN")))
         if proc.returncode == 0:
             break

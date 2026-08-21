@@ -412,9 +412,14 @@ def run_benchmarks(corpus_dir: str, out_dir: str, *, mode: str,
         except _oom_types():
             clean_so_far = False
             # the stub is what excludes the stage (benchmark_candidates);
-            # oom_count is recorded so the gate name matches reality
+            # oom_count is recorded so the gate name matches reality, and
+            # the time spent before the OOM is still charged to the budget
+            spent_before_oom = time.monotonic() - t_stage
             results.append({"config_id": entry["config_id"], "oom": True,
-                            "oom_count": 1})
+                            "oom_count": 1,
+                            "total_stage_seconds": spent_before_oom})
+            if budget_left is not None and not is_reference:
+                budget_left -= spent_before_oom
             continue   # stop rule: larger configs are conditional-skipped
         except Exception as exc:  # noqa: BLE001 - integrity failure = stop
             clean_so_far = False

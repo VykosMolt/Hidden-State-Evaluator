@@ -234,14 +234,33 @@ def run() -> Runner:
         assert completion_verdict("O1_PHASE_ABORTED_AT_X\n") is None
         assert completion_verdict("  ZERO_TOUCH_ABORTED_AT_PRE_ENTRY_HF_SCOPE  \n") \
             == "PRE_ENTRY_HF_SCOPE"
-        # provider log shapes: timestamp prefixes and a JSON-collapsed body
+        # provider log shapes: timestamp / bracket prefixes
         assert completion_verdict(
             "2026-08-21T10:00:00Z ZERO_TOUCH_COMPLETE") == "COMPLETE"
         assert completion_verdict(
-            '[{"t": 1, "m": "O1_PHASE_COMPLETE"}, {"t": 2, "m": '
-            '"ZERO_TOUCH_ABORTED_AT_RUN_FL_LADDER"}]') == "RUN_FL_LADDER"
+            "[2026-08-21 10:00:00] ZERO_TOUCH_ABORTED_AT_CALIBRATION") \
+            == "CALIBRATION"
         assert completion_verdict("x_ZERO_TOUCH_COMPLETE") is None
         assert completion_verdict("ZERO_TOUCH_COMPLETE_X") is None
+        # NEGATIVE cases: quoted, prose, JSON-embedded and path mentions are
+        # never a verdict, and a real abort followed by prose stays an abort
+        for prose in ("note: child printed 'ZERO_TOUCH_COMPLETE' earlier",
+                      '[fl] waiting for "ZERO_TOUCH_COMPLETE"',
+                      '{"event":"X","stdout_tail":"ZERO_TOUCH_COMPLETE\\n"}',
+                      "RuntimeError('expected ZERO_TOUCH_COMPLETE')",
+                      "/outputs/ZERO_TOUCH_COMPLETE",
+                      "see `ZERO_TOUCH_ABORTED_AT_HF_SCOPE` in the runbook"):
+            assert completion_verdict(prose) is None, prose
+        assert completion_verdict(
+            "ZERO_TOUCH_ABORTED_AT_CALIBRATION\n"
+            "[fl] the driver wants 'ZERO_TOUCH_COMPLETE'\n") == "CALIBRATION"
+        # a list-shaped provider body is normalised to lines by the adapter
+        from o1_b200.provider.runpod.adapter import normalize_log_body
+        body = [{"t": 1, "message": "O1_PHASE_COMPLETE"},
+                {"t": 2, "message": "ZERO_TOUCH_ABORTED_AT_RUN_FL_LADDER"}]
+        assert completion_verdict(normalize_log_body(body)) == "RUN_FL_LADDER"
+        assert completion_verdict(normalize_log_body(
+            {"logs": ["x", "ZERO_TOUCH_COMPLETE"]})) == "COMPLETE"
     r.check("the completion witness is a delimited, session-level marker",
             completion_witness_is_whole_line_and_session_level)
 

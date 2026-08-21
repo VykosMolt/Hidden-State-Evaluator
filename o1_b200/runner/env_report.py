@@ -63,6 +63,16 @@ def validate_b200_report(report: dict) -> dict:
         raise EnvReportError(
             f"transformers must equal 4.54.1, got "
             f"{report['transformers_version']!r}")
+    # identity fields that are hashed into environment_digest_sha256 must
+    # never be placeholders: "UNKNOWN"/"" passed before and was committed
+    # into the pre-registration as if measured
+    for key in ("gpu_uuid", "nvidia_driver", "container_image_digest",
+                "gpu_name"):
+        value = str(report.get(key, "")).strip()
+        if not value or value.upper() in ("UNKNOWN", "UNAVAILABLE", "POD"):
+            raise EnvReportError(
+                f"{key} is a placeholder ({value!r}); an identity field "
+                f"cannot be hashed into the environment digest unmeasured")
     if int(report["gpu_count"]) != 1:
         raise EnvReportError("exactly one GPU is required")
     if report["attention_backend"] != "eager":
@@ -163,6 +173,9 @@ def _safe(fn, default: str = "UNAVAILABLE"):
 
 
 def _driver_version() -> str:
+    """Identity field: NVML first, nvidia-smi second, never a placeholder
+    (a placeholder would be hashed into environment_digest_sha256 and pass
+    validation; validate_b200_report now refuses UNKNOWN/empty)."""
     try:
         import ctypes
         lib = ctypes.CDLL("libnvidia-ml.so.1")
@@ -171,9 +184,21 @@ def _driver_version() -> str:
         lib.nvmlSystemGetDriverVersion(buf, 80)
         out = buf.value.decode()
         lib.nvmlShutdown()
-        return out
+        if out.strip():
+            return out.strip()
+    except Exception:  # noqa: BLE001 - fall through to nvidia-smi
+        pass
+    try:
+        import subprocess
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=driver_version",
+             "--format=csv,noheader"], capture_output=True, text=True,
+            timeout=30).stdout.strip().splitlines()
+        if out and out[0].strip():
+            return out[0].strip()
     except Exception:  # noqa: BLE001
-        return "UNKNOWN"
+        pass
+    return "UNKNOWN"
 
 
 def collect_local_report() -> dict:

@@ -79,20 +79,21 @@ REQUIRED_CONFIG_KEYS = (
 #: rewrites O1's own markers (O1_PHASE_COMPLETE) and prints the session's
 #: marker once at its end; a substring match would have read a quoted,
 #: prefixed or mid-line occurrence as the verdict.
-# Delimiter-guarded, NOT line-anchored: the provider's log endpoint may
-# return a JSON list of line objects or timestamp-prefixed lines (the
-# adapter json.dumps a non-string body), and a line anchor would then read
-# EVERY verdict — abort and completion alike — as "no verdict" = eviction.
-# The guards still reject O1_PHASE_COMPLETE, ..._ZERO_TOUCH_COMPLETE and
-# ZERO_TOUCH_COMPLETE_X.
+# LINE-anchored.  A delimiter-only guard read a quoted or prose mention
+# ('the driver wants ZERO_TOUCH_COMPLETE') as the verdict, and with
+# last-wins a genuine abort followed by such a line became COMPLETE.  The
+# provider's log shape is handled where it belongs (adapter.normalize_log_body
+# turns a list body into real lines); the only prefix tolerated is a
+# timestamp / bracketed tag at the start of the line.
 _WITNESS_RE = re.compile(
-    r"(?<![A-Za-z0-9_])ZERO_TOUCH_(COMPLETE|ABORTED_AT_([A-Z0-9_]+))"
-    r"(?![A-Za-z0-9_])")
+    r"^[ \t]*(?:[\[(][^\])\n]*[\])][ \t]*)?(?:\d[\dT:.\-Z+]*[ \t]+)?"
+    r"ZERO_TOUCH_(COMPLETE|ABORTED_AT_([A-Z0-9_]+))[ \t\r]*$",
+    re.MULTILINE)
 
 
 def completion_verdict(log_tail: str) -> str | None:
     """``"COMPLETE"``, the abort state name, or None (no verdict yet).
-    The LAST delimited marker wins."""
+    The LAST marker LINE wins."""
     verdict = None
     for m in _WITNESS_RE.finditer(log_tail or ""):
         verdict = "COMPLETE" if m.group(1) == "COMPLETE" else (
@@ -377,14 +378,14 @@ def run_session(*, authorization_path: str, out_dir: str,
                     raise DeterministicPodFailure(
                         f"the pod aborted deterministically at {verdict}; "
                         f"reacquisition would repeat it")
-                if verdict == "COMPLETE":
-                    return True
-                if verdict is None and result_witness is not None \
-                        and getattr(pod, "status", None) == "EXITED":
-                    # the log may have rolled past the marker; the durable
-                    # result archive is the second witness
-                    return bool(result_witness())
-                return False
+                # No verdict in the log is NOT completion — not even when
+                # the durable O1 archive exists: in a combined session that
+                # archive is published at the END OF THE O1 PHASE, hours
+                # before the FL half finishes, so a spot eviction mid-FL
+                # would be reported COMPLETE and the FL work abandoned.  The
+                # result witness is consulted only when the log endpoint
+                # itself is unavailable (below).
+                return verdict == "COMPLETE"
             except DeterministicPodFailure:
                 raise
             except Exception:  # noqa: BLE001 - log endpoint may lag

@@ -128,4 +128,12 @@ print(json.dumps(record["environment"], indent=1))
 print("image id:", record["image_id_local"])
 EOF
 rm -rf build_ctx
+# The four operator documents quote the local image id; rewrite them from
+# the record so a documented cross-check can never name an image that no
+# longer exists (test_launch_path pins this correspondence).
+for doc in "$ROOT/o1_b200/README.md" "$ROOT/o1_b200/deploy/README.md" \
+           "$ROOT/o1_b200/provider/runpod/PRE_RENTAL_PREREQUISITES.md" \
+           "$ROOT/o1_b200/provider/runpod/REGISTRY_PUSH_PROCEDURE.md"; do
+  sed -i -E "s/sha256:[0-9a-f]{64}/$IMAGE_ID/g" "$doc"
+done
 echo "BUILD OK -> $OUT"
