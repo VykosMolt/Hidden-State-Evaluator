@@ -1201,19 +1201,19 @@ class SessionSupervisor:
         return status
 
 
-O1_MARKER_PREFIX = "O1_PHASE:"
-_O1_MARKER_RE = re.compile(r"(?<![A-Z0-9_:])(ZERO_TOUCH_COMPLETE|"
-                           r"ZERO_TOUCH_ABORTED_AT_[A-Z0-9_]+)")
+_O1_MARKER_RE = re.compile(r"ZERO_TOUCH_(COMPLETE|ABORTED_AT_[A-Z0-9_]+)")
 
 
 def _namespace_o1_markers(text: str) -> str:
-    """``ZERO_TOUCH_COMPLETE`` -> ``O1_PHASE:ZERO_TOUCH_COMPLETE``.
+    """``ZERO_TOUCH_COMPLETE`` -> ``O1_PHASE_COMPLETE`` (and
+    ``ZERO_TOUCH_ABORTED_AT_X`` -> ``O1_PHASE_ABORTED_AT_X``).
 
-    The literal is what the off-pod driver greps the container log for;
-    inside a combined session it must only ever appear once, at the end,
-    printed by the supervisor itself.
+    The driver's witness is a SUBSTRING match on the container log, so a
+    prefix would not do: the rewritten token must not contain the literal
+    at all.  Inside a combined session the literal appears exactly once, at
+    the end, printed by the supervisor itself.
     """
-    return _O1_MARKER_RE.sub(O1_MARKER_PREFIX + r"\1", text)
+    return _O1_MARKER_RE.sub(r"O1_PHASE_\1", text)
 
 
 def _session_marker(status: Mapping[str, Any]) -> str:

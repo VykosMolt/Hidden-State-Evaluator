@@ -406,10 +406,11 @@ def test_the_o1_completion_marker_never_reaches_the_log_mid_session(
     sup = make_supervisor(tmp_path, path)
     sup.state_RUN_O1_CALIBRATION()
     out = capsys.readouterr().out
-    assert "O1_PHASE:ZERO_TOUCH_COMPLETE" in out
-    assert "O1_PHASE:ZERO_TOUCH_ABORTED_AT_X" in out
-    for line in out.splitlines():
-        assert not line.strip().startswith("ZERO_TOUCH_"), line
+    assert "O1_PHASE_COMPLETE" in out
+    assert "O1_PHASE_ABORTED_AT_X" in out
+    # the driver matches SUBSTRINGS of the log: the literal must be absent
+    assert "ZERO_TOUCH_COMPLETE" not in out
+    assert "ZERO_TOUCH_ABORTED_AT_" not in out
     # the SESSION emits the driver's marker exactly once, at its end
     assert ss._session_marker({"outcome": "COMPLETE"}) == "ZERO_TOUCH_COMPLETE"
     assert ss._session_marker({"outcome": "ABORTED_AT_RUN_FL_LADDER",
