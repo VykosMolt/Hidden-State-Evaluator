@@ -157,8 +157,12 @@ class Scheduler:
         self.policy = load_policy(self.policy_path, guard=self.guard)
         self.guard.makedirs(self.out_dir)
         self.journal_path = os.path.join(self.out_dir, JOURNAL_NAME)
+        self._torn_tail = None
         existing = self.read_journal()
         self._journal_records = len(existing)
+        if self._torn_tail:
+            self._repair_torn_tail()
+            self._journal_records = len(self.read_journal())
 
     # ---------------- clock + budget ----------------
 
@@ -241,19 +245,65 @@ class Scheduler:
                                           ensure_ascii=False))
         self._journal_records += 1
         if self.durability is not None:
-            self.durability.push_file(self.journal_path)
+            # heartbeats are throttled; every stage/plan transition and the
+            # torn-tail repair push immediately
+            self.durability.push_throttled(
+                self.journal_path,
+                force="HEARTBEAT" not in str(event))
         return record
 
     def read_journal(self) -> list[dict]:
+        """Same torn-tail rule as the session journal.
+
+        This journal is appended on every heartbeat (every 25 optimizer
+        steps), so an eviction mid-append is LIKELY, not rare; a bare
+        json.loads here made the ladder permanently unresumable on a
+        same-pod restart.  A torn trailing record is dropped (and repaired
+        away by ``_repair_torn_tail`` before anything appends); a torn
+        record in the middle is corruption and refuses.
+        """
         path = self.guard.guard(self.journal_path, o1_isolation.MODE_READ)
         if not os.path.exists(path):
             return []
-        out = []
         with open(path, encoding="utf-8") as fh:
-            for line in fh:
-                if line.strip():
-                    out.append(json.loads(line))
+            lines = [ln for ln in fh.read().split("\n") if ln.strip()]
+        out: list[dict] = []
+        for index, line in enumerate(lines):
+            try:
+                out.append(json.loads(line))
+            except json.JSONDecodeError as exc:
+                if index == len(lines) - 1:
+                    self._torn_tail = {"line_index": index,
+                                       "bytes": len(line),
+                                       "error": str(exc)[:200]}
+                    break
+                raise SchedulerError(
+                    f"REFUSED: ladder journal record {index} of "
+                    f"{len(lines)} is unparseable ({exc}); not a tail, so "
+                    f"corruption rather than an interrupted write") from exc
         return out
+
+    def _repair_torn_tail(self) -> None:
+        if not getattr(self, "_torn_tail", None):
+            return
+        path = self.guard.guard(self.journal_path, o1_isolation.MODE_WRITE)
+        with open(path, "rb") as fh:
+            raw = fh.read()
+        body = raw.rstrip(b"\n")
+        cut = body.rfind(b"\n")
+        keep, torn = (body[:cut + 1], body[cut + 1:]) if cut >= 0 else (b"", body)
+        with open(self.guard.guard(path + ".torn", o1_isolation.MODE_WRITE),
+                  "ab") as fh:
+            fh.write(torn + b"\n")
+        tmp = path + ".repair"
+        with open(tmp, "wb") as fh:
+            fh.write(keep)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+        torn_info = dict(self._torn_tail)
+        self._torn_tail = None
+        self.journal("JOURNAL_TORN_TAIL_DROPPED", torn_info)
 
     def heartbeat_hook(self, stage_id: str, every: int = 25,
                        watchdog: StageWatchdog | None = None
@@ -620,6 +670,7 @@ class Scheduler:
         summary_path = os.path.join(self.out_dir, "LADDER_SUMMARY.json")
         self.guard.write_json(summary_path, summary)
         if self.durability is not None:
+            self.durability.flush()
             self.durability.push_file(summary_path)
         self.journal("SCHEDULER_COMPLETE", {"states": summary["states"]})
         return summary

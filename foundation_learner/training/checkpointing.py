@@ -363,6 +363,13 @@ def latest_resume_tag(out_dir: str) -> str | None:
             step = int(manifest.get("step", -1))
         except (OSError, json.JSONDecodeError, TypeError, ValueError):
             continue
+        # A mirrored checkpoint can arrive torn (payload pushed, eviction,
+        # old manifest restored).  Resuming from it raised
+        # CorruptCheckpointError with no fallback while intact cadence
+        # tags sat beside it; verify here and skip, as
+        # _resume_from_last_checkpoint does.
+        if sha256_file(payload_path) != manifest.get("payload_sha256"):
+            continue
         if step > best_step or (step == best_step and tag == TAG_FINAL):
             best_step = step
             best_tag = tag

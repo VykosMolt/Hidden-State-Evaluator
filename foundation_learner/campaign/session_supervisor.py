@@ -59,6 +59,7 @@ import argparse
 import calendar
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -118,6 +119,9 @@ O1_CLOSE_RECEIPT = "O1_CLOSE_RECEIPT.json"
 #: but finite, because waiting forever costs money either way.
 TERMINATE_TIMEOUT_SECONDS = 900.0
 TRANSFER_TIMEOUT_SECONDS = 900.0
+#: Least FL time a real combined session must leave after the O1 timeout:
+#: the frozen final-transfer reserve (1200 s) plus one minimal stage.
+FL_MINIMUM_SECONDS_DEFAULT = 1200.0 + 1800.0
 #: Per-acquisition allowance the O1 zero-touch launcher sets on the pod:
 #: the REMAINING session allocation net of earlier pods' spend.
 POD_AUTHORIZED_SECONDS_ENV = "O1_SESSION_AUTHORIZED_SECONDS"
@@ -213,6 +217,32 @@ class SessionConfig:
                 f"{unresolved}; a real session refuses to start. (The O1 "
                 "pod entrypoint is a recorded, operator-bound gap: "
                 "'o1_entry_command' must be resolved by the operator.)")
+        if not rehearsal:
+            # The O1 phase must be BOUNDED or FL is structurally unfunded:
+            # O1's own watchdog is built from the whole per-pod allowance, so
+            # with no o1_timeout_seconds it may legitimately consume all of
+            # it and every FL stage is then refused as unaffordable — after
+            # the rental was paid for.
+            o1_timeout = payload.get("o1_timeout_seconds")
+            authorized = payload.get("session_authorized_seconds")
+            try:
+                o1_timeout = None if o1_timeout is None else float(o1_timeout)
+                authorized = None if authorized is None else float(authorized)
+            except (TypeError, ValueError):
+                o1_timeout = authorized = None
+            if not o1_timeout or o1_timeout <= 0:
+                raise SessionConfigError(
+                    "a real combined session requires a positive "
+                    "'o1_timeout_seconds': without it the O1 phase may consume "
+                    "the whole allowance and the FL ladder cannot run")
+            reserve = float(payload.get("fl_minimum_seconds")
+                            or FL_MINIMUM_SECONDS_DEFAULT)
+            if authorized is not None and o1_timeout + reserve >= authorized:
+                raise SessionConfigError(
+                    f"o1_timeout_seconds ({o1_timeout:.0f}) + the FL minimum "
+                    f"({reserve:.0f}) is not below session_authorized_seconds "
+                    f"({authorized:.0f}); the FL half of this session could "
+                    f"never be admitted")
         if unresolved and rehearsal:
             payload.setdefault("_unresolved_fields", unresolved)
         return payload
@@ -401,10 +431,19 @@ class SessionSupervisor:
             from .durability import FlDurableMirror
 
             def _mirror_event(event, **fields):
-                # buffered here because the journal does not exist yet during
-                # construction; drained into it by _drain_durability_events
-                # so a silently failing mirror can never look durable
+                # Buffered during construction (no journal yet) and while a
+                # journal append is itself in flight (the push that emitted
+                # this event); otherwise written to the journal AT ONCE.
+                # Buffering until the next supervisor journal call lost every
+                # mirror failure raised during RUN_FL_LADDER on eviction.
                 self.durability_events.append({"event": str(event), **fields})
+                if getattr(self, "journal_path", None) and not getattr(
+                        self, "_journal_in_flight", False) and os.path.isfile(
+                        self.journal_path):
+                    try:
+                        self._drain_durability_events()
+                    except Exception:  # noqa: BLE001 - stays buffered
+                        pass
 
             self.durability = FlDurableMirror(
                 str(destination), self.out_dir, on_event=_mirror_event,
@@ -420,7 +459,9 @@ class SessionSupervisor:
                      "error": str(exc)[:300]})
         self._assert_journal_session()
         self._repair_torn_tail()
-        self.completed = [r["state"] for r in self.read_journal()
+        existing = self.read_journal()
+        self._records = len(existing)      # index is a global sequence
+        self.completed = [r["state"] for r in existing
                           if r.get("event") == "STATE_COMPLETED"]
 
     # ---------------- journal ----------------
@@ -452,7 +493,11 @@ class SessionSupervisor:
                        ensure_ascii=False))
         self._records += 1
         if self.durability is not None:
-            self.durability.push_file(self.journal_path)
+            self._journal_in_flight = True
+            try:
+                self.durability.push_file(self.journal_path)
+            finally:
+                self._journal_in_flight = False
             self._drain_durability_events()
         return record
 
@@ -702,8 +747,17 @@ class SessionSupervisor:
         # successful O1 phase looked like an eviction and bought a
         # redundant reacquisition, and a deterministic abort lost its
         # "do not reacquire" guarantee.
-        child_out = getattr(proc, "stdout", "") or ""
-        child_err = getattr(proc, "stderr", "") or ""
+        # ...BUT in a COMBINED session the O1 phase is not the end of the
+        # pod.  The driver's completion witness is "ZERO_TOUCH_COMPLETE in
+        # the log tail" and its monitor accepts it while the pod is still
+        # RUNNING, so re-emitting O1's marker verbatim made the driver
+        # terminate the pod ~20 s after the O1 phase — before any FL stage.
+        # The markers are namespaced on re-emission; the SESSION's own
+        # marker is printed by main() at the true end (see _session_marker).
+        child_out = _namespace_o1_markers(redact(
+            getattr(proc, "stdout", "") or ""))
+        child_err = _namespace_o1_markers(redact(
+            getattr(proc, "stderr", "") or ""))
         if child_out:
             print(child_out, end="" if child_out.endswith("\n") else "\n",
                   flush=True)
@@ -730,10 +784,13 @@ class SessionSupervisor:
         the frozen list in force and is recorded as such.
         """
         report = self.guard.discover_from_o1_manifests(
-            list(self.payload.get("o1_hash_manifests") or []))
-        if report.get("added_roots"):
+            list(self.payload.get("o1_hash_manifests") or []),
+            protected=[self.payload.get("checkpoint_dir"),
+                       self.payload.get("pregen_root"), self.out_dir])
+        if report.get("added_roots") or report.get("exempted_roots"):
             self.journal("O1_ROOTS_DISCOVERED", "ISOLATION",
-                         {"added_roots": report["added_roots"]})
+                         {"added_roots": report["added_roots"],
+                          "exempted_roots": report["exempted_roots"]})
         return report
 
     def state_START_SESSION(self) -> dict:
@@ -891,6 +948,11 @@ class SessionSupervisor:
         authorized = float(self.payload["session_authorized_seconds"])
         source = "config.session_authorized_seconds"
         raw = os.environ.get(POD_AUTHORIZED_SECONDS_ENV, "").strip()
+        if not raw and not self.rehearsal:
+            raise SupervisorError(
+                f"REFUSED: {POD_AUTHORIZED_SECONDS_ENV} is unset on a real "
+                f"session; without the per-pod allowance a replacement pod "
+                f"would be granted the whole-session budget again")
         if raw:
             try:
                 pod_limit = float(raw)
@@ -953,6 +1015,10 @@ class SessionSupervisor:
         return summary
 
     def state_CHECKPOINT_AND_VERIFY(self) -> dict:
+        if self.durability is not None:
+            # anything the throttled ladder-journal mirror deferred
+            self.durability.flush()
+            self._drain_durability_events()
         root = os.path.join(self.out_dir, "ladder")
         manifest = result_verifier.write_result_manifest(
             root, os.path.join(self.out_dir, "FL_RESULT_MANIFEST.json"),
@@ -1026,9 +1092,14 @@ class SessionSupervisor:
                 record[key] = {"status": "SKIPPED_NO_LADDER_OUTPUT"}
                 continue
             handler = getattr(self, f"state_{state}")
+            # journalling sits OUTSIDE the handler's try: a full disk or a
+            # guard refusal in the journal must not skip termination
             try:
                 self.journal("EMERGENCY_STATE_STARTED", state,
                              {"reason": f"session aborted at {failed_state!r}"})
+            except BaseException:  # noqa: BLE001
+                pass
+            try:
                 result = handler()
             except BaseException as exc:  # noqa: BLE001 - recorded, not raised
                 record[key] = {"status": "FAILED", "error": repr(exc)}
@@ -1058,6 +1129,7 @@ class SessionSupervisor:
         self._t0 = self._t0 or started
         failed_state = None
         failure = None
+        failure_exc: BaseException | None = None
         if resume and self.completed:
             self.rebuild_state_results()
         try:
@@ -1074,6 +1146,7 @@ class SessionSupervisor:
                 except BaseException as exc:  # noqa: BLE001 - recorded, never swallowed
                     failed_state = state
                     failure = repr(exc)
+                    failure_exc = exc
                     self.journal("STATE_FAILED", state, {"error": failure})
                     break
                 self.state_results[state] = result
@@ -1088,8 +1161,8 @@ class SessionSupervisor:
 
         if failed_state is None:
             outcome = "COMPLETE"
-        elif failed_state == "RUN_FL_LADDER" and (
-                (failure or "").find("NoStageAdmitted") >= 0):
+        elif failed_state == "RUN_FL_LADDER" and isinstance(
+                failure_exc, NoStageAdmitted):
             outcome = "NO_STAGE_ADMITTED"
         else:
             outcome = f"ABORTED_AT_{failed_state}"
@@ -1111,12 +1184,49 @@ class SessionSupervisor:
             "determinism": self.determinism,
             "close_out": self.close_out,
         }
-        self.guard.write_json(os.path.join(self.out_dir, "SESSION_FINAL_STATUS.json"),
-                              status)
-        self.journal("SESSION_FINISHED", failed_state or "TERMINATE_ACCELERATOR",
-                     {"outcome": status["outcome"],
-                      "close_out": self.close_out})
+        # Termination has already been attempted by now; a full disk must
+        # not turn the status write into an escaping exception that hides
+        # the close-out record from main().
+        try:
+            self.guard.write_json(
+                os.path.join(self.out_dir, "SESSION_FINAL_STATUS.json"), status)
+            self.journal("SESSION_FINISHED",
+                         failed_state or "TERMINATE_ACCELERATOR",
+                         {"outcome": status["outcome"],
+                          "close_out": self.close_out})
+        except BaseException as exc:  # noqa: BLE001
+            status["final_status_write_error"] = repr(exc)[:300]
+            print(f"WARNING: SESSION_FINAL_STATUS.json not written: {exc!r}",
+                  file=sys.stderr)
         return status
+
+
+O1_MARKER_PREFIX = "O1_PHASE:"
+_O1_MARKER_RE = re.compile(r"(?<![A-Z0-9_:])(ZERO_TOUCH_COMPLETE|"
+                           r"ZERO_TOUCH_ABORTED_AT_[A-Z0-9_]+)")
+
+
+def _namespace_o1_markers(text: str) -> str:
+    """``ZERO_TOUCH_COMPLETE`` -> ``O1_PHASE:ZERO_TOUCH_COMPLETE``.
+
+    The literal is what the off-pod driver greps the container log for;
+    inside a combined session it must only ever appear once, at the end,
+    printed by the supervisor itself.
+    """
+    return _O1_MARKER_RE.sub(O1_MARKER_PREFIX + r"\1", text)
+
+
+def _session_marker(status: Mapping[str, Any]) -> str:
+    """The combined session's completion witness for the off-pod driver.
+
+    Both literals are written here verbatim (not assembled) for the same
+    reason O1 writes its own that way: the marker the driver looks for and
+    the marker the pod emits cannot drift apart.
+    """
+    if status.get("outcome") == "COMPLETE":
+        return "ZERO_TOUCH_COMPLETE"
+    return "ZERO_TOUCH_ABORTED_AT_" + str(
+        status.get("failed_state") or status.get("outcome") or "SUPERVISOR")
 
 
 def _ladder_admitted_a_stage(summary: Any) -> bool:
@@ -1205,22 +1315,31 @@ def main(argv: Sequence[str] | None = None) -> int:
     ``RUN_FL_LADDER`` and refused for want of a context factory (R-C1).
     """
     args = build_parser().parse_args(argv)
-    config = SessionConfig.load(args.config)
+    config = None
     try:
+        config = SessionConfig.load(args.config)
         supervisor = SessionSupervisor(config=config, out_dir=args.out)
-    except BaseException as exc:  # noqa: BLE001 - the pod must not be stranded
-        _terminate_without_supervisor(config, args.out, exc)
-        raise
-    if supervisor.rehearsal:
-        print(f"*** {REHEARSAL_LABEL}: this session is NOT a scientific run ***",
-              file=sys.stderr)
-    from . import entry as campaign_entry
+        if supervisor.rehearsal:
+            print(f"*** {REHEARSAL_LABEL}: this session is NOT a scientific "
+                  f"run ***", file=sys.stderr)
+        from . import entry as campaign_entry
 
-    campaign_entry.attach_to_supervisor(supervisor)
+        # attach_to_supervisor configures determinism (imports torch, asserts
+        # deterministic algorithms took effect): a CUDA-init problem on a
+        # fresh pod raises HERE, before run()'s finally exists
+        campaign_entry.attach_to_supervisor(supervisor)
+    except BaseException as exc:  # noqa: BLE001 - the pod must not be stranded
+        if config is not None:
+            _terminate_without_supervisor(config, args.out, exc)
+        print("ZERO_TOUCH_ABORTED_AT_SUPERVISOR_SETUP", flush=True)
+        raise
     status = supervisor.run(resume=not args.no_resume)
     print(json.dumps({"outcome": status["outcome"],
                       "states_completed": status["states_completed"]},
                      indent=2, sort_keys=True))
+    # the ONE place the driver's completion witness is emitted for a
+    # combined session; O1's own copy was namespaced on re-emission
+    print(_session_marker(status), flush=True)
     return 0 if status["outcome"] == "COMPLETE" else 1
 
 

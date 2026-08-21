@@ -97,6 +97,7 @@ def write_config(tmp_path, **overrides):
         "pregen_root": TINY,
         "fl_out_dir": str(tmp_path / "session"),
         "session_authorized_seconds": 3600.0,
+        "o1_timeout_seconds": 300.0,
         "fl_transfer_command": [sys.executable, "-c", "print('ft')"],
         "terminate_command": [sys.executable, "-c", "print('term')"],
         # the ONLY rehearsal-specific switch: the bundle source
@@ -282,7 +283,10 @@ def test_main_runs_the_ladder_with_no_injected_factory(tmp_path):
         assert report["promoted_arm_checkpoint"]["loaded"] is True
         events = [json.loads(l)["event"] for l in open(ledger, encoding="utf-8")
                   if l.strip()]
-        assert events[0] == "SEALED_OPENED"
+        # write-ahead intent first (made durable before the first sealed
+        # read), then the single committed opening
+        assert events[0] == "SEALED_OPENING_INTENT"
+        assert events[1] == "SEALED_OPENED"
     else:
         # the tiny pre-generation is stale with respect to the current
         # generator sources.  The sealed gate must then refuse in PHASE ONE and

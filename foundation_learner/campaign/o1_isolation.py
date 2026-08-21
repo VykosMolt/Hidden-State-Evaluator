@@ -176,13 +176,35 @@ class IsolationGuard:
         self._roots.sort()
         return added
 
-    def discover_from_o1_manifests(self, manifest_paths: Iterable[str]) -> dict:
+    def _discovery_exempt(self, resolved: str,
+                          protected: Sequence[str]) -> str | None:
+        """Why a discovered root must NOT be forbidden, or None.
+
+        O1's transfer manifest lists the shared read-only checkpoint
+        (/artifacts/ouro_rltt_local) among its artifacts.  Forbidding it
+        would pass the O1 phase (which never loads it through this guard)
+        and then kill RELOAD_PRISTINE_OURO after the O1 half was fully paid
+        for.  Discovery widens the refusal set only where widening is safe:
+        never a shared input, never a root that contains one, never FL's
+        own checkpoint/pregen/output roots.
+        """
+        for shared in list(self._shared) + [_norm(p) for p in protected if p]:
+            if resolved == shared or _is_under(shared, resolved) \
+                    or _is_under(resolved, shared):
+                return f"overlaps protected path {shared!r}"
+        return None
+
+    def discover_from_o1_manifests(self, manifest_paths: Iterable[str],
+                                   protected: Sequence[str] = ()) -> dict:
         """Bind O1 result roots from the O1 transfer manifests, when present.
 
         A manifest that is absent or unreadable is RECORDED and skipped; the
         frozen list stays in force.  Nothing here reads scientific content.
+        ``protected`` are FL's own roots (checkpoint, pregen, out_dir) which
+        discovery may never forbid; shared read-only inputs are always
+        exempt.  Exempted roots are recorded, not silently dropped.
         """
-        report = {"manifests": [], "added_roots": []}
+        report = {"manifests": [], "added_roots": [], "exempted_roots": []}
         for path in manifest_paths:
             entry: dict[str, Any] = {"path": str(path)}
             try:
@@ -192,8 +214,14 @@ class IsolationGuard:
                 entry["error"] = repr(exc)
                 report["manifests"].append(entry)
                 continue
-            added = self.add_forbidden_roots(roots)
+            safe, exempt = [], []
+            for root in roots:
+                why = self._discovery_exempt(_norm(root), protected)
+                (exempt if why else safe).append(
+                    {"root": root, "why": why} if why else root)
+            added = self.add_forbidden_roots(safe)
             self._discovered.extend(r for r in added if r not in self._discovered)
+            report["exempted_roots"].extend(exempt)
             entry["status"] = "READ"
             entry["roots_in_manifest"] = len(roots)
             entry["roots_added"] = added

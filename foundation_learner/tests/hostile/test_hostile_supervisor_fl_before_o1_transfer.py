@@ -39,6 +39,7 @@ def config(tmp_path):
         "pregen_root": str(tmp_path / "pregen"),
         "fl_out_dir": str(tmp_path / "session"),
         "session_authorized_seconds": 3600.0,
+        "o1_timeout_seconds": 300.0,
     }
     path = tmp_path / "config.json"
     path.write_text(json.dumps(payload), encoding="utf-8")

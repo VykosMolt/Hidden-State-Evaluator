@@ -55,27 +55,74 @@ def _assert_online_capable() -> None:
             "process; the FL durable mirror cannot operate")
 
 
+def git_blob_sha1(path: str) -> str:
+    """The id the Hub assigns a non-LFS file: sha1("blob <size>\\0" + bytes)."""
+    import hashlib
+    size = os.path.getsize(path)
+    h = hashlib.sha1()
+    h.update(f"blob {size}\0".encode())
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def remote_identity(api, repo_id: str, remote_rel: str) -> dict:
+    """What the Hub ACTUALLY holds at ``remote_rel``: the LFS sha256 for an
+    LFS object, else the git blob sha1.  Both are computable from local
+    bytes, so a transfer can be verified end to end without a second
+    upload and without trusting the client's own copy."""
+    infos = api.get_paths_info(repo_id, [remote_rel], repo_type="model")
+    if not infos:
+        raise RuntimeError(f"{remote_rel} is absent from {repo_id} after "
+                           f"the transfer")
+    info = infos[0]
+    lfs = getattr(info, "lfs", None)
+    if lfs is not None and getattr(lfs, "sha256", None):
+        return {"kind": "lfs", "sha256": lfs.sha256}
+    return {"kind": "blob", "sha1": getattr(info, "blob_id", None)}
+
+
+def verify_against_remote(api, repo_id: str, remote_rel: str,
+                          local: str) -> dict:
+    ident = remote_identity(api, repo_id, remote_rel)
+    if ident["kind"] == "lfs":
+        ok = ident["sha256"] == sha256_file(local)
+    else:
+        ok = ident["sha1"] == git_blob_sha1(local)
+    if not ok:
+        raise RuntimeError(
+            f"{remote_rel}: the Hub's copy does not match the local bytes "
+            f"({ident})")
+    return {**ident, "remote_verified": True}
+
+
 def do_push(repo_id: str, local: str, remote_rel: str) -> dict:
     _assert_online_capable()
     from huggingface_hub import HfApi
+    api = HfApi(token=os.environ.get("HF_TOKEN"))
     digest = sha256_file(local)
-    HfApi(token=os.environ.get("HF_TOKEN")).upload_file(
-        path_or_fileobj=local, path_in_repo=remote_rel,
-        repo_id=repo_id, repo_type="model")
-    return {"remote": remote_rel, "sha256": digest}
+    api.upload_file(path_or_fileobj=local, path_in_repo=remote_rel,
+                    repo_id=repo_id, repo_type="model")
+    remote = verify_against_remote(api, repo_id, remote_rel, local)
+    return {"remote": remote_rel, "sha256": digest, **remote}
 
 
 def do_fetch(repo_id: str, remote_rel: str, local: str) -> dict:
     _assert_online_capable()
-    from huggingface_hub import hf_hub_download
+    from huggingface_hub import HfApi, hf_hub_download
     got = hf_hub_download(repo_id=repo_id, filename=remote_rel,
                           token=os.environ.get("HF_TOKEN"))
     os.makedirs(os.path.dirname(os.path.abspath(local)) or ".", exist_ok=True)
     tmp = local + ".tmp"
     shutil.copyfile(got, tmp)
     digest = sha256_file(tmp)
+    # verify the bytes we are about to publish against what the Hub says it
+    # holds, BEFORE os.replace makes them the local truth
+    remote = verify_against_remote(HfApi(token=os.environ.get("HF_TOKEN")),
+                                   repo_id, remote_rel, tmp)
     os.replace(tmp, local)
-    return {"local": local, "sha256": digest}
+    return {"local": local, "sha256": digest, **remote}
 
 
 #: Dedicated prefix for the write probe, so it can never collide with a

@@ -69,6 +69,7 @@ __all__ = [
     "SEALED_RESULT_SCHEMA",
     "EVENT_OPENED",
     "EVENT_ABORTED",
+    "EVENT_INTENT",
     "EVENT_RESULT",
     "MAX_OPENING_ATTEMPTS",
     "sealed_families",
@@ -93,6 +94,12 @@ SEALED_RESULT_SCHEMA = "flb200.sealed_result.v1"
 
 EVENT_OPENED = "SEALED_OPENED"
 EVENT_ABORTED = "SEALED_OPENING_ABORTED"
+#: Write-ahead record: appended and made DURABLE before the first sealed
+#: shard is read.  A dangling intent (no OPENED/ABORTED after it) is an
+#: opening attempt that was interrupted and counts against the attempt
+#: budget, so an eviction between reading the sealed set and committing can
+#: never become an unrecorded extra use of it.
+EVENT_INTENT = "SEALED_OPENING_INTENT"
 EVENT_RESULT = "SEALED_RESULT_WRITTEN"
 
 #: Contract §12c + Amendment 12: one opening, and at most one retry after a
@@ -353,12 +360,51 @@ class SealedUnlock:
     revoked: bool = False
     aborted: bool = False
     on_durable: Callable[[str], None] | None = None
+    #: strict mirror: raises when the file cannot be made durable
+    on_durable_strict: Callable[[str], None] | None = None
+    intent_entry: dict | None = None
 
     def _mirror(self, *paths: str) -> None:
         if self.on_durable is None:
             return
         for path in paths:
             self.on_durable(path)
+
+    def _mirror_strict(self, *paths: str) -> None:
+        if self.on_durable_strict is None:
+            return
+        for path in paths:
+            try:
+                self.on_durable_strict(path)
+            except Exception as exc:  # noqa: BLE001 - re-raised as a refusal
+                raise LedgerError(
+                    f"REFUSED: {os.path.basename(path)} could not be made "
+                    f"durable ({exc!r}); the sealed opening must not proceed "
+                    f"on a record that would vanish with this pod") from exc
+
+    def declare_intent(self) -> dict:
+        """Write-ahead: record and make DURABLE that this opening is about
+        to read the sealed set.  Idempotent per unlock; refuses (and nothing
+        sealed is read) if the intent cannot be mirrored."""
+        self.assert_valid()
+        if self.intent_entry is not None:
+            return self.intent_entry
+        payload = {
+            "opening_nonce": self.opening_payload["opening_nonce"],
+            "opened_by": self.opening_payload["opened_by"],
+            "attempt_index": int(self.attempt_index),
+            "phase": "INTENT_BEFORE_FIRST_SEALED_READ",
+        }
+        self.intent_entry = _append_ledger(self.ledger_path, EVENT_INTENT,
+                                           payload, guard=self.guard,
+                                           utc=_utc_now())
+        self._mirror_strict(self.ledger_path)
+        self._mirror(self.ledger_path)
+        return self.intent_entry
+
+    def assert_durable(self, *result_paths: str) -> None:
+        """Strictly mirror the ledger and the sealed results."""
+        self._mirror_strict(self.ledger_path, *result_paths)
 
     # -- validity ----------------------------------------------------------
 
@@ -656,6 +702,14 @@ def open_sealed(*, ledger_path: str, dev_decisions_path: str,
 
     entries = read_ledger(ledger_path, guard=guard)
     prior = [e for e in entries if e.get("event") == EVENT_OPENED]
+    # a dangling intent is an interrupted attempt: it read (or was about to
+    # read) the sealed set and never reached commit/abort
+    dangling_intents = 0
+    for e in entries:
+        if e.get("event") == EVENT_INTENT:
+            dangling_intents += 1
+        elif e.get("event") in (EVENT_OPENED, EVENT_ABORTED):
+            dangling_intents = max(0, dangling_intents - 1)
     if prior:
         raise LedgerError(
             f"REFUSED: the sealed set has already been opened "
@@ -663,10 +717,11 @@ def open_sealed(*, ledger_path: str, dev_decisions_path: str,
             f"{prior[0].get('utc')}). A second opening is refused; a further "
             "cycle requires a NEW sealed set (contract §12c).")
     aborted = [e for e in entries if e.get("event") == EVENT_ABORTED]
-    if len(aborted) >= MAX_OPENING_ATTEMPTS:
+    if len(aborted) + dangling_intents >= MAX_OPENING_ATTEMPTS:
         raise LedgerError(
-            f"REFUSED: {len(aborted)} sealed opening attempts are already "
-            f"recorded in the ledger and the budget is {MAX_OPENING_ATTEMPTS} "
+            f"REFUSED: {len(aborted)} aborted + {dangling_intents} "
+            f"interrupted sealed opening attempts are already recorded in "
+            f"the ledger and the budget is {MAX_OPENING_ATTEMPTS} "
             "(one attempt plus one retry). Every attempt is permanent; a "
             "further cycle requires a NEW sealed set (contract §12c + "
             "Amendment 12).")
@@ -711,11 +766,13 @@ def open_sealed(*, ledger_path: str, dev_decisions_path: str,
         dev_decisions_sha256=decisions["dev_decisions_sha256"],
         split_manifest_sha256=split_hex,
         guard=guard,
-        attempt_index=len(aborted),
-        prior_aborted=len(aborted),
+        attempt_index=len(aborted) + dangling_intents,
+        prior_aborted=len(aborted) + dangling_intents,
         opening_payload=opening_payload,
         _key=sealed_key(split_hex),
         on_durable=on_durable,
+        on_durable_strict=(None if durability is None
+                           else durability.push_file_strict),
     )
 
 

@@ -19,7 +19,7 @@ checkpoint manifest binds the arm configuration hash and the trainer
 refuses a mismatch.
 
 Restore NEVER overwrites an existing local file (local atomic writes win)
-and hash-verifies every fetched object; a corrupt mirrored file is
+and verifies every fetched object against the Hub's identity for it; a corrupt mirrored file is
 quarantined, never restored.  This module deliberately imports nothing
 from the O1 package (isolation contract): the store pattern is
 re-implemented, not shared.
@@ -30,6 +30,7 @@ import hashlib
 import json
 import os
 import shutil
+import time
 
 _PREFIX = "fl_durable"
 
@@ -125,7 +126,7 @@ class _HfStore:
 
     Every hub call runs in the isolated ``campaign.hf_transfer`` subprocess
     so the supervisor process itself stays offline-locked (see that module),
-    and every transfer is digest-verified end to end — an unverified copy
+    and every transfer is verified against the Hub's own blob/LFS identity end to end — an unverified copy
     would let a silently-corrupted mirror be restored as if it were sound.
     Prefix filtering happens inside the helper, so this process never sees
     non-FL filenames from a shared repository.
@@ -167,6 +168,9 @@ class _HfStore:
                             "--local", local, "--remote-rel", rel])
         if out.get("sha256") != _sha256_file(local):
             raise DurabilityError(f"push digest disagreement for {rel}")
+        if not out.get("remote_verified"):
+            raise DurabilityError(
+                f"push of {rel} was not verified against the Hub's copy")
 
     def fetch(self, rel: str, local: str) -> None:
         local = self.guard(local, "write")
@@ -174,6 +178,9 @@ class _HfStore:
                             "--remote-rel", rel, "--local", local])
         if out.get("sha256") != _sha256_file(local):
             raise DurabilityError(f"fetch digest disagreement for {rel}")
+        if not out.get("remote_verified"):
+            raise DurabilityError(
+                f"fetch of {rel} was not verified against the Hub's copy")
 
     def list_all(self) -> list[str]:
         out = self._runner(["list", "--repo", self.repo_id,
@@ -205,6 +212,10 @@ class FlDurableMirror:
             self.remote_subpath = ""
         self.run_root = os.path.abspath(run_root)
         self.on_event = on_event or (lambda *a, **k: None)
+        self._last_push_at = {}
+        self._pending = {}
+        self.consecutive_failures = 0
+        self.degraded = False
         self.store = _store_for(destination, guard=self.guard,
                                 list_prefix=self._scope_prefix())
 
@@ -225,14 +236,77 @@ class FlDurableMirror:
                 f"{path!r} is outside the mirrored run root")
         return f"{self._scope_prefix()}/" + os.path.relpath(ap, self.run_root)
 
+    #: Throttle for high-frequency files (the ladder journal is appended
+    #: on every heartbeat, i.e. every 25 optimizer steps).  Each push is a
+    #: subprocess + one HF commit; thousands per session burned paid
+    #: wall-clock inside the training loop and invited hub rate limiting.
+    JOURNAL_PUSH_INTERVAL_SECONDS = 60.0
+    #: consecutive failures after which the mirror is reported DEGRADED
+    DEGRADED_AFTER_FAILURES = 5
+
+    _last_push_at: dict  # rel -> monotonic
+    _pending: dict       # rel -> local path awaiting a throttled push
+    consecutive_failures: int = 0
+    degraded: bool = False
+
     def push_file(self, path: str) -> None:
         """Best-effort single-file mirror; failure is reported loudly but
-        never destroys local state (it widens the eviction-loss window)."""
+        never destroys local state (it widens the eviction-loss window).
+        Consecutive failures are counted and the mirror reports itself
+        DEGRADED once, so a dead mirror cannot look durable in the journal."""
         try:
             self.store.push(path, self._rel(path))
         except Exception as exc:  # noqa: BLE001
+            self.consecutive_failures += 1
             self.on_event("FL_DURABILITY_PUSH_FAILED",
-                          path=os.path.basename(path), error=str(exc)[:200])
+                          path=os.path.basename(path), error=str(exc)[:200],
+                          consecutive_failures=self.consecutive_failures)
+            if (self.consecutive_failures >= self.DEGRADED_AFTER_FAILURES
+                    and not self.degraded):
+                self.degraded = True
+                self.on_event("FL_DURABILITY_DEGRADED",
+                              consecutive_failures=self.consecutive_failures)
+            return
+        if self.consecutive_failures:
+            self.on_event("FL_DURABILITY_RECOVERED",
+                          after_failures=self.consecutive_failures)
+        self.consecutive_failures = 0
+        self.degraded = False
+        self._last_push_at[self._rel(path)] = time.monotonic()
+
+    def push_throttled(self, path: str, *, force: bool = False) -> bool:
+        """Push ``path`` unless it was pushed less than
+        ``JOURNAL_PUSH_INTERVAL_SECONDS`` ago; ``force`` pushes now.  A
+        skipped push is remembered so ``flush()`` can complete it.  Returns
+        True when a push was attempted."""
+        rel = self._rel(path)
+        last = self._last_push_at.get(rel)
+        if (not force and last is not None
+                and time.monotonic() - last < self.JOURNAL_PUSH_INTERVAL_SECONDS):
+            self._pending[rel] = path
+            return False
+        self._pending.pop(rel, None)
+        self.push_file(path)
+        return True
+
+    def flush(self) -> int:
+        """Push everything a throttled call deferred."""
+        pending = list(self._pending.values())
+        self._pending.clear()
+        for path in pending:
+            if os.path.isfile(path):
+                self.push_file(path)
+        return len(pending)
+
+    def push_file_strict(self, path: str) -> None:
+        """Mirror one file and RAISE on failure.
+
+        For the records whose durability is itself an invariant (the sealed
+        opening ledger and the sealed results): a swallowed push there is
+        how a replacement pod could be granted a second opening.
+        """
+        self.store.push(path, self._rel(path))
+        self.on_event("FL_DURABLE_STRICT_PUSHED", path=os.path.basename(path))
 
     def push_checkpoint(self, payload_path: str, manifest_path: str) -> None:
         """Checkpoint mirror: payload FIRST, manifest LAST — a checkpoint

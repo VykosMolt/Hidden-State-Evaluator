@@ -1780,6 +1780,11 @@ def sealed_eval_work(ctx: StageContext, stage: StageDefinition) -> dict:
                 with open(ctx.guard.guard(report_path, o1_isolation.MODE_READ),
                           encoding="utf-8") as fh:
                     report = json.load(fh)
+                if mirror is not None:
+                    # a retry after a failed strict push: make it durable now
+                    for path in (ledger_path, report_path, records_path):
+                        if os.path.isfile(path):
+                            mirror.push_file_strict(path)
                 ctx.results["SEALED_EVAL"] = report
                 return report
             raise StageError(
@@ -1807,6 +1812,8 @@ def sealed_eval_work(ctx: StageContext, stage: StageDefinition) -> dict:
             scheduler_journal_path=(
                 None if ctx.scheduler is None else ctx.scheduler.journal_path),
             result_paths=(report_path, records_path)) as unlock:
+        # write-ahead, made durable BEFORE the first sealed shard is read
+        unlock.declare_intent()
         episodes = _sealed_episodes(ctx, stage, unlock)
         records = run_episodes(bundle, episodes, env_factory,
                                cfg=LearningCurveConfig(
@@ -1852,6 +1859,9 @@ def sealed_eval_work(ctx: StageContext, stage: StageDefinition) -> dict:
         }
         unlock.write_result(os.path.join(out_dir, "sealed_eval_report.json"),
                             report)
+        # the opening and its evidence exist locally; now they must exist
+        # off-pod too, or a replacement pod could be granted a second opening
+        unlock.assert_durable(report_path, records_path)
         unlock.revoke()
     ctx.results["SEALED_EVAL"] = report
     return report

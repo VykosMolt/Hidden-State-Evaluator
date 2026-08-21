@@ -332,11 +332,13 @@ def test_train_arm_passes_resume_from_tag_for_a_restored_checkpoint(
 
     out_dir = str(tmp_path / "fl3" / "arm")
     os.makedirs(out_dir, exist_ok=True)
+    import hashlib
     for tag, step in (("initial", 0), ("step4", 4)):
         payload, manifest = checkpoint_paths(out_dir, tag)
         open(payload, "wb").write(b"pt")
         open(manifest, "w", encoding="utf-8").write(
-            json.dumps({"tag": tag, "step": step}))
+            json.dumps({"tag": tag, "step": step,
+                        "payload_sha256": hashlib.sha256(b"pt").hexdigest()}))
 
     seen = {}
 

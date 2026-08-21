@@ -65,6 +65,7 @@ def fixtures(tmp_path, marker_path, **overrides):
         "pregen_root": str(tmp_path / "pregen"),
         "fl_out_dir": str(tmp_path / "session"),
         "session_authorized_seconds": 3600.0,
+        "o1_timeout_seconds": 300.0,
         "fl_transfer_command": [sys.executable, "-c", "print('ft')"],
         "terminate_command": terminate,
     }
@@ -387,3 +388,54 @@ class _Parser:
         import types
         return types.SimpleNamespace(config=str(self._config), out=str(self._out),
                                      no_resume=False)
+
+
+def test_the_o1_completion_marker_never_reaches_the_log_mid_session(
+        tmp_path, capsys):
+    """The off-pod driver's completion witness is the literal
+    ZERO_TOUCH_COMPLETE in the container log, accepted while the pod is
+    RUNNING.  Re-emitting O1's marker verbatim at the end of the O1 phase
+    made the driver terminate the pod before any FL stage."""
+    marker = tmp_path / "TERMINATED.log"
+    path = fixtures(tmp_path, marker)
+    cfg = json.load(open(path, encoding="utf-8"))
+    cfg["o1_entry_command"] = [sys.executable, "-c",
+                               "print('ZERO_TOUCH_COMPLETE'); "
+                               "print('ZERO_TOUCH_ABORTED_AT_X')"]
+    json.dump(cfg, open(path, "w", encoding="utf-8"))
+    sup = make_supervisor(tmp_path, path)
+    sup.state_RUN_O1_CALIBRATION()
+    out = capsys.readouterr().out
+    assert "O1_PHASE:ZERO_TOUCH_COMPLETE" in out
+    assert "O1_PHASE:ZERO_TOUCH_ABORTED_AT_X" in out
+    for line in out.splitlines():
+        assert not line.strip().startswith("ZERO_TOUCH_"), line
+    # the SESSION emits the driver's marker exactly once, at its end
+    assert ss._session_marker({"outcome": "COMPLETE"}) == "ZERO_TOUCH_COMPLETE"
+    assert ss._session_marker({"outcome": "ABORTED_AT_RUN_FL_LADDER",
+                               "failed_state": "RUN_FL_LADDER"}) == \
+        "ZERO_TOUCH_ABORTED_AT_RUN_FL_LADDER"
+
+
+def test_o1_root_discovery_never_forbids_the_shared_checkpoint(tmp_path):
+    """O1's transfer manifest lists /artifacts/ouro_rltt_local among its
+    artifacts.  Forbidding it passed the (paid) O1 phase and killed
+    RELOAD_PRISTINE_OURO."""
+    from foundation_learner.campaign import o1_isolation
+    guard = o1_isolation.IsolationGuard(label="DISCOVERY")
+    manifest = tmp_path / "TRANSFER_MANIFEST.json"
+    manifest.write_text(json.dumps({
+        "artifacts": {
+            "ouro_rltt_checkpoint": {"path": "/artifacts/ouro_rltt_local"},
+            "records": {"path": "/outputs/records.jsonl"},
+            "fl_out": {"path": str(tmp_path / "session")},
+        }}), encoding="utf-8")
+    report = guard.discover_from_o1_manifests(
+        [str(manifest)], protected=[str(tmp_path / "session")])
+    exempt = {e["root"] for e in report["exempted_roots"]}
+    assert "/artifacts/ouro_rltt_local" in exempt
+    assert str(tmp_path / "session") in exempt
+    assert "/outputs/records.jsonl" not in exempt
+    # the shared checkpoint is still readable
+    guard.guard("/artifacts/ouro_rltt_local/config.json",
+                o1_isolation.MODE_READ)

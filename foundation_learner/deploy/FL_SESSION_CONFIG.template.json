@@ -5,7 +5,7 @@
     "label": "FL_B200_SESSION",
     "rehearsal": false,
     "o1_entry_command": "/opt/o1_b200/o1_b200/deploy/start_b300.sh",
-    "o1_timeout_seconds": null,
+    "o1_timeout_seconds": "UNRESOLVED_OPERATOR_BOUND (seconds; REQUIRED for a real session: bounds the O1 phase so FL is funded. Must satisfy o1_timeout_seconds + 3000 < session_authorized_seconds)",
     "o1_completion_markers": [
         "/outputs/FINAL_STATUS.json"
     ],

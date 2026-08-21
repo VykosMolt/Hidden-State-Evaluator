@@ -56,6 +56,7 @@ def fixtures(tmp_path, **overrides):
         "pregen_root": str(tmp_path / "pregen"),
         "fl_out_dir": str(tmp_path / "session"),
         "session_authorized_seconds": 3600.0,
+        "o1_timeout_seconds": 300.0,
         "terminate_command": [sys.executable, "-c", "print('terminated')"],
     }
     payload.update(overrides)

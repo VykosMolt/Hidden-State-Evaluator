@@ -193,7 +193,7 @@ def test_hf_store_guards_every_path_before_transfer():
                 handed.append(os.path.abspath(args[args.index(flag) + 1]))
         if args[0] == "list":
             return {"files": []}
-        return {"sha256": _digest_of(handed[-1])}
+        return {"sha256": _digest_of(handed[-1]), "remote_verified": True}
 
     import hashlib
 
