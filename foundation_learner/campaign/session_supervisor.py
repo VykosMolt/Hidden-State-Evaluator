@@ -768,8 +768,8 @@ class SessionSupervisor:
             "command": command if shell else list(command),
             "returncode": int(getattr(proc, "returncode", -1)),
             "seconds": round(seconds, 6),
-            "stdout_tail": redact((getattr(proc, "stdout", "") or "")[-2000:]),
-            "stderr_tail": redact((getattr(proc, "stderr", "") or "")[-2000:]),
+            "stdout_tail": child_out[-2000:],
+            "stderr_tail": child_err[-2000:],
         }
         return record
 
