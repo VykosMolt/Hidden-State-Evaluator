@@ -406,6 +406,23 @@ def run() -> Runner:
             "with the deterministic marker",
             scope_preflight_treats_a_corrupt_manifest_as_deterministic)
 
+    def the_transfer_manifests_describe_the_current_tree():
+        """Round 5 changed policies/, runner/ and deploy/ without
+        regenerating the manifests; verify_artifacts.py would then refuse
+        on every pod built from HEAD.  Nothing checked freshness."""
+        import subprocess
+        proc = subprocess.run(
+            [sys.executable, os.path.join(DEPLOY, "verify_artifacts.py"),
+             "--manifest", HOST_MANIFEST],
+            capture_output=True, text=True)
+        assert proc.returncode == 0, (
+            "stale transfer manifests (run python -m "
+            "o1_b200.runner.make_transfer_manifest):\n" + proc.stdout
+            + proc.stderr)
+    r.check("the transfer manifests describe the committed tree (pod "
+            "ARTIFACT_VERIFY would pass)",
+            the_transfer_manifests_describe_the_current_tree)
+
     def the_entrypoint_checks_scope_before_the_multi_gigabyte_fetch():
         text = open(os.path.join(DEPLOY, "start_b300.sh"),
                     encoding="utf-8").read()

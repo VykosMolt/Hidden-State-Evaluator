@@ -307,6 +307,27 @@ def run() -> Runner:
     r.check("watchdog process crash is detectable via the handle",
             watchdog_process_crash_detected)
 
+    def armed_confirmation_is_pod_scoped():
+        """The termination log is append-only and shared by every
+        acquisition; attempt 1's armed line must not confirm attempt 2's
+        watchdog that died on spawn."""
+        import subprocess
+        import sys
+        from o1_b200.provider.runpod.watchdog_terminate import WatchdogHandle
+        d = fresh_dir("wd_scoped")
+        log = os.path.join(d, "watchdog_termination.jsonl")
+        with open(log, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps({"armed": True, "pod_id": "pod-one"}) + "\n")
+        dead = subprocess.Popen([sys.executable, "-c", "import sys; sys.exit(3)"])
+        dead.wait()
+        assert not WatchdogHandle(dead, log, pod_id="pod-two").confirm_armed(
+            timeout=1.0, sleep=lambda s: None), (
+            "a previous pod's armed record confirmed a dead watchdog")
+        assert WatchdogHandle(dead, log, pod_id="pod-one").confirm_armed(
+            timeout=1.0, sleep=lambda s: None)
+    r.check("confirm_armed only accepts an armed record naming THIS pod",
+            armed_confirmation_is_pod_scoped)
+
     def artifact_store_semantics():
         d = fresh_dir("store")
         payload = os.urandom(1 << 20)

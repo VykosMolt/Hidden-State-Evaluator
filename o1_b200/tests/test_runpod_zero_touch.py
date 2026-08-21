@@ -211,6 +211,30 @@ def run() -> Runner:
     r.check("24. output-transfer failure -> pod still terminated, loud abort",
             result_transfer_failure_terminates)
 
+    def completion_witness_is_whole_line_and_session_level():
+        """A combined session's log carries the O1 phase's REWRITTEN marker
+        mid-run and the session's own marker at the end.  The driver must
+        not read the O1 phase (or any quoted/prefixed occurrence) as the
+        pod's verdict."""
+        from o1_b200.provider.runpod.zero_touch import completion_verdict
+        mid_session = (
+            "[supervisor] RUN_O1_CALIBRATION\n"
+            "O1_PHASE_COMPLETE\n"
+            "note: child printed 'ZERO_TOUCH_COMPLETE' earlier\n"
+            "[supervisor] RUN_FL_LADDER ...\n")
+        assert completion_verdict(mid_session) is None
+        assert completion_verdict("") is None
+        assert completion_verdict(mid_session + "ZERO_TOUCH_COMPLETE\n") \
+            == "COMPLETE"
+        assert completion_verdict(
+            mid_session + "ZERO_TOUCH_ABORTED_AT_RUN_FL_LADDER\n") \
+            == "RUN_FL_LADDER"
+        assert completion_verdict("O1_PHASE_ABORTED_AT_X\n") is None
+        assert completion_verdict("  ZERO_TOUCH_ABORTED_AT_PRE_ENTRY_HF_SCOPE  \n") \
+            == "PRE_ENTRY_HF_SCOPE"
+    r.check("the completion witness is a whole-line, session-level marker",
+            completion_witness_is_whole_line_and_session_level)
+
     return r
 
 

@@ -54,6 +54,9 @@ def run() -> Runner:
             assert "throughput_stability_per_worker" in c
             assert c["throughput_stability_basis"].startswith("per execution stream")
         assert sel["selected"]["config_id"] in compared
+        assert sel["terminal_fallback_waiver"] is None, (
+            "the rehearsal COMPLETEd only through the terminal-fallback "
+            "waiver: no accelerated backend passed the gates locally")
         bench = json.load(open(os.path.join(out, "benchmark",
                                             "BENCHMARK_REPORT.json")))
         assert bench["mode"] == "LOCAL_SYNTHETIC_DRESS_REHEARSAL"
