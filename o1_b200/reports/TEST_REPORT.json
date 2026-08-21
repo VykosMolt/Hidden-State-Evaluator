@@ -426,12 +426,25 @@
       "failures": [],
       "module": "test_credential_isolation",
       "passed": 5
+    },
+    {
+      "checks": [
+        "the real FL supervisor emits exactly one driver marker, at the session's end",
+        "a pod evicted after the O1 phase (FL half unfinished) is REACQUIRED, never reported COMPLETE",
+        "the full combined log yields COMPLETE with one acquisition and a terminated pod",
+        "a deterministic FL-half abort stops the session after ONE paid acquisition",
+        "the entrypoint's recursion guard is intact"
+      ],
+      "failed": 0,
+      "failures": [],
+      "module": "test_combined_session_seam",
+      "passed": 5
     }
   ],
   "schema": "o1b200.test_report.v1",
   "scope_note": "Hardware-independent local validation only: synthetic runtime + non-O1 corpus + mocked provider/clock. No B200 hardware claim is made or implied.",
   "total_failed": 0,
-  "total_passed": 275,
-  "utc": "2026-08-21T22:37:52Z",
+  "total_passed": 280,
+  "utc": "2026-08-21T22:49:30Z",
   "verdict": "ALL O1 B200 RUNNER TESTS PASSED"
 }
