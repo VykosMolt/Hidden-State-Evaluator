@@ -198,7 +198,9 @@ def test_the_fl_entry_checks_scope_before_downloading_the_corpus():
     assert "check_hf_scope" in text
     assert text.index("check_hf_scope") < text.index("fetch_pregen"), (
         "the scope check must precede the ~480 MB corpus download")
-    assert text.index("fetch_pregen") < text.index("session_supervisor"), (
+    # the step() wrapper's terminate-only fallback mentions the supervisor
+    # earlier; the ORDER that matters is the real exec at the end
+    assert text.index("step PREGEN_FETCH") < text.rindex("session_supervisor"), (
         "the corpus must be on the pod before the supervisor starts")
 
 

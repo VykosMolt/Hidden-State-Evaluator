@@ -440,3 +440,93 @@ def test_o1_root_discovery_never_forbids_the_shared_checkpoint(tmp_path):
     # the shared checkpoint is still readable
     guard.guard("/artifacts/ouro_rltt_local/config.json",
                 o1_isolation.MODE_READ)
+
+
+def test_a_resume_refusal_still_terminates_and_emits_a_verdict(
+        tmp_path, monkeypatch, capsys):
+    """rebuild_state_results() used to run OUTSIDE run()'s try/finally: on a
+    replacement pod missing O1_SESSION_AUTHORIZED_SECONDS the refusal
+    escaped, terminate_command never fired, and no marker was printed."""
+    marker = tmp_path / "TERMINATED.log"
+    path = fixtures(tmp_path, marker)
+    cfg = json.load(open(path, encoding="utf-8"))
+    cfg["rehearsal"] = False
+    cfg["fl_transfer_command"] = [sys.executable, "-c", "print('ft')"]
+    cfg["checkpoint_tree_sha256"] = sha256_tree(cfg["checkpoint_dir"])
+    json.dump(cfg, open(path, "w", encoding="utf-8"))
+    monkeypatch.setenv("O1_SESSION_AUTHORIZED_SECONDS", "3600")
+    first = make_supervisor(tmp_path, path, ladder_runner=lambda s, c: (
+        _ for _ in ()).throw(RuntimeError("crash")))
+    try:
+        first.run(resume=False)
+    except Exception:
+        pass
+    marker.unlink(missing_ok=True)
+    monkeypatch.delenv("O1_SESSION_AUTHORIZED_SECONDS")
+    second = make_supervisor(tmp_path, path)
+    status = second.run(resume=True)
+    assert status["outcome"].startswith("ABORTED_AT_")
+    assert marker.exists(), "terminate_command did not fire on a resume refusal"
+
+
+def test_mirror_events_during_restore_do_not_defeat_the_torn_tail_repair(
+        tmp_path, monkeypatch):
+    """A durability event raised during the constructor's restore used to be
+    drained into the journal BEFORE the torn-tail repair, burying the torn
+    record mid-file (refused as corruption) and restarting the index."""
+    marker = tmp_path / "TERMINATED.log"
+    path = fixtures(tmp_path, marker)
+    cfg = json.load(open(path, encoding="utf-8"))
+    cfg["fl_durable_destination"] = str(tmp_path / "mirror")
+    json.dump(cfg, open(path, "w", encoding="utf-8"))
+    first = make_supervisor(tmp_path, path, ladder_runner=lambda s, c: (
+        _ for _ in ()).throw(RuntimeError("crash")))
+    first.run(resume=False)
+    with open(first.journal_path, "a", encoding="utf-8") as fh:
+        fh.write('{"event": "STATE_STARTED", "state": "RUN_FL_LA\n')
+    second = make_supervisor(tmp_path, path)       # must not refuse
+    records = second.read_journal()
+    indexes = [r["index"] for r in records]
+    assert indexes == sorted(indexes) and len(set(indexes)) == len(indexes), (
+        "journal index sequence broken by an early drain")
+    assert second.torn_journal_tail is not None
+
+
+def test_a_mirror_outage_before_any_sealed_read_burns_no_attempt(tmp_path):
+    from foundation_learner.campaign import sealed_gate as sg
+    import foundation_learner.tests.test_campaign_sealed_gate as t
+
+    class DeadMirror:
+        def push_file_strict(self, p):
+            raise RuntimeError("503 hub down")
+        def push_file(self, p):
+            pass
+        def restore_all(self):
+            return {}
+        class store:
+            @staticmethod
+            def list_all():
+                return []
+        def _rel(self, p):
+            return "x/" + os.path.basename(p)
+
+    guard, pregen, out, shard, manifest = t.campaign_dir(tmp_path)
+    decisions = t.frozen_decisions(guard, out)
+    ledger = os.path.join(out, sg.LEDGER_NAME)
+    kwargs = dict(ledger_path=ledger, dev_decisions_path=decisions,
+                  split_manifest_path=os.path.join(
+                      pregen, "family_split_manifest.json"), guard=guard)
+    for _ in range(3):
+        try:
+            with sg.sealed_opening(**kwargs) as u:
+                u.on_durable_strict = DeadMirror().push_file_strict
+                u.read_shard(shard)
+        except sg.LedgerError:
+            pass
+        else:
+            raise AssertionError("strict push failure did not refuse")
+    entries = sg.read_ledger(ledger, guard=guard)
+    events = [e["event"] for e in entries]
+    assert sg.EVENT_ABORTED not in events, events
+    assert events.count(sg.EVENT_INTENT) == events.count(
+        sg.EVENT_INTENT_WITHDRAWN) == 3

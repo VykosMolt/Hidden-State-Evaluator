@@ -42,11 +42,13 @@ done
 
 if [[ -z "$CONFIG" ]]; then
   echo "[fl_b200_entry] REFUSED: --config is required" >&2
+  echo "ZERO_TOUCH_ABORTED_AT_FL_PRE_ENTRY_CONFIG"
   usage
   exit 2
 fi
 if [[ ! -f "$CONFIG" ]]; then
   echo "[fl_b200_entry] REFUSED: session config not found: $CONFIG" >&2
+  echo "ZERO_TOUCH_ABORTED_AT_FL_PRE_ENTRY_CONFIG"
   exit 2
 fi
 
@@ -54,6 +56,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PY="${FL_B200_PYTHON:-/opt/venv/bin/python}"
 if [[ ! -x "$PY" ]]; then
   echo "[fl_b200_entry] REFUSED: python interpreter not executable: $PY" >&2
+  echo "ZERO_TOUCH_ABORTED_AT_FL_PRE_ENTRY_INTERPRETER"
   echo "  (the FL package runs INSIDE the existing O1 container venv /opt/venv;" >&2
   echo "   set FL_B200_PYTHON to override for a local rehearsal)" >&2
   exit 2
@@ -68,7 +71,8 @@ export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
 
 # Pre-flight refusal on UNRESOLVED fields, BEFORE any work starts.  A rehearsal
 # config (rehearsal=true) is exempt and is announced loudly.
-"$PY" - "$CONFIG" <<'PYEOF'
+CONFIG_CHECK_RC=0
+"$PY" - "$CONFIG" <<'PYEOF' || CONFIG_CHECK_RC=$?
 import json, sys
 path = sys.argv[1]
 with open(path, encoding="utf-8") as fh:
@@ -98,6 +102,12 @@ if bad:
     print("*** DRESS_REHEARSAL: unresolved fields present:", bad, "***",
           file=sys.stderr)
 PYEOF
+if [[ "$CONFIG_CHECK_RC" -ne 0 ]]; then
+  echo "ZERO_TOUCH_ABORTED_AT_FL_PRE_ENTRY_CONFIG_VALIDATION"
+  "$PY" -m foundation_learner.campaign.session_supervisor \
+    --config "$CONFIG" --terminate-only || true
+  exit "$CONFIG_CHECK_RC"
+fi
 
 echo "[fl_b200_entry] O1 has absolute priority; FL runs only after O1 close."
 echo "[fl_b200_entry] config: $CONFIG"
@@ -112,12 +122,33 @@ mkdir -p "$OUT"
 # Credential scope BEFORE the corpus download: one HF_TOKEN must cover the
 # pregen read and the durable-mirror write.  A read-only token trains for
 # hours and then loses the journal and every checkpoint on eviction.
+# Both preflight steps refuse DETERMINISTICALLY (same config, same
+# credential, same corpus -> same refusal).  Without the marker the off-pod
+# driver reads the exited pod as an eviction and pays to reacquire; and a
+# refusal here never reached the configured terminate_command.  Mirrors the
+# step() wrapper in the O1 entrypoint.
+step() {
+  local name="$1"; shift
+  local rc=0
+  local log="$OUT/.fl_pre_entry_${name}.log"
+  "$@" 2>&1 | tee "$log" || rc=${PIPESTATUS[0]}
+  if [[ "$rc" -ne 0 ]]; then
+    if ! grep -q "ZERO_TOUCH_ABORTED_AT_" "$log" 2>/dev/null \
+        && ! grep -q "REFUSED (transient)" "$log" 2>/dev/null; then
+      echo "ZERO_TOUCH_ABORTED_AT_FL_PRE_ENTRY_${name}"
+    fi
+    "$PY" -m foundation_learner.campaign.session_supervisor \
+      --config "$CONFIG" --terminate-only || true
+    exit "$rc"
+  fi
+}
+
 echo "[fl_b200_entry] credential scope preflight"
-"$PY" -m foundation_learner.campaign.check_hf_scope \
+step HF_SCOPE "$PY" -m foundation_learner.campaign.check_hf_scope \
   --config "$CONFIG" --out "$OUT/HF_SCOPE_REPORT.json"
 
 echo "[fl_b200_entry] pregen ingestion (the episode corpus is not baked in)"
-"$PY" -m foundation_learner.campaign.fetch_pregen \
+step PREGEN_FETCH "$PY" -m foundation_learner.campaign.fetch_pregen \
   --config "$CONFIG" --out "$OUT/PREGEN_FETCH_REPORT.json"
 
 exec "$PY" -m foundation_learner.campaign.session_supervisor \

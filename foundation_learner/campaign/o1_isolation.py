@@ -189,9 +189,15 @@ class IsolationGuard:
         own checkpoint/pregen/output roots.
         """
         for shared in list(self._shared) + [_norm(p) for p in protected if p]:
-            if resolved == shared or _is_under(shared, resolved) \
-                    or _is_under(resolved, shared):
-                return f"overlaps protected path {shared!r}"
+            if resolved == shared or _is_under(resolved, shared):
+                return f"is (or lies under) protected path {shared!r}"
+            if _is_under(shared, resolved):
+                # the discovered root CONTAINS a protected path (e.g. the
+                # manifest names /artifacts or /).  Forbidding it would kill
+                # FL; exempting it silently would under-forbid.  Declined
+                # distinctly so the journal shows the breadth.
+                return (f"DECLINED_BROAD: contains protected path "
+                        f"{shared!r}; too broad to forbid, not forbidden")
         return None
 
     def discover_from_o1_manifests(self, manifest_paths: Iterable[str],

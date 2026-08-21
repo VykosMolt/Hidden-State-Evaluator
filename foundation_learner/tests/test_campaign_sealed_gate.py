@@ -18,6 +18,19 @@ from foundation_learner.ecology.manifests import write_split_manifest
 from foundation_learner.ecology.split import compute_split
 
 SEALED_FAMILY = compute_split()["SEALED_TEST"][0]
+
+# The write-ahead intent (and its withdrawal) precede every sealed read and
+# are bookkeeping for eviction safety; the OUTCOME sequence is what these
+# tests assert.
+_BOOKKEEPING = {"SEALED_OPENING_INTENT", "SEALED_INTENT_WITHDRAWN"}
+
+
+def outcomes(entries):
+    return [e["event"] for e in entries if e["event"] not in _BOOKKEEPING]
+
+
+def outcome_entries(entries):
+    return [e for e in entries if e["event"] not in _BOOKKEEPING]
 RECORDS = [{"episode_id": "e0", "family_id": SEALED_FAMILY, "x": 1},
            {"episode_id": "e1", "family_id": SEALED_FAMILY, "x": 2}]
 
@@ -138,25 +151,35 @@ def test_a_valid_opening_reads_the_sealed_records_and_ledgers_it(tmp_path):
     guard, _, out, shard, unlock = open_once(tmp_path)
     assert unlock.read_shard(shard) == RECORDS
     entries = sg.read_ledger(os.path.join(out, sg.LEDGER_NAME), guard=guard)
-    assert [e["event"] for e in entries] == [sg.EVENT_OPENED]
-    assert entries[0]["dev_decisions_sha256"] == unlock.dev_decisions_sha256
-    assert entries[0]["prev_sha256"] == "0" * 64
-    assert entries[0]["stage_states"] == {"FL3": "COMPLETE"}
-    assert "utc" in entries[0]
+    assert outcomes(entries) == [sg.EVENT_OPENED]
+    opened = outcome_entries(entries)[0]
+    assert opened["dev_decisions_sha256"] == unlock.dev_decisions_sha256
+    assert entries[0]["prev_sha256"] == "0" * 64        # chain starts at the intent
+    assert opened["prev_sha256"] == entries[0]["entry_sha256"]
+    assert opened["stage_states"] == {"FL3": "COMPLETE"}
+    assert "utc" in opened
     # the committed entry proves the EVIDENCE existed first
-    assert entries[0]["records_read"] == len(RECORDS)
-    assert entries[0]["attempt_index"] == 0
-    assert entries[0]["evaluation"]["n_records"] == len(RECORDS)
+    assert opened["records_read"] == len(RECORDS)
+    assert opened["attempt_index"] == 0
+    assert opened["evaluation"]["n_records"] == len(RECORDS)
 
 
 # ---------------- the two-phase opening (contract §12c + Amendment 12) ------
 
-def test_phase_one_writes_nothing_to_the_ledger(tmp_path):
+def test_phase_one_writes_only_the_write_ahead_intent(tmp_path):
+    """Opening provisionally writes nothing; the FIRST sealed read writes the
+    intent (and nothing else) before any byte is read, so an eviction
+    between read and commit is never an unrecorded use of the sealed set."""
     guard, _, out, shard, unlock = open_provisional(tmp_path)
     assert unlock.committed is False
     assert not os.path.exists(os.path.join(out, sg.LEDGER_NAME))
     assert unlock.read_shard(shard) == RECORDS      # reading is allowed
-    assert not os.path.exists(os.path.join(out, sg.LEDGER_NAME))
+    entries = sg.read_ledger(os.path.join(out, sg.LEDGER_NAME), guard=guard)
+    assert [e["event"] for e in entries] == [sg.EVENT_INTENT]
+    # idempotent: a second read adds nothing
+    unlock.read_shard(shard)
+    entries = sg.read_ledger(os.path.join(out, sg.LEDGER_NAME), guard=guard)
+    assert [e["event"] for e in entries] == [sg.EVENT_INTENT]
 
 
 def test_a_provisional_unlock_may_not_write_a_result(tmp_path):
@@ -172,7 +195,7 @@ def test_an_aborted_attempt_is_ledgered_and_leaves_exactly_one_retry(tmp_path):
     guard, pregen, out, shard, unlock = open_provisional(tmp_path)
     unlock.abort("simulated infrastructure failure")
     entries = sg.read_ledger(os.path.join(out, sg.LEDGER_NAME), guard=guard)
-    assert [e["event"] for e in entries] == [sg.EVENT_ABORTED]
+    assert outcomes(entries) == [sg.EVENT_ABORTED]
     assert entries[0]["retries_remaining"] == 1
     # the aborted unlock is dead
     with pytest.raises(sg.SealedGateRefusal):
@@ -182,8 +205,8 @@ def test_an_aborted_attempt_is_ledgered_and_leaves_exactly_one_retry(tmp_path):
     assert retry.attempt_index == 1 and retry.prior_aborted == 1
     retry.read_shard(shard)
     retry.commit(evaluation={"n_records": len(RECORDS)})
-    events = [e["event"] for e in
-              sg.read_ledger(os.path.join(out, sg.LEDGER_NAME), guard=guard)]
+    events = outcomes(
+              sg.read_ledger(os.path.join(out, sg.LEDGER_NAME), guard=guard))
     assert events == [sg.EVENT_ABORTED, sg.EVENT_OPENED]
 
 
@@ -195,8 +218,8 @@ def test_a_third_attempt_refuses_and_both_attempts_stay_recorded(tmp_path):
     with pytest.raises(sg.LedgerError) as exc:
         sg.open_sealed(**reopen_kwargs(pregen, out, guard))
     assert "budget is 2" in str(exc.value)
-    events = [e["event"] for e in
-              sg.read_ledger(os.path.join(out, sg.LEDGER_NAME), guard=guard)]
+    events = outcomes(
+              sg.read_ledger(os.path.join(out, sg.LEDGER_NAME), guard=guard))
     assert events == [sg.EVENT_ABORTED, sg.EVENT_ABORTED]
 
 
@@ -208,8 +231,8 @@ def test_the_context_manager_aborts_on_an_exception_and_reraises(tmp_path):
             unlock.read_shard(shard)
             raise RuntimeError("boom")
     entries = sg.read_ledger(os.path.join(out, sg.LEDGER_NAME), guard=guard)
-    assert [e["event"] for e in entries] == [sg.EVENT_ABORTED]
-    assert "boom" in entries[0]["reason"]
+    assert outcomes(entries) == [sg.EVENT_ABORTED]
+    assert "boom" in outcome_entries(entries)[0]["reason"]
 
 
 def test_the_context_manager_commits_on_success(tmp_path):
@@ -220,7 +243,7 @@ def test_the_context_manager_commits_on_success(tmp_path):
         unlock.commit(evaluation={"n_records": len(RECORDS)})
         unlock.write_result(os.path.join(out, "sealed.json"), {"aulc": 0.1})
     entries = sg.read_ledger(os.path.join(out, sg.LEDGER_NAME), guard=guard)
-    assert [e["event"] for e in entries] == [sg.EVENT_OPENED, sg.EVENT_RESULT]
+    assert outcomes(entries) == [sg.EVENT_OPENED, sg.EVENT_RESULT]
 
 
 def test_a_body_that_never_commits_is_recorded_as_an_aborted_attempt(tmp_path):
@@ -229,7 +252,7 @@ def test_a_body_that_never_commits_is_recorded_as_an_aborted_attempt(tmp_path):
     with sg.sealed_opening(**reopen_kwargs(pregen, out, guard)) as unlock:
         unlock.read_shard(shard)            # produced nothing, committed nothing
     entries = sg.read_ledger(os.path.join(out, sg.LEDGER_NAME), guard=guard)
-    assert [e["event"] for e in entries] == [sg.EVENT_ABORTED]
+    assert outcomes(entries) == [sg.EVENT_ABORTED]
 
 
 def test_a_second_opening_refuses(tmp_path):

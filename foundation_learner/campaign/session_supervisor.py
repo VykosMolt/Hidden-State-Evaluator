@@ -128,6 +128,9 @@ POD_AUTHORIZED_SECONDS_ENV = "O1_SESSION_AUTHORIZED_SECONDS"
 #: RunPod sets this in every pod; it distinguishes a same-pod process
 #: restart (billed gap) from a replacement pod (unbilled gap).
 POD_ID_ENV = "RUNPOD_POD_ID"
+#: Where the image bakes the FL package; never a forbidden root.
+FL_PACKAGE_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))))
 CLOSE_O1_TIMEOUT_SECONDS = 900.0
 
 
@@ -437,9 +440,12 @@ class SessionSupervisor:
                 # Buffering until the next supervisor journal call lost every
                 # mirror failure raised during RUN_FL_LADDER on eviction.
                 self.durability_events.append({"event": str(event), **fields})
-                if getattr(self, "journal_path", None) and not getattr(
-                        self, "_journal_in_flight", False) and os.path.isfile(
-                        self.journal_path):
+                # only once the constructor has asserted the session and
+                # repaired a torn tail: an earlier drain appended BEFORE the
+                # repair, burying the torn record mid-file (refused as
+                # corruption) and restarting the index at 0
+                if getattr(self, "_journal_ready", False) and not getattr(
+                        self, "_journal_in_flight", False):
                     try:
                         self._drain_durability_events()
                     except Exception:  # noqa: BLE001 - stays buffered
@@ -458,11 +464,15 @@ class SessionSupervisor:
                     {"event": "FL_DURABILITY_RESTORE_FAILED",
                      "error": str(exc)[:300]})
         self._assert_journal_session()
+        # the index is a global sequence: initialise it from what exists
+        # BEFORE the repair journals its own record
+        self._records = len(self.read_journal())
         self._repair_torn_tail()
         existing = self.read_journal()
-        self._records = len(existing)      # index is a global sequence
+        self._records = len(existing)
         self.completed = [r["state"] for r in existing
                           if r.get("event") == "STATE_COMPLETED"]
+        self._journal_ready = True
 
     # ---------------- journal ----------------
 
@@ -556,6 +566,15 @@ class SessionSupervisor:
         stale journal believing it was durable.
         """
         pending, self.durability_events = self.durability_events, []
+        try:
+            self._drain_entries(pending)
+        except BaseException:
+            # keep whatever was not written; it really does stay buffered
+            self.durability_events = pending[self._drained:] + self.durability_events
+            raise
+
+    def _drain_entries(self, pending: list) -> None:
+        self._drained = 0
         for entry in pending:
             event = entry.pop("event", "FL_DURABILITY_EVENT")
             record = {
@@ -786,7 +805,12 @@ class SessionSupervisor:
         report = self.guard.discover_from_o1_manifests(
             list(self.payload.get("o1_hash_manifests") or []),
             protected=[self.payload.get("checkpoint_dir"),
-                       self.payload.get("pregen_root"), self.out_dir])
+                       self.payload.get("pregen_root"), self.out_dir,
+                       FL_PACKAGE_ROOT,
+                       (self.payload.get("fl_durable_destination")
+                        if not str(self.payload.get(
+                            "fl_durable_destination", "")).startswith(
+                            ("hf://", "UNRESOLVED")) else None)])
         if report.get("added_roots") or report.get("exempted_roots"):
             self.journal("O1_ROOTS_DISCOVERED", "ISOLATION",
                          {"added_roots": report["added_roots"],
@@ -1130,9 +1154,13 @@ class SessionSupervisor:
         failed_state = None
         failure = None
         failure_exc: BaseException | None = None
-        if resume and self.completed:
-            self.rebuild_state_results()
         try:
+            if resume and self.completed:
+                # INSIDE the protected region: a refusal here (e.g. the
+                # per-pod allowance missing on a replacement pod) must still
+                # reach _emergency_close and the session marker, or the pod
+                # bills on with no verdict and the driver pays to reacquire
+                self.rebuild_state_results()
             for state in STATES:
                 if resume and state in self.completed:
                     self.journal("STATE_SKIPPED_RESUMED", state, {})
@@ -1269,7 +1297,10 @@ def build_parser() -> argparse.ArgumentParser:
         description="Foundation Learner B200 combined-session supervisor")
     parser.add_argument("--config", required=True,
                         help="flb200.session_config.v1 JSON file")
-    parser.add_argument("--out", required=True, help="session output directory")
+    parser.add_argument("--out", default=None, help="session output directory")
+    parser.add_argument("--terminate-only", action="store_true",
+                        help="run only the configured terminate_command "
+                             "(the entry script's preflight refused)")
     parser.add_argument("--no-resume", action="store_true",
                         help="ignore an existing journal and start over")
     return parser
@@ -1316,6 +1347,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     """
     args = build_parser().parse_args(argv)
     config = None
+    if not args.out and not args.terminate_only:
+        build_parser().error("--out is required")
+    if getattr(args, "terminate_only", False):
+        # the entry script's preflight refused: run the configured
+        # terminate_command and nothing else (no supervisor is built)
+        try:
+            raw = SessionConfig.load(args.config)
+        except Exception as exc:  # noqa: BLE001
+            print(json.dumps({"event": "TERMINATE_ONLY_CONFIG_UNREADABLE",
+                              "error": repr(exc)[:300]}), file=sys.stderr)
+            return 2
+        _terminate_without_supervisor(raw, args.out, RuntimeError(
+            "fl_b200_entry preflight refused"))
+        return 0
     try:
         config = SessionConfig.load(args.config)
         supervisor = SessionSupervisor(config=config, out_dir=args.out)
@@ -1331,7 +1376,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     except BaseException as exc:  # noqa: BLE001 - the pod must not be stranded
         if config is not None:
             _terminate_without_supervisor(config, args.out, exc)
-        print("ZERO_TOUCH_ABORTED_AT_SUPERVISOR_SETUP", flush=True)
+        if isinstance(exc, (OSError, MemoryError)):
+            # an unmounted volume, a full disk, a host fault: a fresh pod may
+            # not repeat it, so no deterministic marker (the driver may
+            # reacquire), but the pod HAS been told to terminate above
+            print(f"REFUSED (transient): supervisor setup failed: {exc!r}",
+                  file=sys.stderr, flush=True)
+        else:
+            print("ZERO_TOUCH_ABORTED_AT_SUPERVISOR_SETUP", flush=True)
         raise
     status = supervisor.run(resume=not args.no_resume)
     print(json.dumps({"outcome": status["outcome"],

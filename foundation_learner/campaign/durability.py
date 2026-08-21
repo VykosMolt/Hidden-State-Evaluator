@@ -305,7 +305,17 @@ class FlDurableMirror:
         opening ledger and the sealed results): a swallowed push there is
         how a replacement pod could be granted a second opening.
         """
-        self.store.push(path, self._rel(path))
+        try:
+            self.store.push(path, self._rel(path))
+        except Exception:
+            self.consecutive_failures += 1
+            raise
+        if self.consecutive_failures:
+            self.on_event("FL_DURABILITY_RECOVERED",
+                          after_failures=self.consecutive_failures)
+        self.consecutive_failures = 0
+        self.degraded = False
+        self._last_push_at[self._rel(path)] = time.monotonic()
         self.on_event("FL_DURABLE_STRICT_PUSHED", path=os.path.basename(path))
 
     def push_checkpoint(self, payload_path: str, manifest_path: str) -> None:

@@ -67,12 +67,17 @@ def git_blob_sha1(path: str) -> str:
     return h.hexdigest()
 
 
-def remote_identity(api, repo_id: str, remote_rel: str) -> dict:
+def remote_identity(api, repo_id: str, remote_rel: str,
+                    revision: str | None = None) -> dict:
     """What the Hub ACTUALLY holds at ``remote_rel``: the LFS sha256 for an
     LFS object, else the git blob sha1.  Both are computable from local
     bytes, so a transfer can be verified end to end without a second
-    upload and without trusting the client's own copy."""
-    infos = api.get_paths_info(repo_id, [remote_rel], repo_type="model")
+    upload and without trusting the client's own copy.  ``revision`` pins
+    the read to the commit just created: every FL push overwrites the same
+    path, so an unpinned read-after-write miss would return the PREVIOUS
+    blob and refuse a correct transfer."""
+    infos = api.get_paths_info(repo_id, [remote_rel], repo_type="model",
+                               revision=revision)
     if not infos:
         raise RuntimeError(f"{remote_rel} is absent from {repo_id} after "
                            f"the transfer")
@@ -84,8 +89,8 @@ def remote_identity(api, repo_id: str, remote_rel: str) -> dict:
 
 
 def verify_against_remote(api, repo_id: str, remote_rel: str,
-                          local: str) -> dict:
-    ident = remote_identity(api, repo_id, remote_rel)
+                          local: str, revision: str | None = None) -> dict:
+    ident = remote_identity(api, repo_id, remote_rel, revision=revision)
     if ident["kind"] == "lfs":
         ok = ident["sha256"] == sha256_file(local)
     else:
@@ -102,9 +107,10 @@ def do_push(repo_id: str, local: str, remote_rel: str) -> dict:
     from huggingface_hub import HfApi
     api = HfApi(token=os.environ.get("HF_TOKEN"))
     digest = sha256_file(local)
-    api.upload_file(path_or_fileobj=local, path_in_repo=remote_rel,
-                    repo_id=repo_id, repo_type="model")
-    remote = verify_against_remote(api, repo_id, remote_rel, local)
+    commit = api.upload_file(path_or_fileobj=local, path_in_repo=remote_rel,
+                             repo_id=repo_id, repo_type="model")
+    remote = verify_against_remote(api, repo_id, remote_rel, local,
+                                   revision=getattr(commit, "oid", None))
     return {"remote": remote_rel, "sha256": digest, **remote}
 
 

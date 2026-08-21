@@ -70,6 +70,7 @@ __all__ = [
     "EVENT_OPENED",
     "EVENT_ABORTED",
     "EVENT_INTENT",
+    "EVENT_INTENT_WITHDRAWN",
     "EVENT_RESULT",
     "MAX_OPENING_ATTEMPTS",
     "sealed_families",
@@ -100,6 +101,9 @@ EVENT_ABORTED = "SEALED_OPENING_ABORTED"
 #: budget, so an eviction between reading the sealed set and committing can
 #: never become an unrecorded extra use of it.
 EVENT_INTENT = "SEALED_OPENING_INTENT"
+#: Resolves an intent that never read a sealed byte (e.g. the strict mirror
+#: push of the intent itself failed); such an intent is not an attempt.
+EVENT_INTENT_WITHDRAWN = "SEALED_INTENT_WITHDRAWN"
 EVENT_RESULT = "SEALED_RESULT_WRITTEN"
 
 #: Contract §12c + Amendment 12: one opening, and at most one retry after a
@@ -398,9 +402,28 @@ class SealedUnlock:
         self.intent_entry = _append_ledger(self.ledger_path, EVENT_INTENT,
                                            payload, guard=self.guard,
                                            utc=_utc_now())
-        self._mirror_strict(self.ledger_path)
-        self._mirror(self.ledger_path)
+        if self.on_durable_strict is not None:
+            self._mirror_strict(self.ledger_path)
+        else:
+            self._mirror(self.ledger_path)
         return self.intent_entry
+
+    def withdraw_intent(self, reason: str) -> dict | None:
+        """Resolve a dangling intent that read NOTHING: recorded as
+        ``SEALED_INTENT_WITHDRAWN`` so it no longer counts as an interrupted
+        attempt.  Best-effort mirror (a refusal here is why we are here)."""
+        if self.intent_entry is None or self.reads:
+            return None
+        entry = _append_ledger(self.ledger_path, EVENT_INTENT_WITHDRAWN,
+                               {"opening_nonce":
+                                    self.opening_payload["opening_nonce"],
+                                "reason": str(reason)[:300]},
+                               guard=self.guard, utc=_utc_now())
+        try:
+            self._mirror(self.ledger_path)
+        except Exception:  # noqa: BLE001
+            pass
+        return entry
 
     def assert_durable(self, *result_paths: str) -> None:
         """Strictly mirror the ledger and the sealed results."""
@@ -505,6 +528,9 @@ class SealedUnlock:
     def read_shard(self, path: str) -> list[dict]:
         """THE sealed read.  Every sealed record in the campaign comes here."""
         self.assert_valid()
+        # structural, not caller-remembered: no sealed byte is read before
+        # the intent is durable
+        self.declare_intent()
         resolved = loader_guard(path, unlock=self, guard=self.guard,
                                 context="sealed_gate.read_shard")
         with open(resolved, "rb") as fh:
@@ -708,7 +734,8 @@ def open_sealed(*, ledger_path: str, dev_decisions_path: str,
     for e in entries:
         if e.get("event") == EVENT_INTENT:
             dangling_intents += 1
-        elif e.get("event") in (EVENT_OPENED, EVENT_ABORTED):
+        elif e.get("event") in (EVENT_OPENED, EVENT_ABORTED,
+                                EVENT_INTENT_WITHDRAWN):
             dangling_intents = max(0, dangling_intents - 1)
     if prior:
         raise LedgerError(
@@ -790,8 +817,14 @@ def sealed_opening(**kwargs):
     try:
         yield unlock
     except BaseException as exc:  # noqa: BLE001 - recorded, then re-raised
-        if not unlock.committed and not unlock.aborted:
+        if not unlock.committed and not unlock.aborted and unlock.reads:
             unlock.abort(f"{type(exc).__name__}: {exc}")
+        elif not unlock.committed and not unlock.aborted:
+            # nothing sealed was read: a mirror outage in declare_intent or a
+            # refusal before the first shard must NOT burn one of the two
+            # permanent opening attempts.  The dangling intent (if any) is
+            # recorded as such and counts until it is resolved below.
+            unlock.withdraw_intent(f"{type(exc).__name__}: {exc}")
         raise
     else:
         if not unlock.committed:
