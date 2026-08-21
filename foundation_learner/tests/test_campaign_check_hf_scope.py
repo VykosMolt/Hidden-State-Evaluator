@@ -94,8 +94,11 @@ def test_an_unwritable_mounted_destination_refuses(tmp_path):
 
 
 def _config(tmp_path, **over) -> str:
+    pregen = tmp_path / "pregen"
+    pregen.mkdir(exist_ok=True)
     cfg = {"schema": "flb200.session_config.v1", "rehearsal": False,
-           "fl_durable_destination": "hf://ns/fl-results"}
+           "fl_durable_destination": "hf://ns/fl-results",
+           "pregen_root": str(pregen)}
     cfg.update(over)
     path = str(tmp_path / "session.json")
     with open(path, "w", encoding="utf-8") as fh:
@@ -261,3 +264,46 @@ def test_termination_is_bounded_by_a_timeout():
     src = inspect.getsource(ss.SessionSupervisor.state_TERMINATE_ACCELERATOR)
     assert "timeout" in src, (
         "the single most expensive command in the system runs unbounded")
+
+
+def test_main_probes_the_pregen_read_source_from_the_session_config(
+        tmp_path, monkeypatch):
+    """fetch_pregen takes its source from the config; probing an empty env
+    source here verified nothing, so a read-less token reached the fetch."""
+    seen = []
+
+    def fake_run(repo, mode, timeout):
+        seen.append((repo, mode))
+        return {"repo": repo, "mode": mode, "read": True, "write": True}
+
+    monkeypatch.setattr(cs, "_run_helper", fake_run)
+    monkeypatch.setenv("HF_TOKEN", "synthetic-not-a-real-token")
+    monkeypatch.delenv("FL_PREGEN_SOURCE", raising=False)
+    config = _config(tmp_path, pregen_root=str(tmp_path / "absent"),
+                     fl_pregen_source="hf://ns/fl-staging/artifacts_fl/pregen")
+    monkeypatch.setattr("sys.argv", ["check_hf_scope", "--config", config])
+    assert cs.main() == 0
+    assert ("ns/fl-staging", "read") in seen
+    assert ("ns/fl-results", "write") in seen
+
+
+def test_a_failed_read_probe_refuses(tmp_path, monkeypatch):
+    def fake_run(repo, mode, timeout):
+        return {"repo": repo, "mode": mode,
+                "read": mode == "write", "write": mode == "write"}
+
+    monkeypatch.setattr(cs, "_run_helper", fake_run)
+    monkeypatch.setenv("HF_TOKEN", "synthetic-not-a-real-token")
+    config = _config(tmp_path, pregen_root=str(tmp_path / "absent"),
+                     fl_pregen_source="hf://ns/fl-staging")
+    monkeypatch.setattr("sys.argv", ["check_hf_scope", "--config", config])
+    assert cs.main() == 2
+
+
+def test_a_due_fetch_with_no_read_source_refuses(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("HF_TOKEN", "synthetic-not-a-real-token")
+    monkeypatch.delenv("FL_PREGEN_SOURCE", raising=False)
+    config = _config(tmp_path, pregen_root=str(tmp_path / "absent"))
+    monkeypatch.setattr("sys.argv", ["check_hf_scope", "--config", config])
+    assert cs.main() == 2
+    assert "no pregen read source" in capsys.readouterr().err

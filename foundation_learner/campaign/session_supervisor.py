@@ -378,6 +378,7 @@ class SessionSupervisor:
     close_out: dict = field(default_factory=dict, init=False)
     _t0: float | None = field(default=None, init=False)
     _records: int = field(default=0, init=False)
+    torn_journal_tail: dict | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         self.payload = self.config.validate()
@@ -418,6 +419,7 @@ class SessionSupervisor:
                     {"event": "FL_DURABILITY_RESTORE_FAILED",
                      "error": str(exc)[:300]})
         self._assert_journal_session()
+        self._repair_torn_tail()
         self.completed = [r["state"] for r in self.read_journal()
                           if r.get("event") == "STATE_COMPLETED"]
 
@@ -453,6 +455,35 @@ class SessionSupervisor:
             self.durability.push_file(self.journal_path)
             self._drain_durability_events()
         return record
+
+    def _repair_torn_tail(self) -> None:
+        """Physically drop a torn trailing record before anything appends.
+
+        Once the resumed session journals again, the torn line would sit
+        in the MIDDLE of the file and every later read would refuse it as
+        corruption.  The torn bytes are preserved in a ``.torn`` sidecar.
+        """
+        if not self.torn_journal_tail:
+            return
+        path = self.guard.guard(self.journal_path, o1_isolation.MODE_WRITE)
+        with open(path, "rb") as fh:
+            raw = fh.read()
+        body = raw.rstrip(b"\n")
+        cut = body.rfind(b"\n")
+        keep, torn = (body[:cut + 1], body[cut + 1:]) if cut >= 0 else (b"", body)
+        sidecar = path + ".torn"
+        with open(self.guard.guard(sidecar, o1_isolation.MODE_WRITE),
+                  "ab") as fh:
+            fh.write(torn + b"\n")
+        tmp = path + ".repair"
+        with open(tmp, "wb") as fh:
+            fh.write(keep)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+        self.torn_journal_tail["sidecar"] = os.path.basename(sidecar)
+        self.journal("JOURNAL_TORN_TAIL_DROPPED", "START_SESSION",
+                     dict(self.torn_journal_tail))
 
     def _push_durable(self, path: str) -> None:
         """Mirror one session file if a durable destination is configured."""
@@ -497,14 +528,35 @@ class SessionSupervisor:
             self._records += 1
 
     def read_journal(self) -> list[dict]:
+        """Parse the journal; a torn TRAILING record is tolerated.
+
+        Eviction can land mid-``write``: the last line is then a partial
+        JSON document.  Treating that as corruption would crash the
+        supervisor in its constructor — before ``run``'s ``finally`` can
+        reach ``_emergency_close`` — and strand a billing pod.  The torn
+        tail is dropped and recorded (``self.torn_journal_tail``); the
+        state it belonged to simply re-runs.  A torn record in the MIDDLE
+        of the file is genuine corruption and still refuses.
+        """
         path = self.guard.guard(self.journal_path, o1_isolation.MODE_READ)
         if not os.path.exists(path):
             return []
-        out = []
         with open(path, encoding="utf-8") as fh:
-            for line in fh:
-                if line.strip():
-                    out.append(json.loads(line))
+            lines = [ln for ln in fh.read().split("\n") if ln.strip()]
+        out: list[dict] = []
+        for index, line in enumerate(lines):
+            try:
+                out.append(json.loads(line))
+            except json.JSONDecodeError as exc:
+                if index == len(lines) - 1:
+                    self.torn_journal_tail = {
+                        "line_index": index, "bytes": len(line),
+                        "error": str(exc)[:200]}
+                    break
+                raise SupervisorError(
+                    f"REFUSED: journal record {index} of {len(lines)} is "
+                    f"unparseable ({exc}); a torn record that is not the "
+                    f"tail is corruption, not an interrupted write") from exc
         return out
 
     # ---------------- resume ----------------
@@ -669,6 +721,21 @@ class SessionSupervisor:
 
     # ---------------- states ----------------
 
+    def _discover_o1_roots(self) -> dict:
+        """Widen the refusal set from O1's own manifests (path strings only).
+
+        Called at START_SESSION (a resumed pod may already hold them) and
+        again once O1 reports complete, when they are guaranteed to exist.
+        Discovery only ever ADDS forbidden roots; an absent manifest leaves
+        the frozen list in force and is recorded as such.
+        """
+        report = self.guard.discover_from_o1_manifests(
+            list(self.payload.get("o1_hash_manifests") or []))
+        if report.get("added_roots"):
+            self.journal("O1_ROOTS_DISCOVERED", "ISOLATION",
+                         {"added_roots": report["added_roots"]})
+        return report
+
     def state_START_SESSION(self) -> dict:
         self._t0 = self.clock.monotonic()
         return {
@@ -676,6 +743,7 @@ class SessionSupervisor:
             "rehearsal": self.rehearsal,
             "unresolved_fields": self.payload.get("_unresolved_fields", []),
             "o1_roots": list(self.payload["o1_roots"]),
+            "o1_root_discovery": self._discover_o1_roots(),
             "isolation": self.guard.to_dict(),
             "session_authorized_seconds": float(
                 self.payload["session_authorized_seconds"]),
@@ -704,15 +772,28 @@ class SessionSupervisor:
         present = {marker: self.custodian.exists(marker) for marker in markers}
         missing = sorted(m for m, ok in present.items() if not ok)
         entry = self.state_results.get("RUN_O1_CALIBRATION") or {}
+        rc = entry.get("returncode")
         if missing:
             raise SupervisorError(
                 f"O1_HALT: the O1 phase did not produce its declared "
                 f"completion artefacts {missing} (entry command returncode "
-                f"{entry.get('returncode')}). FL does not start: there are no "
+                f"{rc}). FL does not start: there are no "
                 "O1 records to verify or transfer (contract §13).")
+        # Presence is NOT completion: the O1 production entry writes its
+        # FINAL_STATUS.json on an ABORT as well, and exits non-zero for it.
+        # The exit status is the one outcome-free signal FL may consult; the
+        # marker content stays unread.
+        if rc != 0:
+            raise SupervisorError(
+                f"O1_HALT: the O1 entry exited with returncode {rc}; its "
+                f"completion artefacts are present but a non-zero exit is "
+                f"O1's own declaration of an abort. FL does not start "
+                f"(contract §13).")
         return {"o1_outcome": "COMPLETE", "markers": present,
-                "entry_returncode": entry.get("returncode"),
-                "note": "presence only; no marker content is read"}
+                "entry_returncode": rc,
+                "o1_root_discovery": self._discover_o1_roots(),
+                "note": ("presence of the markers AND a zero O1 exit status; "
+                         "no marker content is read")}
 
     def state_VERIFY_O1_RECORDS(self) -> dict:
         reports = [self.custodian.verify_manifest(m)
@@ -1084,6 +1165,36 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _terminate_without_supervisor(config: "SessionConfig", out_dir: str,
+                                  exc: BaseException) -> None:
+    """Last-resort termination when the supervisor cannot even be built.
+
+    A refusal in the constructor (corrupt journal, foreign session_id,
+    guard failure) happens before ``run``'s ``finally`` exists, so without
+    this the configured ``terminate_command`` would never fire and the
+    accelerator would bill until the provider-side ``terminateAfter``.
+    The command comes straight from the raw config payload; nothing else
+    is trusted at this point.
+    """
+    payload = getattr(config, "payload", None) or {}
+    command = payload.get("terminate_command")
+    note = {"event": "TERMINATE_WITHOUT_SUPERVISOR",
+            "reason": repr(exc)[:400], "terminate_command": bool(command)}
+    print(json.dumps(note, sort_keys=True), file=sys.stderr)
+    if not command or (isinstance(command, str)
+                       and command.startswith("UNRESOLVED")):
+        return
+    try:
+        subprocess.run(
+            command, shell=isinstance(command, str), check=False,
+            timeout=float(payload.get("terminate_timeout_seconds")
+                          or TERMINATE_TIMEOUT_SECONDS),
+            env=SessionSupervisor._child_env(None), capture_output=True)
+    except Exception as fail:  # noqa: BLE001 - recorded, never raised over exc
+        print(json.dumps({"event": "TERMINATE_WITHOUT_SUPERVISOR_FAILED",
+                          "error": repr(fail)[:400]}), file=sys.stderr)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """The pod-side entry point (``deploy/fl_b200_entry.sh`` execs this).
 
@@ -1095,7 +1206,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     """
     args = build_parser().parse_args(argv)
     config = SessionConfig.load(args.config)
-    supervisor = SessionSupervisor(config=config, out_dir=args.out)
+    try:
+        supervisor = SessionSupervisor(config=config, out_dir=args.out)
+    except BaseException as exc:  # noqa: BLE001 - the pod must not be stranded
+        _terminate_without_supervisor(config, args.out, exc)
+        raise
     if supervisor.rehearsal:
         print(f"*** {REHEARSAL_LABEL}: this session is NOT a scientific run ***",
               file=sys.stderr)

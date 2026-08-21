@@ -318,3 +318,72 @@ def test_a_garbage_pod_allowance_is_refused_not_guessed(tmp_path, monkeypatch):
     sup = make_supervisor(tmp_path, path)
     with pytest.raises(ss.SupervisorError):
         sup._pod_authorized_seconds()
+
+
+def test_a_torn_journal_tail_does_not_strand_the_pod(tmp_path):
+    """Eviction mid-write leaves a partial last JSON line.  The supervisor
+    must still construct, drop the tail, record it, and resume."""
+    marker = tmp_path / "TERMINATED.log"
+    path = fixtures(tmp_path, marker)
+
+    def crashing_ladder(scheduler, ctx):
+        raise RuntimeError("crash")
+
+    first = make_supervisor(tmp_path, path, ladder_runner=crashing_ladder)
+    first.run(resume=False)
+    with open(first.journal_path, "a", encoding="utf-8") as fh:
+        fh.write('{"event": "STATE_STARTED", "state": "RUN_FL_LA')
+    second = make_supervisor(tmp_path, path)
+    assert second.torn_journal_tail is not None
+    assert "RUN_O1_CALIBRATION" in second.completed
+    status = second.run(resume=True)
+    events = [r["event"] for r in second.read_journal()]
+    assert "JOURNAL_TORN_TAIL_DROPPED" in events
+    assert status["close_out"]["terminate"] is not None or \
+        "TERMINATE_ACCELERATOR" in status["states_completed"]
+
+
+def test_a_torn_record_in_the_middle_is_corruption(tmp_path):
+    marker = tmp_path / "TERMINATED.log"
+    path = fixtures(tmp_path, marker)
+    first = make_supervisor(tmp_path, path,
+                            ladder_runner=lambda s, c: (_ for _ in ()).throw(
+                                RuntimeError("crash")))
+    first.run(resume=False)
+    lines = open(first.journal_path, encoding="utf-8").read().splitlines()
+    lines[1] = lines[1][:10]
+    open(first.journal_path, "w", encoding="utf-8").write(
+        "\n".join(lines) + "\n")
+    with pytest.raises(ss.SupervisorError, match="corruption"):
+        make_supervisor(tmp_path, path)
+
+
+def test_a_constructor_refusal_still_fires_the_terminate_command(
+        tmp_path, monkeypatch):
+    """A refusal before run() exists (corrupt journal) must not leave the
+    accelerator billing until the provider-side terminateAfter."""
+    marker = tmp_path / "TERMINATED.log"
+    path = fixtures(tmp_path, marker)
+    first = make_supervisor(tmp_path, path,
+                            ladder_runner=lambda s, c: (_ for _ in ()).throw(
+                                RuntimeError("crash")))
+    first.run(resume=False)
+    marker.unlink(missing_ok=True)
+    lines = open(first.journal_path, encoding="utf-8").read().splitlines()
+    lines[1] = lines[1][:10]
+    open(first.journal_path, "w", encoding="utf-8").write(
+        "\n".join(lines) + "\n")
+    monkeypatch.setattr(ss, "build_parser", lambda: _Parser(path, first.out_dir))
+    with pytest.raises(ss.SupervisorError):
+        ss.main([])
+    assert marker.exists(), "terminate_command did not run"
+
+
+class _Parser:
+    def __init__(self, config, out):
+        self._config, self._out = config, out
+
+    def parse_args(self, argv):
+        import types
+        return types.SimpleNamespace(config=str(self._config), out=str(self._out),
+                                     no_resume=False)

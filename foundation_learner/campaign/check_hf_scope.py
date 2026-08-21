@@ -108,12 +108,17 @@ def check(read_uri: str, write_uri: str, timeout: float = 300.0,
             "fl_durable_destination is unset or UNRESOLVED; an interruptible "
             "FL session with no durable mirror cannot survive an eviction")
     for res in checks:
+        if res["mode"] == "read" and not res.get("read"):
+            raise ScopeError(
+                f"the token cannot read {res['repo']}; the pod could not "
+                f"fetch the episode corpus and the FL ladder could not run")
         if res["mode"] == "write" and not res.get("write"):
             raise ScopeError(
                 f"the token can read {res['repo']} but cannot write to it; "
                 f"the journal and every training checkpoint would be lost "
                 f"on eviction")
-    return {"schema": "flb200.hf_scope_report.v1", "checks": checks}
+    return {"schema": "flb200.hf_scope_report.v1", "checks": checks,
+            "read_checked": bool(read_repo), "write_checked": bool(write_repo)}
 
 
 def main() -> int:
@@ -126,16 +131,31 @@ def main() -> int:
     a = p.parse_args()
 
     write = a.write_destination
+    read_source = a.read_source
+    pregen_root = None
     rehearsal = False
-    if not write and a.config:
+    if a.config and (not write or not read_source):
         try:
             with open(guard_path(a.config, MODE_READ), encoding="utf-8") as fh:
                 cfg = json.load(fh)
         except (OSError, json.JSONDecodeError) as exc:
             print(f"REFUSED: cannot read {a.config}: {exc}", file=sys.stderr)
             return 2
-        write = cfg.get("fl_durable_destination") or ""
+        write = write or cfg.get("fl_durable_destination") or ""
+        # the session config is the operator's single binding surface and is
+        # exactly where fetch_pregen takes the source from; probing a
+        # different (empty) source here would verify nothing
+        read_source = read_source or cfg.get("fl_pregen_source") or ""
+        pregen_root = cfg.get("pregen_root")
         rehearsal = bool(cfg.get("rehearsal", False))
+    if str(read_source).startswith("UNRESOLVED"):
+        read_source = ""
+    if (not read_source and not rehearsal
+            and not (pregen_root and os.path.isdir(str(pregen_root)))):
+        print("REFUSED: no pregen read source is bound and the pregen root "
+              "is absent; a fetch is due and its credential scope cannot be "
+              "verified", file=sys.stderr)
+        return 2
 
     if rehearsal and (not write or str(write).startswith("UNRESOLVED")):
         print("*** DRESS_REHEARSAL: no durable destination bound; credential "
@@ -147,7 +167,7 @@ def main() -> int:
               "episode corpus nor mirror the journal", file=sys.stderr)
         return 2
     try:
-        report = check(a.read_source, write)
+        report = check(read_source, write)
     except ScopeError as exc:
         print(f"REFUSED: {exc}", file=sys.stderr)
         return 2

@@ -264,6 +264,23 @@ def test_a_halted_o1_phase_aborts_before_fl(tmp_path):
     assert ladder_calls == []
 
 
+def test_an_o1_abort_that_still_writes_its_markers_is_a_halt(tmp_path):
+    """The O1 production entry writes FINAL_STATUS.json on ABORT too and
+    exits 1 for it.  Presence alone would hand the accelerator to FL after
+    a failed O1 phase; the zero exit status is the outcome-free signal."""
+    path, o1_root, _ = fixtures(
+        tmp_path,
+        o1_entry_command=[sys.executable, "-c",
+                          STUB + "; raise SystemExit(1)",
+                          str(tmp_path / "o1_calibration")])
+    sup, ladder_calls = supervisor(tmp_path, path)
+    status = sup.run(resume=False)
+    assert status["outcome"] == "ABORTED_AT_O1_HALT_OR_COMPLETE"
+    assert "returncode 1" in status["failure"]
+    assert ladder_calls == []
+    assert os.path.isfile(os.path.join(o1_root, "O1_COMPLETE")), "markers WERE present"
+
+
 def test_a_real_session_requires_the_frozen_backbone_hash(tmp_path):
     from foundation_learner.training import model_loading
 
