@@ -117,7 +117,13 @@ def do_push(repo_id: str, local: str, remote_rel: str) -> dict:
 def do_fetch(repo_id: str, remote_rel: str, local: str) -> dict:
     _assert_online_capable()
     from huggingface_hub import HfApi, hf_hub_download
+    api = HfApi(token=os.environ.get("HF_TOKEN"))
+    # resolve the branch head ONCE and pin both the download and the
+    # verification to it, so a concurrent push cannot make the check
+    # compare bytes from one commit against identity from another
+    revision = api.repo_info(repo_id, repo_type="model").sha
     got = hf_hub_download(repo_id=repo_id, filename=remote_rel,
+                          revision=revision,
                           token=os.environ.get("HF_TOKEN"))
     os.makedirs(os.path.dirname(os.path.abspath(local)) or ".", exist_ok=True)
     tmp = local + ".tmp"
@@ -125,8 +131,8 @@ def do_fetch(repo_id: str, remote_rel: str, local: str) -> dict:
     digest = sha256_file(tmp)
     # verify the bytes we are about to publish against what the Hub says it
     # holds, BEFORE os.replace makes them the local truth
-    remote = verify_against_remote(HfApi(token=os.environ.get("HF_TOKEN")),
-                                   repo_id, remote_rel, tmp)
+    remote = verify_against_remote(api, repo_id, remote_rel, tmp,
+                                   revision=revision)
     os.replace(tmp, local)
     return {"local": local, "sha256": digest, **remote}
 

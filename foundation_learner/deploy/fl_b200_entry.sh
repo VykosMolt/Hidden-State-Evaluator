@@ -112,7 +112,12 @@ fi
 echo "[fl_b200_entry] O1 has absolute priority; FL runs only after O1 close."
 echo "[fl_b200_entry] config: $CONFIG"
 echo "[fl_b200_entry] out:    $OUT"
-mkdir -p "$OUT"
+if ! mkdir -p "$OUT"; then
+  echo "ZERO_TOUCH_ABORTED_AT_FL_PRE_ENTRY_OUT_DIR"
+  "$PY" -m foundation_learner.campaign.session_supervisor \
+    --config "$CONFIG" --terminate-only || true
+  exit 2
+fi
 
 # Episode-corpus ingestion.  The ~480 MB pregen tree is neither in Git nor in
 # the image, and campaign/entry.py refuses a session whose pregen_root is

@@ -57,6 +57,7 @@ from __future__ import annotations
 
 import argparse
 import calendar
+import errno
 import json
 import os
 import re
@@ -576,20 +577,24 @@ class SessionSupervisor:
     def _drain_entries(self, pending: list) -> None:
         self._drained = 0
         for entry in pending:
-            event = entry.pop("event", "FL_DURABILITY_EVENT")
+            # never mutate the buffered entry: on a failure it is re-buffered
+            # with its event name intact, and only the UNWRITTEN suffix is
+            event = entry.get("event", "FL_DURABILITY_EVENT")
+            fields = {k: v for k, v in entry.items() if k != "event"}
             record = {
                 "schema": JOURNAL_SCHEMA, "index": self._records,
                 "event": event, "state": "DURABILITY",
                 "session_id": self.payload.get("session_id"),
                 "label": self.label(), "rehearsal": self.rehearsal,
                 "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                "monotonic": round(self.clock.monotonic(), 6), **entry,
+                "monotonic": round(self.clock.monotonic(), 6), **fields,
             }
             self.guard.append_line(
                 self.journal_path,
                 json.dumps(record, sort_keys=True, separators=(",", ":"),
                            ensure_ascii=False))
             self._records += 1
+            self._drained += 1
 
     def read_journal(self) -> list[dict]:
         """Parse the journal; a torn TRAILING record is tolerated.
@@ -1184,6 +1189,7 @@ class SessionSupervisor:
         except BaseException as exc:  # noqa: BLE001 - supervisor-level failure
             failed_state = failed_state or "SUPERVISOR"
             failure = failure or repr(exc)
+            failure_exc = failure_exc or exc
         finally:
             self.close_out = self._emergency_close(failed_state)
 
@@ -1306,6 +1312,17 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+_TRANSIENT_ERRNOS = frozenset({
+    errno.ENOSPC, errno.EIO, errno.ENOMEM, errno.EAGAIN, errno.ECONNRESET,
+    errno.ETIMEDOUT, errno.ECONNREFUSED, errno.ENETUNREACH, errno.EHOSTUNREACH})
+
+
+def _transient_setup_error(exc: BaseException) -> bool:
+    if isinstance(exc, MemoryError):
+        return True
+    return isinstance(exc, OSError) and exc.errno in _TRANSIENT_ERRNOS
+
+
 def _terminate_without_supervisor(config: "SessionConfig", out_dir: str,
                                   exc: BaseException) -> None:
     """Last-resort termination when the supervisor cannot even be built.
@@ -1374,12 +1391,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         # fresh pod raises HERE, before run()'s finally exists
         campaign_entry.attach_to_supervisor(supervisor)
     except BaseException as exc:  # noqa: BLE001 - the pod must not be stranded
+        if config is None:
+            # the config could not even be loaded: try the RAW file for a
+            # terminate_command before giving up on termination
+            try:
+                config = SessionConfig.load(args.config)
+            except Exception:  # noqa: BLE001
+                config = None
         if config is not None:
             _terminate_without_supervisor(config, args.out, exc)
-        if isinstance(exc, (OSError, MemoryError)):
-            # an unmounted volume, a full disk, a host fault: a fresh pod may
-            # not repeat it, so no deterministic marker (the driver may
-            # reacquire), but the pod HAS been told to terminate above
+        # Only a SMALL, explicit set is transient (same policy as
+        # training/stability.classify_exception): ENOSPC/EIO/ENOMEM/EAGAIN
+        # and the connection errnos.  FileNotFound/Permission/ReadOnly are
+        # deterministic across pods and carry the marker — silence here is
+        # indistinguishable from an eviction and buys a reacquisition loop.
+        if _transient_setup_error(exc) and config is not None:
             print(f"REFUSED (transient): supervisor setup failed: {exc!r}",
                   file=sys.stderr, flush=True)
         else:

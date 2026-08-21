@@ -530,3 +530,102 @@ def test_a_mirror_outage_before_any_sealed_read_burns_no_attempt(tmp_path):
     assert sg.EVENT_ABORTED not in events, events
     assert events.count(sg.EVENT_INTENT) == events.count(
         sg.EVENT_INTENT_WITHDRAWN) == 3
+
+
+def test_deterministic_setup_errors_carry_the_marker_and_terminate(
+        tmp_path, monkeypatch, capsys):
+    """FileNotFound / Permission / ReadOnly are the SAME on every pod: they
+    must carry the deterministic marker (silence = eviction = paid
+    reacquisition loop).  Only ENOSPC/EIO/ENOMEM/connection errnos are
+    transient."""
+    import errno
+    assert ss._transient_setup_error(OSError(errno.ENOSPC, "full"))
+    assert ss._transient_setup_error(MemoryError())
+    assert not ss._transient_setup_error(FileNotFoundError(2, "x"))
+    assert not ss._transient_setup_error(PermissionError(13, "x"))
+    assert not ss._transient_setup_error(OSError(errno.EROFS, "ro"))
+    # a config that cannot be LOADED still fires terminate_command from the
+    # raw file and prints the marker
+    marker = tmp_path / "TERMINATED.log"
+    path = fixtures(tmp_path, marker)
+    bad_out = tmp_path / "blocked" / "out"
+    (tmp_path / "blocked").mkdir()
+    (tmp_path / "blocked").chmod(0o500)
+    monkeypatch.setattr(ss, "build_parser", lambda: _Parser(path, bad_out))
+    try:
+        with pytest.raises(BaseException):
+            ss.main([])
+    finally:
+        (tmp_path / "blocked").chmod(0o700)
+    out = capsys.readouterr()
+    assert "ZERO_TOUCH_ABORTED_AT_SUPERVISOR_SETUP" in out.out
+    assert marker.exists()
+
+
+def test_drain_failure_keeps_event_names_and_never_duplicates(tmp_path):
+    marker = tmp_path / "TERMINATED.log"
+    path = fixtures(tmp_path, marker)
+    sup = make_supervisor(tmp_path, path)
+    sup.durability_events = [{"event": "FL_DURABILITY_PUSH_FAILED", "e": "a"},
+                             {"event": "FL_DURABILITY_DEGRADED", "n": 5}]
+    calls = {"n": 0}
+    real = sup.guard.append_line
+
+    def flaky(path_, line):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise OSError(28, "no space")
+        return real(path_, line)
+    sup.guard.append_line = flaky
+    with pytest.raises(OSError):
+        sup._drain_durability_events()
+    # the unwritten event is re-buffered WITH its name
+    assert sup.durability_events == [{"event": "FL_DURABILITY_DEGRADED", "n": 5}]
+    sup.guard.append_line = real
+    sup._drain_durability_events()
+    events = [r["event"] for r in sup.read_journal()]
+    assert events.count("FL_DURABILITY_PUSH_FAILED") == 1
+    assert events.count("FL_DURABILITY_DEGRADED") == 1
+
+
+def test_an_exception_after_the_sealed_file_is_opened_is_an_attempt(tmp_path):
+    from foundation_learner.campaign import sealed_gate as sg
+    import foundation_learner.tests.test_campaign_sealed_gate as t
+    guard, pregen, out, shard, manifest = t.campaign_dir(tmp_path)
+    decisions = t.frozen_decisions(guard, out)
+    ledger = os.path.join(out, sg.LEDGER_NAME)
+    kwargs = dict(ledger_path=ledger, dev_decisions_path=decisions,
+                  split_manifest_path=os.path.join(
+                      pregen, "family_split_manifest.json"), guard=guard)
+    # corrupt the shard so decipher/parse fails AFTER the file is opened
+    with open(shard, "r+b") as fh:
+        fh.seek(0, 2)
+        fh.write(b"garbage")
+    with pytest.raises(Exception):
+        with sg.sealed_opening(**kwargs) as u:
+            u.read_shard(shard)
+    events = [e["event"] for e in sg.read_ledger(ledger, guard=guard)]
+    assert sg.EVENT_ABORTED in events, events
+    assert sg.EVENT_INTENT_WITHDRAWN not in events
+
+
+def test_dangling_intents_pair_by_nonce_not_position(tmp_path):
+    from foundation_learner.campaign import sealed_gate as sg
+    import foundation_learner.tests.test_campaign_sealed_gate as t
+    guard, pregen, out, shard, manifest = t.campaign_dir(tmp_path)
+    decisions = t.frozen_decisions(guard, out)
+    ledger = os.path.join(out, sg.LEDGER_NAME)
+    kwargs = dict(ledger_path=ledger, dev_decisions_path=decisions,
+                  split_manifest_path=os.path.join(
+                      pregen, "family_split_manifest.json"), guard=guard)
+    # pod A: intent, read, SIGKILL (no abort, no withdraw)
+    a = sg.open_sealed(**kwargs)
+    a.read_shard(shard)
+    # pod B: intent then withdrawn (read nothing), twice on the same unlock
+    b = sg.open_sealed(**kwargs)
+    b.declare_intent()
+    assert b.withdraw_intent("x") is not None
+    assert b.withdraw_intent("x") is None          # idempotent
+    # A's interrupted attempt must still count: one dangling + zero aborted
+    c = sg.open_sealed(**kwargs)
+    assert c.prior_aborted == 1, c.prior_aborted

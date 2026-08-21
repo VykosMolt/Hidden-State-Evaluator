@@ -257,16 +257,22 @@ class FlDurableMirror:
         try:
             self.store.push(path, self._rel(path))
         except Exception as exc:  # noqa: BLE001
-            self.consecutive_failures += 1
-            self.on_event("FL_DURABILITY_PUSH_FAILED",
-                          path=os.path.basename(path), error=str(exc)[:200],
-                          consecutive_failures=self.consecutive_failures)
-            if (self.consecutive_failures >= self.DEGRADED_AFTER_FAILURES
-                    and not self.degraded):
-                self.degraded = True
-                self.on_event("FL_DURABILITY_DEGRADED",
-                              consecutive_failures=self.consecutive_failures)
+            self._note_failure(path, exc)
             return
+        self._note_success(path)
+
+    def _note_failure(self, path: str, exc: BaseException) -> None:
+        self.consecutive_failures += 1
+        self.on_event("FL_DURABILITY_PUSH_FAILED",
+                      path=os.path.basename(path), error=str(exc)[:200],
+                      consecutive_failures=self.consecutive_failures)
+        if (self.consecutive_failures >= self.DEGRADED_AFTER_FAILURES
+                and not self.degraded):
+            self.degraded = True
+            self.on_event("FL_DURABILITY_DEGRADED",
+                          consecutive_failures=self.consecutive_failures)
+
+    def _note_success(self, path: str) -> None:
         if self.consecutive_failures:
             self.on_event("FL_DURABILITY_RECOVERED",
                           after_failures=self.consecutive_failures)
@@ -307,15 +313,10 @@ class FlDurableMirror:
         """
         try:
             self.store.push(path, self._rel(path))
-        except Exception:
-            self.consecutive_failures += 1
+        except Exception as exc:
+            self._note_failure(path, exc)
             raise
-        if self.consecutive_failures:
-            self.on_event("FL_DURABILITY_RECOVERED",
-                          after_failures=self.consecutive_failures)
-        self.consecutive_failures = 0
-        self.degraded = False
-        self._last_push_at[self._rel(path)] = time.monotonic()
+        self._note_success(path)
         self.on_event("FL_DURABLE_STRICT_PUSHED", path=os.path.basename(path))
 
     def push_checkpoint(self, payload_path: str, manifest_path: str) -> None:

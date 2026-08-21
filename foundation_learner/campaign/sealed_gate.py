@@ -367,6 +367,8 @@ class SealedUnlock:
     #: strict mirror: raises when the file cannot be made durable
     on_durable_strict: Callable[[str], None] | None = None
     intent_entry: dict | None = None
+    reads_started: bool = False
+    intent_withdrawn: bool = False
 
     def _mirror(self, *paths: str) -> None:
         if self.on_durable is None:
@@ -412,8 +414,10 @@ class SealedUnlock:
         """Resolve a dangling intent that read NOTHING: recorded as
         ``SEALED_INTENT_WITHDRAWN`` so it no longer counts as an interrupted
         attempt.  Best-effort mirror (a refusal here is why we are here)."""
-        if self.intent_entry is None or self.reads:
+        if (self.intent_entry is None or self.reads or self.reads_started
+                or self.intent_withdrawn):
             return None
+        self.intent_withdrawn = True
         entry = _append_ledger(self.ledger_path, EVENT_INTENT_WITHDRAWN,
                                {"opening_nonce":
                                     self.opening_payload["opening_nonce"],
@@ -533,6 +537,10 @@ class SealedUnlock:
         self.declare_intent()
         resolved = loader_guard(path, unlock=self, guard=self.guard,
                                 context="sealed_gate.read_shard")
+        # from here a sealed file IS opened: an exception anywhere below
+        # (decipher, decode, parse) must count as an attempt, not as
+        # "read nothing" — ``reads`` is only appended on success
+        self.reads_started = True
         with open(resolved, "rb") as fh:
             raw = fh.read()
         plaintext = unseal_bytes(raw, self._key)
@@ -730,13 +738,21 @@ def open_sealed(*, ledger_path: str, dev_decisions_path: str,
     prior = [e for e in entries if e.get("event") == EVENT_OPENED]
     # a dangling intent is an interrupted attempt: it read (or was about to
     # read) the sealed set and never reached commit/abort
-    dangling_intents = 0
+    # paired by opening_nonce, never positionally: a withdrawal for intent B
+    # must not erase a dangling intent A that DID read the sealed set
+    open_nonces: list = []
     for e in entries:
+        nonce = e.get("opening_nonce")
         if e.get("event") == EVENT_INTENT:
-            dangling_intents += 1
+            open_nonces.append(nonce)
         elif e.get("event") in (EVENT_OPENED, EVENT_ABORTED,
                                 EVENT_INTENT_WITHDRAWN):
-            dangling_intents = max(0, dangling_intents - 1)
+            if nonce in open_nonces:
+                open_nonces.remove(nonce)
+            elif open_nonces and nonce is None:
+                # legacy entry without a nonce: resolve the oldest
+                open_nonces.pop(0)
+    dangling_intents = len(open_nonces)
     if prior:
         raise LedgerError(
             f"REFUSED: the sealed set has already been opened "
@@ -817,14 +833,19 @@ def sealed_opening(**kwargs):
     try:
         yield unlock
     except BaseException as exc:  # noqa: BLE001 - recorded, then re-raised
-        if not unlock.committed and not unlock.aborted and unlock.reads:
-            unlock.abort(f"{type(exc).__name__}: {exc}")
-        elif not unlock.committed and not unlock.aborted:
-            # nothing sealed was read: a mirror outage in declare_intent or a
-            # refusal before the first shard must NOT burn one of the two
-            # permanent opening attempts.  The dangling intent (if any) is
-            # recorded as such and counts until it is resolved below.
-            unlock.withdraw_intent(f"{type(exc).__name__}: {exc}")
+        try:
+            if not unlock.committed and not unlock.aborted and (
+                    unlock.reads or unlock.reads_started):
+                unlock.abort(f"{type(exc).__name__}: {exc}")
+            elif not unlock.committed and not unlock.aborted:
+                # no sealed file was opened: a mirror outage in
+                # declare_intent or a refusal before the first shard must
+                # NOT burn one of the two permanent opening attempts.  The
+                # dangling intent (if any) is withdrawn; failing to withdraw
+                # is the conservative direction (it keeps counting).
+                unlock.withdraw_intent(f"{type(exc).__name__}: {exc}")
+        except Exception:  # noqa: BLE001 - never mask the cause
+            pass
         raise
     else:
         if not unlock.committed:
