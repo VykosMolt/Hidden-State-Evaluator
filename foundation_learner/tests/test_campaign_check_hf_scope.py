@@ -227,10 +227,18 @@ def test_the_supervisor_re_emits_the_o1_completion_marker(capsys):
 
     record = ss.SessionSupervisor._run_command(
         Sup(), ["true"], state="RUN_O1_CALIBRATION")
-    assert "ZERO_TOUCH_COMPLETE" in capsys.readouterr().out, (
-        "the marker never reached the container log, so the driver would "
-        "classify a completed pod as evicted and pay to reacquire")
-    assert "ZERO_TOUCH_COMPLETE" in record["stdout_tail"]
+    out = capsys.readouterr().out
+    # The child's output IS re-emitted (an O1 phase that is silent in the
+    # container log is undiagnosable)... but its completion marker is NOT
+    # the session's: the driver's witness is a substring match accepted
+    # while the pod is RUNNING, and the verbatim marker made it terminate
+    # the pod ~20 s after the O1 phase, before any FL stage.
+    assert "some log" in out
+    assert "O1_PHASE_COMPLETE" in out
+    assert "ZERO_TOUCH_COMPLETE" not in out
+    assert "ZERO_TOUCH_COMPLETE" not in record["stdout_tail"]
+    # the session emits the literal exactly once, at its own end
+    assert ss._session_marker({"outcome": "COMPLETE"}) == "ZERO_TOUCH_COMPLETE"
 
 
 def test_the_deterministic_abort_marker_also_survives(capsys):
@@ -249,9 +257,14 @@ def test_the_deterministic_abort_marker_also_survives(capsys):
 
     ss.SessionSupervisor._run_command(Sup(), ["true"], state="X")
     captured = capsys.readouterr()
-    assert "ZERO_TOUCH_ABORTED_AT_" in captured.out, (
-        "a reproducible failure would drive reacquisition instead of "
-        "stopping the session")
+    # the O1 phase's verdict is visible but namespaced; the SESSION decides
+    # (O1_HALT_OR_COMPLETE refuses on the non-zero exit) and emits
+    # ZERO_TOUCH_ABORTED_AT_O1_HALT_OR_COMPLETE at its end
+    assert "O1_PHASE_ABORTED_AT_ENVIRONMENT_VERIFY" in captured.out
+    assert "ZERO_TOUCH_ABORTED_AT_" not in captured.out
+    assert ss._session_marker({"outcome": "ABORTED_AT_O1_HALT_OR_COMPLETE",
+                               "failed_state": "O1_HALT_OR_COMPLETE"}) == \
+        "ZERO_TOUCH_ABORTED_AT_O1_HALT_OR_COMPLETE"
     assert "boom" in captured.err
 
 
