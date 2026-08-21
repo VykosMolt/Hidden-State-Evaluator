@@ -6,7 +6,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WHEELS_SRC="${O1_B300_WHEELS:-/home/moloch/b200_build_cache/wheels_b300}"
 IMAGE_NAME="${1:-o1-b300-runner}"
-VERSION_TAG="${2:-v0.3.2}"
+VERSION_TAG="${2:-v0.3.3}"
 OUT="$ROOT/o1_b200/provider/runpod/CONTAINER_IMAGE_RECORD.json"
 
 cd "$ROOT"
@@ -42,8 +42,15 @@ else
   # digests differently on a differently-configured machine and the recorded
   # provenance hash stops being reproducible.  -print0/-0 handles newlines in
   # names; symlinks are listed explicitly so a link change is not invisible.
+  # deploy/environment_lock.json RECORDS this digest (and INTEGRATION.md
+  # quotes the image id), so they cannot be part of what is digested: a
+  # digest that covered its own record could never be re-synced without
+  # changing itself.  Both files still ship in the image; they are only
+  # excluded from the identity computation.
   FL_TREE_SHA=$(cd build_ctx/foundation_learner \
-    && find . \( -type f -o -type l \) -print0 \
+    && find . \( -type f -o -type l \) \
+         ! -path ./deploy/environment_lock.json \
+         ! -path ./deploy/INTEGRATION.md -print0 \
     | LC_ALL=C sort -z | xargs -0 sha256sum | LC_ALL=C sha256sum \
     | cut -d' ' -f1)
 fi
@@ -86,7 +93,7 @@ print(json.dumps({
   'numpy': numpy.__version__,
   'arch_list_source': 'host wheel verification (build has no GPU); re-verified on the acquired GPU by deploy/hardware_gate.py',
   'arch_list': json.loads('$ARCH_LIST'),
-  'sm103_native_basis': 'sm_100 cubins run natively on sm_103 (NVIDIA same-major/higher-minor SASS compatibility rule) and the wheel additionally carries 59 sm_103a arch-tuned cubins; NO PTX embedded so JIT fallback is impossible. arch_list above is torch.cuda.get_arch_list(), i.e. the build TARGET list, which does not enumerate arch-specific 'a' variants: the sm_103a/sm_100a cubin counts are cuobjdump evidence in deploy/FATBINARY_ARCH_EVIDENCE.json, and the loaded kernels are exercised on the acquired GPU by deploy/hardware_gate.py',
+  'sm103_native_basis': 'sm_100 cubins run natively on sm_103 (NVIDIA same-major/higher-minor SASS compatibility rule) and the wheel additionally carries 59 sm_103a arch-tuned cubins; NO PTX embedded so JIT fallback is impossible. arch_list above is torch.cuda.get_arch_list(), i.e. the build TARGET list, which does not enumerate arch-specific a-suffixed variants: the sm_103a/sm_100a cubin counts are cuobjdump evidence in deploy/FATBINARY_ARCH_EVIDENCE.json, and the loaded kernels are exercised on the acquired GPU by deploy/hardware_gate.py',
   'glibc': platform.libc_ver()[1],
 }))")
 

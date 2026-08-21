@@ -431,7 +431,10 @@ def run() -> Runner:
                            "foundation-learner-b200-v0", "foundation_learner")
         if not os.path.isdir(src):
             return                      # FL worktree not present in this checkout
-        # same rule as scripts/build_b300_image.sh: files + symlinks, C sort
+        # same rule as scripts/build_b300_image.sh: files + symlinks, C sort,
+        # minus the two files that RECORD the digest / image id
+        self_referential = {"deploy/environment_lock.json",
+                            "deploy/INTEGRATION.md"}
         names = []
         for base, dirs, files in os.walk(src):
             dirs[:] = [x for x in dirs
@@ -439,7 +442,10 @@ def run() -> Runner:
             for n in files:
                 if n.endswith(".pyc"):
                     continue
-                names.append(os.path.relpath(os.path.join(base, n), src))
+                rel = os.path.relpath(os.path.join(base, n), src)
+                if rel in self_referential:
+                    continue
+                names.append(rel)
         digests = []
         for rel in sorted(names):
             h = hashlib.sha256()
