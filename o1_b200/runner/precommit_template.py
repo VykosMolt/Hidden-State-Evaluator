@@ -50,6 +50,22 @@ def resolve(doc: dict, hardware_facts: dict, *, mock: bool) -> dict:
     return out
 
 
+#: Digests that are placeholders rather than measurements.  The dress
+#: rehearsal writes 64 zeros as its explicit mock, so a real deployed
+#: precommit carrying the same value is indistinguishable from a fabricated
+#: one -- which is exactly what a missing key silently produced.
+PLACEHOLDER_DIGESTS = ("0" * 64, "UNKNOWN", "")
+
+
+def _refuse_placeholder_digests(facts: dict) -> None:
+    bad = sorted(k for k, v in facts.items()
+                 if k.endswith("_sha256") and str(v) in PLACEHOLDER_DIGESTS)
+    if bad:
+        raise PrecommitTemplateError(
+            f"placeholder digest(s) {bad} in the deployed pre-registration; "
+            f"a committed hardware fact must be measured, not defaulted")
+
+
 def finalize(doc: dict) -> dict:
     """Produce the finalization envelope; refuses unresolved fields.
 
@@ -61,6 +77,8 @@ def finalize(doc: dict) -> dict:
     if left:
         raise PrecommitTemplateError(
             f"finalization refused: unresolved fields remain: {left}")
+    if not doc.get("mock"):
+        _refuse_placeholder_digests(doc.get("unresolved_hardware_facts", {}))
     body = json.loads(json.dumps(doc))
     envelope = {
         "finalized": True,

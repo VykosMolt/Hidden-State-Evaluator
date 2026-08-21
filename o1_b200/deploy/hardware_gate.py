@@ -140,7 +140,12 @@ def validate_facts(profile_key: str, facts: dict) -> dict:
         name = str(facts.get("device_name", ""))
         need(profile.display_name in name,
              f"device {name!r} is not the intended {profile.display_name}")
-        for other in ("H100", "H200", "A100", "GB200", "RTX", "L40", "V100"):
+        # GB300/GB200 are Grace-Hopper superchips, not the SXM parts these
+        # profiles pin: "B300" is a substring of "GB300", so the display-name
+        # check above accepts one.  compute_capability would usually catch it,
+        # but the deny-list is the check that says so out loud.
+        for other in ("H100", "H200", "A100", "GB200", "GB300", "GH200",
+                      "RTX", "L40", "V100"):
             need(other not in name.upper() or other in
                  profile.display_name.upper(),
                  f"device {name!r} matches forbidden substitute {other}")
@@ -192,6 +197,41 @@ def validate_facts(profile_key: str, facts: dict) -> dict:
     return report
 
 
+def observe_optimization_state(model) -> dict:
+    """What is ACTUALLY active on the loaded model, observed not asserted.
+
+    The environment report used to write ``attention_backend: "eager"``,
+    ``compile_state: "OFF"`` and ``cuda_graph_state: "OFF"`` as literals,
+    so the ``no_unvalidated_optimization`` selection gate could never fail.
+    """
+    import gc
+
+    import torch
+    attn = getattr(getattr(model, "config", None), "_attn_implementation",
+                   None)
+    try:
+        from torch._dynamo.eval_frame import OptimizedModule
+        compiled = isinstance(model, OptimizedModule) or any(
+            isinstance(m, OptimizedModule) for m in model.modules())
+    except Exception:  # noqa: BLE001 - dynamo absent => nothing compiled
+        compiled = False
+    # type-name match rather than isinstance: isinstance on every live
+    # object trips lazy attribute proxies (torch.distributed emits a
+    # deprecation warning merely for being looked at)
+    graphs = sum(1 for o in gc.get_objects()
+                 if type(o).__name__ == "CUDAGraph"
+                 and type(o).__module__.startswith("torch"))
+    return {
+        "attn_implementation": attn,
+        "compile_state": "ON" if compiled else "OFF",
+        "cuda_graph_state": "ON" if graphs else "OFF",
+        "cuda_graphs_alive": graphs,
+        "deterministic_algorithms": bool(
+            torch.are_deterministic_algorithms_enabled()),
+        "observed": True,
+    }
+
+
 def exercise_workloads(checkpoint_dir: str, out_dir: str) -> dict:
     """Representative REAL workload paths (pod-side; consumes no science)."""
     import torch
@@ -216,13 +256,24 @@ def exercise_workloads(checkpoint_dir: str, out_dir: str) -> dict:
 
     def ouro_load():
         from transformers import AutoModelForCausalLM, AutoTokenizer
+        # Exercise the configuration the SCIENCE uses, not transformers'
+        # defaults.  The sealed loader sets deterministic algorithms and
+        # eager attention; the gate used sdpa with determinism off, so the
+        # one thing it could not detect was an op with no deterministic
+        # implementation or an eager-attention failure on this arch -- which
+        # would then surface hours later, mid-calibration, with the pod paid
+        # for.
+        torch.use_deterministic_algorithms(True, warn_only=False)
         tok = AutoTokenizer.from_pretrained(checkpoint_dir,
-                                            trust_remote_code=True)
+                                            trust_remote_code=True,
+                                            local_files_only=True)
         model = AutoModelForCausalLM.from_pretrained(
             checkpoint_dir, torch_dtype=torch.bfloat16,
-            trust_remote_code=True).cuda().eval()
+            trust_remote_code=True, local_files_only=True,
+            attn_implementation="eager").cuda().eval()
         model_ctx["model"], model_ctx["tok"] = model, tok
-        return {"params": sum(p.numel() for p in model.parameters())}
+        return {"params": sum(p.numel() for p in model.parameters()),
+                **observe_optimization_state(model)}
     step("ouro_rltt_load", ouro_load)
 
     def ouro_forward():
@@ -302,8 +353,18 @@ def exercise_workloads(checkpoint_dir: str, out_dir: str) -> dict:
         return {"roundtrip": True}
     step("checkpoint_save_load", checkpoint_roundtrip)
 
+    # Release the gate's own allocator residue before anything measures
+    # free HBM.  Without this the gate's model load stays in the caching
+    # allocator and inflates every later steady_state_free_hbm reading --
+    # the figure a required selection gate is derived from.
+    model_ctx.clear()
+    import gc
+    gc.collect()
+    torch.cuda.empty_cache()
+    torch.cuda.reset_peak_memory_stats()
     ok = all(v.get("ok") for v in results.values())
-    return {"accepted": ok, "workloads": results}
+    return {"accepted": ok, "workloads": results,
+            "allocator_released_after_gate": True}
 
 
 def main() -> int:

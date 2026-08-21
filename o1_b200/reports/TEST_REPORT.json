@@ -134,12 +134,14 @@
         "benchmark harness refuses unknown modes and unqualified real-hardware runs",
         "HOSTILE ineligible-but-fastest backend can never win; selection is deterministic under input reordering",
         "selection with no eligible configuration refuses",
-        "benchmark harness dress rehearsal (serial + replica w2/w4) collects metrics on the corpus"
+        "REFERENCE_SERIAL is the terminal fallback with only the stability gate waivable",
+        "benchmark harness dress rehearsal (serial + replica w2/w4) collects metrics on the corpus",
+        "throughput stability is a time-windowed token rate, burst-safe and blind to corpus ordering"
       ],
       "failed": 0,
       "failures": [],
       "module": "test_corpus_and_policies",
-      "passed": 9
+      "passed": 11
     },
     {
       "checks": [
@@ -160,7 +162,7 @@
     },
     {
       "checks": [
-        "full mocked end-to-end dress rehearsal reaches COMPLETE with confirmed termination and machine-readable status",
+        "full mocked end-to-end dress rehearsal reaches COMPLETE with confirmed termination, machine-readable status and REAL gate derivation over the local benchmark",
         "failure injected at EVERY state: later states never begin, termination is requested, status is machine-readable",
         "valid completed synthetic records survive a downstream failure",
         "provider failure at every provider operation aborts cleanly",
@@ -182,6 +184,7 @@
         "precommit template freezes all scientific hashes; exactly the 12 hardware facts are unresolved",
         "environment template: every hardware field is unresolved",
         "HOSTILE stale/altered environment values are refused (transformers, GPU count, attention, CUBLAS, compile)",
+        "environment report refuses UNOBSERVED optimisation state",
         "HOSTILE tampered sealed module is refused at import time",
         "HOSTILE stale bytecode alongside sealed sources is refused",
         "SHA256SUMS write/verify roundtrip; tampering detected",
@@ -192,7 +195,7 @@
       "failed": 0,
       "failures": [],
       "module": "test_templates_and_integrity",
-      "passed": 13
+      "passed": 14
     },
     {
       "checks": [
@@ -298,12 +301,13 @@
         "missing BF16 refused",
         "wheel without compatible native SASS refused",
         "wheel embedding PTX (silent JIT possible) refused",
+        "optimisation state is observed on the model, not asserted",
         "no CUDA at all refused"
       ],
       "failed": 0,
       "failures": [],
       "module": "test_hardware_gate",
-      "passed": 15
+      "passed": 16
     },
     {
       "checks": [
@@ -324,7 +328,9 @@
         "the scope preflight refuses a session whose durability it cannot verify at all",
         "a mounted durable destination is proven by actually writing to it",
         "the scope preflight requires a token only when a hub repo is actually named",
+        "the scope preflight refuses a corrupt or absent pod manifest with the deterministic marker",
         "the entrypoint proves the credential scope before fetching anything",
+        "the image record's FL digest describes the FL tree the build would actually stage",
         "the session config refuses a required field that is merely ABSENT, not just one that is UNRESOLVED",
         "the result archive location is derived, and a stored one that disagrees is refused",
         "the combined O1 -> FL session can be selected from the authorized launch path at all",
@@ -336,10 +342,14 @@
         "a session prefix in the durable destination scopes every key, so a fresh run cannot silently resume an old one",
         "an expired authorization still permits TERMINATION while refusing acquisition"
       ],
-      "failed": 0,
-      "failures": [],
+      "failed": 3,
+      "failures": [
+        "the image record's FL digest describes the FL tree the build would actually stage",
+        "the session config refuses a required field that is merely ABSENT, not just one that is UNRESOLVED",
+        "the result archive location is derived, and a stored one that disagrees is refused"
+      ],
       "module": "test_launch_path",
-      "passed": 28
+      "passed": 27
     },
     {
       "checks": [
@@ -354,6 +364,7 @@
         "a transient completion-probe failure is retried, not read as an eviction",
         "budget soft-stop and external termination are reported as ABORTED_*, never as COMPLETE",
         "a repeated interruption with zero durable progress aborts as a container defect instead of thrashing",
+        "a single unproductive eviction after real progress is not a container defect, and the abort records the durable rows",
         "reacquisition re-runs profile selection: B300 evicted+gone -> explicit recorded B200 fallback -> COMPLETE",
         "reacquisition re-quotes: a changed interruptible price is re-derived, never cached",
         "O1 rows: committed+synced rows survive eviction; unsynced work is regenerated from the next missing row; corrupt mirrors are quarantined",
@@ -364,7 +375,7 @@
       "failed": 0,
       "failures": [],
       "module": "test_preemption",
-      "passed": 17
+      "passed": 18
     },
     {
       "checks": [
@@ -418,8 +429,8 @@
   ],
   "schema": "o1b200.test_report.v1",
   "scope_note": "Hardware-independent local validation only: synthetic runtime + non-O1 corpus + mocked provider/clock. No B200 hardware claim is made or implied.",
-  "total_failed": 0,
-  "total_passed": 263,
-  "utc": "2026-08-18T15:29:09Z",
-  "verdict": "ALL O1 B200 RUNNER TESTS PASSED"
+  "total_failed": 3,
+  "total_passed": 267,
+  "utc": "2026-08-21T18:26:05Z",
+  "verdict": "3 FAILURES"
 }

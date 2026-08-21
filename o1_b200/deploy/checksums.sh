@@ -11,7 +11,7 @@ case "${1:-verify}" in
         ! -path "./reports/rehearsal_calibration/*" \
         ! -path "./reports/downloaded/*" ! -path "./reports/eq_*/*" \
         ! -name "*.pyc" ! -path "*/__pycache__/*" \
-        | sed 's|^\./||' | sort \
+        | sed 's|^\./||' | LC_ALL=C sort \
         | while read -r f; do sha256sum "$f"; done ) > "$ROOT/SHA256SUMS"
     echo "wrote $ROOT/SHA256SUMS ($(wc -l < "$ROOT/SHA256SUMS") files)"
     ;;

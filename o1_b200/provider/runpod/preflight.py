@@ -75,11 +75,28 @@ def run_preflight(*, base_url: str = "https://api.runpod.io",
     def owned():
         pods = adapter.list_owned_instances()
         active = [p for p in pods if p.status not in ("TERMINATED",)]
+        # SECOND WITNESS.  _reconcile_by_identity deliberately consults
+        # GraphQL as well, because "REST visibility of spot pods is a
+        # live-hardware-unvalidated assumption" -- yet the one gate that
+        # decides whether to start spending trusted REST alone.  An
+        # invisible leftover here means a rerun starts a second pod.
+        graphql_ids, graphql_state = [], "OK"
+        try:
+            graphql_ids = sorted(
+                str(p.get("id")) for p in adapter.graphql.myself_pods()
+                if str(p.get("desiredStatus", "")).upper() != "TERMINATED")
+        except Exception as exc:  # noqa: BLE001
+            graphql_state = f"UNAVAILABLE: {type(exc).__name__}"
+        rest_ids = sorted(p.id for p in active)
+        only_graphql = sorted(set(graphql_ids) - set(rest_ids))
         return {
             "owned_pods": len(pods),
             "active_pods": [{"id": p.id, "name": p.name, "status": p.status}
                             for p in active],
-            "unexpected_active_billable_pod": bool(active),
+            "graphql_active_pod_ids": graphql_ids,
+            "graphql_witness": graphql_state,
+            "active_only_on_graphql": only_graphql,
+            "unexpected_active_billable_pod": bool(active or only_graphql),
         }
     step("owned_pods", owned)
     step("billing", lambda: adapter.get_billing_usage())

@@ -42,7 +42,7 @@ from .persistence import atomic_write_text
 from .precommit_template import finalize, load_template, resolve
 from .provider_adapter import LocalProviderAdapter
 from .runbuild import O1_MANIFEST_PATHS
-from .selection import select_backend
+from .selection import derive_gates, select_backend
 from .state_machine import ZeroTouchStateMachine
 from .validation_corpus import disjointness_report, load_corpus
 from . import sealed_import
@@ -123,6 +123,17 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
             raise ProductionEntryError(
                 f"artifact verification failed:\n{proc.stdout[-1500:]}"
                 f"{proc.stderr[-1500:]}")
+        # Bind the checkpoint's tree hash into the model artifact NOW.
+        # backends.model_artifact_sha256() requires it for the ouro_rltt
+        # kind and nothing ever supplied it, so the first backend call
+        # raised KeyError at NON_O1_EQUIVALENCE -- on every pod, after the
+        # 5 GB fetch and the hardware gate were already paid for.  The
+        # value is taken from the manifest that verify_artifacts.py has
+        # just re-hashed against the on-disk tree, which is exactly the
+        # "precomputed, re-checked on the target machine" contract.
+        artifact["checkpoint_tree_sha256"] = _manifest_checkpoint_sha256(
+            manifest, CHECKPOINT_DIR)
+        ctx["checkpoint_tree_sha256"] = artifact["checkpoint_tree_sha256"]
         tasks, config = load_corpus(corpus_dir)
         rep = disjointness_report(tasks, O1_MANIFEST_PATHS)
         if rep["verdict"] != "DISJOINT":
@@ -156,7 +167,9 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
             json.dumps(gate, indent=2, sort_keys=True, default=str) + "\n")
         env_report = collect_pod_report(
             container_image_digest=os.environ.get("O1_IMAGE_DIGEST",
-                                                  "UNKNOWN"))
+                                                  "UNKNOWN"),
+            observed=gate["workload_exercises"]["workloads"].get(
+                "ouro_rltt_load"))
         validated = validate_b200_report(env_report)
         atomic_write_text(
             os.path.join(out_dir, "ENVIRONMENT_REPORT.resolved.json"),
@@ -251,58 +264,20 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
         atomic_write_text(
             os.path.join(out_dir, "BENCHMARK_REPORT.real.json"),
             json.dumps(rep, indent=2, sort_keys=True, default=str) + "\n")
+        ctx["benchmark_sha256"] = __import__("hashlib").sha256(
+            open(os.path.join(out_dir, "BENCHMARK_REPORT.real.json"),
+                 "rb").read()).hexdigest()
         return {"benchmarked": len(ctx["benchmark_raw"])}
 
     def _derive_gates(entry: dict, ctx) -> dict:
-        """Mechanical gate derivation from real per-config measurements.
-
-        Every gate is derived from a measurement OF THIS CONFIGURATION.  A
-        config with no equivalence verdict of its own is ineligible; the
-        row-count and environment gates are checked against the corpus size
-        and the recorded environment rather than asserted.
-        """
         import torch
-        cid = entry.get("config_id")
-        eq = (ctx.get("equivalence") or {}).get(cid)
-        measured = eq is not None
-        structural = bool(measured and eq.get("eligible_structurally"))
-        core_identical = bool(measured and (eq.get("is_reference")
-                                            or eq.get("scientific_core_identical")))
-        total = torch.cuda.get_device_properties(0).total_memory
-        reserved = (entry.get("gpu") or {}).get("hbm_reserved_bytes", 0)
-        free_frac = 1.0 - (reserved / total if total else 1.0)
-        expected_rows = int(ctx.get("corpus_row_count") or 0)
-        rows_ok = (expected_rows > 0
-                   and int(entry.get("n_rows", -1)) == expected_rows)
-        spread = entry.get("throughput_stability_spread")
-        env = ctx.get("environment_report_raw") or {}
-        no_unvalidated_opt = (env.get("compile_state") in ("OFF", "off", False)
-                              and env.get("cuda_graph_state") in
-                              ("OFF", "off", False)
-                              and env.get("attention_backend") == "eager")
-        return {
-            **entry,
-            "equivalence_measured_for_this_config": measured,
-            "completed_rows_per_hour":
-                float(entry.get("completed_rows_per_second", 0.0)) * 3600.0,
-            "peak_hbm_reserved_bytes": reserved,
-            "steady_state_free_hbm_fraction": free_frac,
-            "structural_pass": structural,
-            "parser_verifier_pass": (measured
-                                     and entry.get("integrity_failures", 1) == 0),
-            "action_seed_mapping_exact": core_identical,
-            "intervention_pass": core_identical,
-            "transport_pass": core_identical,
-            "resume_pass": entry.get(
-                "resume_remaining_after_completion", -1) == 0,
-            "no_missing_or_duplicate_rows": rows_ok,
-            "no_oom": entry.get("oom_count", 1) == 0,
-            "free_hbm_fraction_ok": free_frac >= 0.15,
-            "no_unvalidated_optimization": no_unvalidated_opt,
-            "throughput_stable": (spread is not None and spread <= 0.25),
-            "scientific_config_unchanged": bool(
-                ctx.get("corpus_config_verified")),
-        }
+        return derive_gates(
+            entry,
+            equivalence=(ctx.get("equivalence") or {}).get(entry.get("config_id")),
+            device_total_memory=torch.cuda.get_device_properties(0).total_memory,
+            expected_rows=int(ctx.get("corpus_row_count") or 0),
+            environment=ctx.get("environment_report_raw") or {},
+            corpus_config_verified=bool(ctx.get("corpus_config_verified")))
 
     def backend_select(ctx):
         candidates = [_derive_gates(e, ctx) for e in ctx["benchmark_raw"]
@@ -338,9 +313,15 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
                 ctx["selected_backend"]["completed_rows_per_hour"],
             "actual_hourly_rate_usd": ctx["hourly_rate"],
             "computed_hard_runtime_seconds": ctx["runtime_limit"],
-            "environment_digest_sha256": ctx["environment_report"].get(
-                "report_sha256", "0" * 64),
-            "final_backend_benchmark_report_sha256": gate_sha,
+            # validate_b200_report returns {"valid", "environment_digest_sha256"}
+            # -- there is no "report_sha256", so this defaulted to 64 zeros:
+            # the deployed pre-registration recorded a placeholder that is
+            # byte-identical to the dress rehearsal's mock, and no audit
+            # could tell a real environment from a fabricated one.
+            "environment_digest_sha256":
+                ctx["environment_report"]["environment_digest_sha256"],
+            # the BENCHMARK it names, not a second copy of the gate hash
+            "final_backend_benchmark_report_sha256": ctx["benchmark_sha256"],
         }, mock=False)
         ctx["finalized_precommit"] = finalize(resolved)
         path = os.path.join(out_dir, "CALIBRATION_PRECOMMIT.deployed.json")
@@ -396,7 +377,21 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
             "why": ("the sealed orchestrator generates serially; the "
                     "selected backend governs the non-O1 benchmark and the "
                     "precommit record, not calibration throughput")}
-        done = _existing_row_count(os.path.join(out_dir, "o1_records.jsonl"))
+        # Progress must come from the DURABLE marker, not from local disk.
+        # The restore runs inside the CALIBRATION handler, which is a LATER
+        # state, and out_dir is fresh container disk on every pod -- so a
+        # resumed pod always measured done == 0 here and re-projected the
+        # full 4608 rows against a shrunken allowance.  The gate therefore
+        # refused every resume, and refused it more certainly the deeper
+        # into the run the eviction landed: the exact inverse of what the
+        # durability design exists for.  None means "unknown", which is
+        # deliberately not zero.
+        local_done = _existing_row_count(
+            os.path.join(out_dir, "o1_records.jsonl"))
+        durable_done = records_mirror.latest_row_count()
+        done = max(local_done, durable_done or 0)
+        ctx["affordability_rows_done"] = {
+            "local": local_done, "durable": durable_done, "used": done}
         projected = (O1_ROWS_TOTAL - done) / max(rows_per_hour, 1e-9) * 3600
         return affordability_gate(
             projected_calibration_seconds=projected,
@@ -532,11 +527,25 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
                  "why": "binds the accelerator architecture that produced the "
                         "first rows; the sealed resume replays baselines "
                         "bitwise"}, indent=2, sort_keys=True) + "\n")
+            # FATAL, not best-effort.  This marker is the ONLY thing that
+            # stops a B300-then-B200 (or reverse) reacquisition mixing two
+            # architectures into one sealed dataset: the sealed resume only
+            # replays baselines for a PARTIAL task, so an eviction on a task
+            # boundary performs no bitwise check at all, and the sealed row
+            # schema records no GPU or arch field.  If the marker is not
+            # durable, a later pod cannot be refused -- so failing to
+            # publish it must stop this pod now, before rows exist, rather
+            # than produce an unverifiable dataset later.
             try:
                 store.push_file(marker, profile_key_path)
             except Exception as exc:  # noqa: BLE001
                 _log_event(out_dir, "PROFILE_BINDING_PUBLISH_FAILED",
                            error=str(exc)[:200])
+                raise ProductionEntryError(
+                    f"could not publish the accelerator-profile binding "
+                    f"({exc}); without it a reacquisition on a different "
+                    f"architecture could not be refused, and the sealed "
+                    f"dataset would be unverifiable") from None
         run_root = os.path.join(ROOT, "o1_runs", "O1_V2_AXIS_BANK_REDESIGN")
         # 2. replacement manifest (deployed torch) + pod artifact map +
         #    regenerated sealed-format precommit bound to them
@@ -746,7 +755,14 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
         atomic_write_text(sidecar, json.dumps(
             {"archive": "o1_results.tar.gz", "sha256": digest,
              "rows": _existing_row_count(
-                 os.path.join(out_dir, "o1_records.jsonl"))},
+                 os.path.join(out_dir, "o1_records.jsonl")),
+             # WHOSE result this is.  The archive and its digest live at a
+             # fixed, run-agnostic key, so without this the driver could
+             # download a PREVIOUS session's archive, check it against that
+             # same session's sidecar, and report a fully aborted paid run
+             # as a verified COMPLETE carrying the old numbers.
+             "launch_nonce": os.environ.get("O1_LAUNCH_NONCE", ""),
+             "image_digest": os.environ.get("O1_IMAGE_DIGEST", "")},
             indent=2, sort_keys=True) + "\n")
         store.push_file(sidecar, "results/o1_results.tar.gz.sha256")
         _log_event(out_dir, "RESULTS_PUBLISHED", sha256=digest)
@@ -801,6 +817,34 @@ def _existing_row_count(path: str) -> int:
         return 0
     with open(path, encoding="utf-8") as fh:
         return sum(1 for ln in fh if ln.strip())
+
+
+def _manifest_checkpoint_sha256(manifest_path: str, checkpoint_dir: str) -> str:
+    """The checkpoint tree hash the transfer manifest pins.
+
+    verify_artifacts.py has already recomputed sha256_tree over the mounted
+    tree and compared it to this value, so reading it here binds the run to
+    bytes that were verified on THIS machine rather than to an assertion.
+    """
+    try:
+        with open(manifest_path, encoding="utf-8") as fh:
+            entries = json.load(fh)["artifacts"]
+    except (OSError, json.JSONDecodeError, KeyError) as exc:
+        raise ProductionEntryError(
+            f"cannot read the artifact manifest {manifest_path!r} to bind "
+            f"the checkpoint tree hash: {exc}") from None
+    want = os.path.abspath(checkpoint_dir)
+    for name, spec in sorted(entries.items()):
+        if os.path.abspath(str(spec.get("path", ""))) == want:
+            digest = str(spec.get("sha256", ""))
+            if len(digest) != 64:
+                raise ProductionEntryError(
+                    f"manifest entry {name!r} carries no usable sha256 for "
+                    f"the checkpoint; refusing to run unbound")
+            return digest
+    raise ProductionEntryError(
+        f"no manifest entry describes the checkpoint at {checkpoint_dir!r}; "
+        f"the run cannot be bound to a verified model artifact")
 
 
 def main() -> int:

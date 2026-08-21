@@ -43,6 +43,17 @@ SEALED_MODULE_SHA256 = {
         "ce6e79c6c39847144955b0ff4a725ddb4006d5ffb893644eb7b34861441107ac",
     "horizon_logic_generator_v2.py":
         "7fbfbdf79309f79855e7631e4b9923a6eae607741a1aed0cd96904b6651dfb4d",
+    # EXECUTED as a subprocess by production_entry to mint the deployed
+    # pre-registration -- the document every single row is bound to.  It was
+    # in the package's own SHA256SUMS but absent from this pin, so the one
+    # sealed file whose output defines the run's identity was the one file
+    # the bridge never byte-verified.
+    "calibration_precommit.py":
+        "4f64d74989fe5ba736567863e722e2543234fb3637f7e79664bb6b6d62d2a210",
+    "pregeneration_seal.py":
+        "b301462352e56f524264d8d5cfcc6b9712b4a51ca78e31e4f2e48510ba941ccd",
+    "cohort_allocation.py":
+        "89b09d186d9a527c4e22d3df97fca480f7cedeb5bfa2390a86d3ac4574766820",
 }
 
 BASE_PACKAGE = "O1_oracle_reachability_v2.1.0"

@@ -34,7 +34,7 @@ import time
 
 from .authorization import AuthorizationError, LiveMutationAuthorization
 from .billing import (
-    BudgetViolation, SpendTracker, hard_compute_seconds,
+    BudgetViolation, SpendTracker, as_money, hard_compute_seconds,
     remaining_compute_seconds, session_fits_policy,
 )
 from .graphql_spot import PRODUCTION_GRAPHQL_URL, RunpodGraphQlClient
@@ -65,6 +65,17 @@ REST_PRODUCTION_URL = "https://api.runpod.io"
 # Safety margin added to the provider-side terminateAfter auto-terminate
 # beyond the locally enforced hard budget deadline.
 TERMINATE_AFTER_MARGIN_SECONDS = 30 * 60
+
+# terminateAfter is WRITE-ONLY at RunPod.  Verified 2026-08-21 against the
+# production GraphQL endpoint with unauthenticated document validation (no
+# key, no mutation executed): ``PodRentInterruptableInput.terminateAfter``
+# is accepted, and ``Pod.terminateAfter`` does not exist
+# ("Cannot query field \"terminateAfter\" on type \"Pod\"").  It can
+# therefore never be read back to prove it was armed, which is why the
+# lifecycle refuses to run a pod unless the INDEPENDENT local watchdog has
+# confirmed arming (``confirm_armed``): the provider backstop is a bonus,
+# never the stop the session relies on.
+TERMINATE_AFTER_READ_BACK = "IMPOSSIBLE: not a Pod field (verified 2026-08-21)"
 
 
 class RunpodAdapterError(RuntimeError):
@@ -105,6 +116,7 @@ class RunpodV2Adapter:
                 authorization, base_url=base_url, api_key=api_key,
                 opener=opener, sleep=sleep)
         self.clock = clock
+        self.sleep = sleep
         self.spend_clock = spend_clock
         # optional operator reordering of the frozen profiles (never an
         # addition: the authorization covers every frozen profile already)
@@ -321,12 +333,70 @@ class RunpodV2Adapter:
         if not pod_id:
             raise RunpodAdapterError("spot create returned no pod id")
         self._arm_spend()
-        # authoritative state comes from the REST surface
-        return self.get_instance(pod_id)
+        # The pod EXISTS and is billing from this line onward.  The caller
+        # records its id and arms the watchdog only AFTER this returns, so
+        # letting a read-back failure propagate orphaned a live billing pod
+        # that nothing recorded and no watchdog could stop -- while the
+        # session status said ABORTED_BEFORE_CREATE.  REST visibility of a
+        # just-created spot pod is also eventually consistent, and 404 is
+        # deliberately not in RETRYABLE_STATUS, so a single 404 did it.
+        return self._read_back_or_minimal(pod_id, created)
+
+    def _read_back_or_minimal(self, pod_id: str, created: dict,
+                              attempts: int = 5) -> PodModel:
+        """Authoritative REST state if obtainable; never lose the pod if not."""
+        last = None
+        for i in range(attempts):
+            try:
+                return self.get_instance(pod_id)
+            except (TransportError, SchemaIncompatibility) as exc:
+                last = exc
+                if i + 1 < attempts:
+                    self.sleep(min(8.0, 1.0 * (2 ** i)))
+        self._reconciliation_notes.append({
+            "event": "REST_READBACK_UNAVAILABLE",
+            "pod_id": pod_id, "error": str(last)[:200],
+            "note": ("identity taken from the create response; the pod "
+                     "exists and is billing, so it must be recorded and "
+                     "watchdogged even though REST could not describe it")})
+        return PodModel(
+            id=pod_id, name=str(created.get("name") or ""),
+            status="PROVISIONING", cloud=None, gpu_type_id=None,
+            gpu_count=None, image=None, cost_per_hour=None,
+            created_at=None, started_at=None, datacenter_id=None,
+            extra={"source": "graphql_create_response",
+                   "desiredStatus": created.get("desiredStatus")})
 
     def session_spend_usd(self):
         """Cumulative session spend including every earlier evicted pod."""
         return self.spend.effective_spend() if self.spend is not None else "0"
+
+    def _persisted_carryover(self):
+        """Cumulative spend recorded by earlier PROCESSES of this session."""
+        path = getattr(self.authorization, "spend_ledger", None)
+        if not path or not os.path.exists(path):
+            return as_money("0")
+        try:
+            with open(path, encoding="utf-8") as fh:
+                return as_money(json.load(fh).get("carryover_usd", "0"))
+        except (OSError, ValueError, TypeError):
+            # Unreadable is NOT zero: assuming zero is exactly the mistake
+            # that hands a restart a fresh full allocation.
+            raise BudgetViolation(
+                f"the durable spend ledger {path!r} exists but cannot be "
+                f"read; refusing to assume this session has spent nothing")
+
+    def _persist_carryover(self, amount) -> None:
+        path = getattr(self.authorization, "spend_ledger", None)
+        if not path:
+            return
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump({"schema": "o1b300.spend_ledger.v1",
+                       "carryover_usd": str(amount)}, fh, sort_keys=True)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
 
     def _arm_spend(self) -> None:
         """Arm the meter at POD CREATION, not at RUNNING.
@@ -335,11 +405,17 @@ class RunpodV2Adapter:
         its container ever reached RUNNING still costs money; starting the
         meter at RUNNING recorded those attempts as free.
         """
-        carry = self.session_spend_usd()
+        carry = max(as_money(self.session_spend_usd()),
+                    self._persisted_carryover())
         self.spend = SpendTracker(
             self.accepted_quote["total_projected_hourly_usd"],
             clock=self.spend_clock, carryover_usd=carry)
         self.spend.mark_pod_started()
+        # Record the carryover the moment a pod starts billing.  If this
+        # process dies before terminate_and_confirm freezes the real figure,
+        # a restart must still know the earlier pods existed -- otherwise
+        # the crash itself is what resets the budget.
+        self._persist_carryover(carry)
 
     def _reconcile_by_identity(self, name: str,
                                nonce: str | None = None) -> PodModel | None:

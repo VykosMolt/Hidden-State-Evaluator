@@ -86,7 +86,8 @@ def validate_b200_report(report: dict) -> dict:
                 "o1b200.environment_report.v1", report)}
 
 
-def collect_pod_report(container_image_digest: str = "UNKNOWN") -> dict:
+def collect_pod_report(container_image_digest: str = "UNKNOWN",
+                       observed: dict | None = None) -> dict:
     """Fully-resolved environment report on the ACCELERATOR pod.
 
     Sets and records the sealed deterministic runtime configuration, then
@@ -125,7 +126,13 @@ def collect_pod_report(container_image_digest: str = "UNKNOWN") -> dict:
         "python_version": _sys.version.split()[0],
         "linux_kernel": _platform.release(),
         "container_image_digest": container_image_digest,
-        "attention_backend": "eager",
+        # observed on the loaded model by the hardware gate, never asserted;
+        # without an observation the field is UNOBSERVED and validation
+        # refuses, so the no_unvalidated_optimization gate cannot pass by
+        # default
+        "attention_backend": (observed or {}).get("attn_implementation",
+                                                  "UNOBSERVED"),
+        "optimization_state_observed": bool(observed),
         "deterministic_settings": {
             "torch_use_deterministic_algorithms": True,
             "cudnn_deterministic": bool(torch.backends.cudnn.deterministic),
@@ -138,8 +145,9 @@ def collect_pod_report(container_image_digest: str = "UNKNOWN") -> dict:
             "cudnn_allow_tf32": bool(torch.backends.cudnn.allow_tf32),
         },
         "bf16_support": bool(torch.cuda.is_bf16_supported()),
-        "compile_state": "OFF",
-        "cuda_graph_state": "OFF",
+        "compile_state": (observed or {}).get("compile_state", "UNOBSERVED"),
+        "cuda_graph_state": (observed or {}).get("cuda_graph_state",
+                                                 "UNOBSERVED"),
     }
 
 

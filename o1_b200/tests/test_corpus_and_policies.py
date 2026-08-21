@@ -6,7 +6,10 @@ import os
 
 from _h import CORPUS_DIR, Runner, fresh_dir
 
-from o1_b200.runner.benchmark_o1_b200 import BenchmarkError, load_benchmark_order, run_benchmarks
+from o1_b200.runner.benchmark_o1_b200 import (
+    BenchmarkError, load_benchmark_order, run_benchmarks, stability_spread,
+    windowed_token_rates,
+)
 from o1_b200.runner.runbuild import O1_MANIFEST_PATHS, build_validation_bundle
 from o1_b200.runner.selection import SelectionError, select_backend
 from o1_b200.runner.validation_corpus import (
@@ -152,6 +155,46 @@ def run() -> Runner:
     r.check("selection with no eligible configuration refuses",
             selection_no_eligible_raises)
 
+    def terminal_fallback_waives_only_stability():
+        # nothing eligible, reference fails ONLY throughput_stable -> it is
+        # the terminal fallback and the waiver is recorded
+        out = select_backend([
+            _candidate("B200_BATCHED_w1_b8", "B200_BATCHED", 9000, batch=8,
+                       spread=0.6),
+            _candidate("REFERENCE_SERIAL_w1_b1", "REFERENCE_SERIAL", 1000,
+                       spread=0.4)])
+        assert out["selected"]["config_id"] == "REFERENCE_SERIAL_w1_b1"
+        assert out["terminal_fallback_waiver"]["waived_gates"] == [
+            "throughput_stable"]
+        # the waiver never extends to a scientific or safety gate
+        for bad in ({"no_oom": False}, {"structural_pass": False},
+                    {"free_hbm_fraction_ok": False},
+                    {"scientific_config_unchanged": False}):
+            try:
+                select_backend([
+                    _candidate("REFERENCE_SERIAL_w1_b1", "REFERENCE_SERIAL",
+                               1000, spread=0.4, **bad)])
+            except SelectionError:
+                continue
+            raise AssertionError(f"terminal fallback waived {bad}")
+        # a non-reference backend is never a fallback
+        try:
+            select_backend([_candidate("B200_REPLICA_w2_b1", "B200_REPLICA",
+                                       5000, workers=2, spread=0.4)])
+        except SelectionError:
+            pass
+        else:
+            raise AssertionError("replica became a fallback")
+        # and when something IS eligible the waiver is not used
+        out = select_backend([
+            _candidate("B200_REPLICA_w2_b1", "B200_REPLICA", 5000, workers=2),
+            _candidate("REFERENCE_SERIAL_w1_b1", "REFERENCE_SERIAL", 1000,
+                       spread=0.4)])
+        assert out["selected"]["config_id"] == "B200_REPLICA_w2_b1"
+        assert out["terminal_fallback_waiver"] is None
+    r.check("REFERENCE_SERIAL is the terminal fallback with only the "
+            "stability gate waivable", terminal_fallback_waives_only_stability)
+
     def local_benchmark_dress_rehearsal():
         report = run_benchmarks(
             CORPUS_DIR, fresh_dir("bench_local"), mode="local-synthetic",
@@ -164,8 +207,54 @@ def run() -> Runner:
             assert res["integrity_failures"] == 0
             assert res["oom_count"] == 0
             assert res["resume_remaining_after_completion"] == 0
+            assert len(res["throughput_windows_tokens_per_second"]) == 4
+            assert res["throughput_stability_spread"] is not None
+            assert "one execute_rows call" in res["throughput_stability_basis"]
     r.check("benchmark harness dress rehearsal (serial + replica w2/w4) "
             "collects metrics on the corpus", local_benchmark_dress_rehearsal)
+
+    def stability_windows_measure_time_not_row_order():
+        # a perfectly steady producer: 1 token every second for 40 s
+        steady = [(float(t), 1) for t in range(1, 41)]
+        rates = windowed_token_rates(steady, 0.0, 40.0)
+        assert len(rates) == 4
+        assert all(abs(x - 1.0) < 1e-9 for x in rates), rates
+        assert stability_spread(rates) < 1e-9
+        # the SAME steady producer committing in bursts of 10 (a batched
+        # backend): interpolation must not read the bursts as instability
+        bursty = [(10.0, 10), (20.0, 10), (30.0, 10), (40.0, 10)]
+        rates = windowed_token_rates(bursty, 0.0, 40.0)
+        assert all(abs(x - 1.0) < 1e-9 for x in rates), rates
+        # a burst that straddles a window boundary is split pro rata
+        straddle = [(15.0, 15), (40.0, 25)]
+        rates = windowed_token_rates(straddle, 0.0, 40.0)
+        assert all(abs(x - 1.0) < 1e-9 for x in rates), rates
+        # a genuine stall in the third window IS detected
+        stalled = [(float(t), 1) for t in range(1, 21)] + [(40.0, 1)] + \
+            [(float(t), 1) for t in range(41, 61)]
+        rates = windowed_token_rates(stalled, 0.0, 60.0)
+        assert rates[2] < 0.5 * rates[0], rates
+        assert stability_spread(rates) > 0.25
+        # heavy rows clustered in one contiguous block of the corpus do NOT
+        # move a steady token rate (the defect the old quartile split had)
+        heavy_block = [(float(t), 1) for t in range(1, 21)] + \
+            [(20.0 + 0.5 * i, 1) for i in range(1, 41)] + \
+            [(40.0 + float(t), 1) for t in range(1, 21)]
+        rows = windowed_token_rates([(t, 1) for t, _ in heavy_block], 0, 60)
+        assert stability_spread(rows) > 0.25, "rows/s DOES vary here"
+        # ...but at a constant 2 tokens/s the token rate is flat
+        toks = [(t, 2) for t, _ in heavy_block[:20]] + \
+            [(t, 1) for t, _ in heavy_block[20:60]] + \
+            [(t, 2) for t, _ in heavy_block[60:]]
+        assert stability_spread(windowed_token_rates(toks, 0, 60)) < 1e-9
+        # degenerate inputs
+        assert windowed_token_rates([], 0.0, 10.0) == [0.0] * 4
+        assert windowed_token_rates(steady, 5.0, 5.0) == []
+        assert stability_spread([]) is None
+        assert stability_spread([0.0, 0.0]) == 1.0
+    r.check("throughput stability is a time-windowed token rate, burst-safe "
+            "and blind to corpus ordering",
+            stability_windows_measure_time_not_row_order)
 
     return r
 

@@ -64,7 +64,15 @@ def model_artifact_sha256(model_artifact: dict) -> str:
     if model_artifact.get("kind") == "ouro_rltt":
         # precomputed tree hash must be supplied and is re-checked at
         # artifact-verification time on the target machine
-        return model_artifact["checkpoint_tree_sha256"]
+        digest = model_artifact.get("checkpoint_tree_sha256")
+        if not digest:
+            # A bare KeyError here cost a whole paid pod to diagnose.
+            raise BackendError(
+                "the ouro_rltt model artifact carries no "
+                "checkpoint_tree_sha256; production_entry binds it from the "
+                "verified transfer manifest after ARTIFACT_VERIFY, so this "
+                "means the artifact was built outside that path")
+        return digest
     raise BackendError("unknown model artifact kind")
 
 
@@ -316,10 +324,27 @@ def _replica_worker(payload: dict) -> dict:
             return generate_branch(model, tokenizer, task, seed,
                                    direction, signed_alpha)
 
-    return run_serial_core(
+    out = run_serial_core(
         payload["specs"], bundle, store, model, tokenizer,
         backend_id="B200_REPLICA", worker_id=payload["worker_id"],
         environment_sha256=env_sha, generate_one=generate_one)
+    # The model lives in THIS process; the parent holds no CUDA allocation
+    # for it.  Peak HBM must be reported from here or the benchmark's
+    # free-HBM gate and the peak-HBM tie-break see an empty parent.
+    out["gpu"] = worker_gpu_peak()
+    return out
+
+
+def worker_gpu_peak() -> dict:
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            return {"cuda": False}
+        return {"cuda": True,
+                "hbm_peak_allocated_bytes": int(torch.cuda.max_memory_allocated()),
+                "hbm_peak_reserved_bytes": int(torch.cuda.max_memory_reserved())}
+    except Exception:  # noqa: BLE001 - diagnostics only
+        return {"cuda": False}
 
 
 def _worker_main(payload, queue):
@@ -441,9 +466,18 @@ class ReplicaBackend(Backend):
                 pending = failed
             else:
                 pending = {}
+        per_worker = {w: r.get("gpu") or {"cuda": False}
+                      for w, r in results.items()}
+        # Workers run concurrently, so the SUM of their peaks bounds the
+        # concurrent total from above: conservative for the free-HBM gate.
+        summed = sum(int(g.get("hbm_peak_reserved_bytes", 0))
+                     for g in per_worker.values())
         return {"workers": results,
                 "n_generated": sum(r["n_generated"] for r in results.values()),
-                "restarts": restarts}
+                "restarts": restarts,
+                "gpu": {"per_worker": per_worker,
+                        "hbm_peak_reserved_bytes_sum": summed,
+                        "cuda": any(g.get("cuda") for g in per_worker.values())}}
 
     def checkpoint(self) -> dict:
         return {"completed": len(self.store.load_completed())}

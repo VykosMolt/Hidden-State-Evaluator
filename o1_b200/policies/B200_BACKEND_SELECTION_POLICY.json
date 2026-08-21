@@ -13,7 +13,7 @@
     "no OOM during the configuration's benchmark",
     "steady-state free HBM >= 15% of capacity",
     "no unvalidated optimization active (compaction, torch.compile, CUDA graphs, alternate attention all OFF unless separately equivalence-passed)",
-    "throughput stable (quartile rows/s spread <= 25%)",
+    "throughput stable (spread <= 25% of decode tokens/s across four equal wall-clock windows of each execution stream's steady state within one execute_rows pass; the worst stream is the configuration's spread)",
     "scientific configuration unchanged (axes, K=8, CRN, Latin square, alpha grid, parser, verifier, transport, task populations, seed policy)"
   ],
   "selection_rule": "among eligible configurations select highest verified completed rows/hour on the non-O1 validation corpus benchmark",
@@ -23,10 +23,20 @@
     "3: smaller worker/batch count (workers+batch sum, then workers)",
     "4: lexicographically smallest config_id"
   ],
-  "fallback": "B200_REPLICA is the designated fallback if no B200_BATCHED configuration passes the equivalence gates; REFERENCE_SERIAL is always eligible as the terminal fallback",
+  "fallback": "B200_REPLICA is the designated fallback if no B200_BATCHED configuration passes the equivalence gates; REFERENCE_SERIAL is always eligible as the terminal fallback PROVIDED every scientific and safety gate passes for it (structural, parser/verifier, mapping, intervention, transport, resume, rows, no OOM, free HBM, no unvalidated optimization, configuration unchanged); only the throughput-stability performance gate is waived for the terminal fallback, and the waiver is recorded in BACKEND_SELECTION.json",
   "prohibitions": [
     "no selection based on any O1 task outcome",
     "no post-hoc re-benchmarking to flip a selection",
     "an ineligible configuration can never be selected regardless of throughput"
+  ],
+  "amendments": [
+    {
+      "amendment": 1,
+      "date": "2026-08-21",
+      "field": "eligibility_requirements_all_must_pass[throughput stable]",
+      "was": "throughput stable (quartile rows/s spread <= 25%)",
+      "why": "the v1 measurement executed the corpus in four CONTIGUOUS row quartiles and compared rows/s, which measures corpus ordering: on the local synthetic benchmark every backend showed the same slow third quartile (rows 192-287 generate more tokens) and 7 of 10 configurations, the reference included, failed the gate. On the accelerator that is an abort at BACKEND_SELECT after the benchmark has been paid for. The threshold (25%) is unchanged; the quantity is now the accelerator's decode rate over time, per execution stream, so a replica worker's model-load ramp and uneven finish are not read as instability either.",
+      "scientific_impact": "none: selection input only; the sealed O1 package, the equivalence gates and the corpus are untouched"
+    }
   ]
 }

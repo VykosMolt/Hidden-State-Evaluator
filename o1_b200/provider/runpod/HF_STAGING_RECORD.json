@@ -1,6 +1,6 @@
 {
   "artifact_download_test": "PASS",
-  "pod_fetch_note": "the pod downloads via huggingface_hub with a READ-scoped token in RUNPOD_API-independent env var HF_TOKEN (never baked into the image), then deploy/verify_artifacts.py re-verifies before any model load",
+  "pod_fetch_note": "the pod downloads via huggingface_hub with a READ-scoped token in RUNPOD_API-independent env var HF_TOKEN (never baked into the image), then deploy/verify_artifacts. CORRECTED: the pod carries ONE HF_TOKEN and needs READ on the staging repo AND WRITE on the results repo. A token scoped to one direction passes every gate and then loses the run -- see PRE_RENTAL_PREREQUISITES.md section 5 and runner/check_hf_scope.py, which proves both directions before the multi-gigabyte fetch.",
   "private": true,
   "repo": "Vykos/o1-b200-staging",
   "results": {

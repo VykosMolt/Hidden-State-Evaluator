@@ -375,6 +375,37 @@ def run() -> Runner:
     r.check("the scope preflight requires a token only when a hub repo is "
             "actually named", scope_preflight_does_not_invent_a_token_requirement)
 
+    def scope_preflight_treats_a_corrupt_manifest_as_deterministic():
+        """A corrupt or absent pod manifest used to escape as a traceback
+        (no marker => the driver reacquires and pays to repeat it) or be
+        silently read as "nothing to fetch"."""
+        import io
+        from contextlib import redirect_stderr, redirect_stdout
+        import o1_b200.runner.check_hf_scope as mod
+        d = fresh_dir("scope_bad_manifest")
+        dest = os.path.join(d, "durable")
+        bad = os.path.join(d, "POD_TRANSFER_MANIFEST.json")
+        with open(bad, "w", encoding="utf-8") as fh:
+            fh.write("{not json")
+        saved_argv = sys.argv
+        try:
+            for manifest in (bad, os.path.join(d, "absent.json")):
+                sys.argv = ["check_hf_scope", "--read-source", "",
+                            "--write-destination", dest,
+                            "--artifacts-root", os.path.join(d, "a"),
+                            "--manifest", manifest]
+                out, err = io.StringIO(), io.StringIO()
+                with redirect_stdout(out), redirect_stderr(err):
+                    rc = mod.main()
+                assert rc == 2, (manifest, rc)
+                assert "ZERO_TOUCH_ABORTED_AT_HF_SCOPE" in out.getvalue()
+                assert "manifest" in err.getvalue()
+        finally:
+            sys.argv = saved_argv
+    r.check("the scope preflight refuses a corrupt or absent pod manifest "
+            "with the deterministic marker",
+            scope_preflight_treats_a_corrupt_manifest_as_deterministic)
+
     def the_entrypoint_checks_scope_before_the_multi_gigabyte_fetch():
         text = open(os.path.join(DEPLOY, "start_b300.sh"),
                     encoding="utf-8").read()
@@ -439,9 +470,12 @@ def run() -> Runner:
         good = {"artifact_source": "hf://ns/staging",
                 "result_destination": "hf://ns/results/SESSION",
                 "image_digest_ref": "r@sha256:" + "0" * 64,
-                "project": "P", "identities": {"a": "b"}}
+                "project": "P", "identities": {"a": "b"},
+                "package_zip_sha256": "1" * 64,
+                "budget_policy_sha256": "2" * 64}
         path = os.path.join(cfgdir, "RUNPOD_SESSION_CONFIG.json")
-        for drop in ("artifact_source", "result_destination", "project"):
+        for drop in ("artifact_source", "result_destination", "project",
+                     "package_zip_sha256", "budget_policy_sha256"):
             bad = {k: v for k, v in good.items() if k != drop}
             with open(path, "w", encoding="utf-8") as fh:
                 json.dump(bad, fh)
@@ -483,6 +517,8 @@ def run() -> Runner:
                "result_destination": "hf://ns/results/SESSION",
                "image_digest_ref": "r@sha256:" + "0" * 64,
                "project": "P", "identities": {"a": "b"},
+               "package_zip_sha256": "1" * 64,
+               "budget_policy_sha256": "2" * 64,
                "result_source": "hf://ns/results/results/o1_results.tar.gz"}
         with open(os.path.join(cfgdir, "RUNPOD_SESSION_CONFIG.json"),
                   "w", encoding="utf-8") as fh:

@@ -123,6 +123,22 @@ def run() -> Runner:
             "(transformers, GPU count, attention, CUBLAS, compile)",
             env_validation_rules)
 
+    def env_unobserved_optimization_state_refuses():
+        # the three optimisation fields are OBSERVED on the loaded model;
+        # a report built without an observation carries UNOBSERVED and
+        # must refuse rather than pass the gate by default
+        for field in ("attention_backend", "compile_state",
+                      "cuda_graph_state"):
+            bad = _resolved_env()
+            bad[field] = "UNOBSERVED"
+            try:
+                validate_b200_report(bad)
+            except EnvReportError:
+                continue
+            raise AssertionError(f"{field}=UNOBSERVED accepted")
+    r.check("environment report refuses UNOBSERVED optimisation state",
+            env_unobserved_optimization_state_refuses)
+
     def sealed_modules_verify_and_tamper_detected():
         sealed_import.verify_sealed_modules()
         d = fresh_dir("sealed_tamper")

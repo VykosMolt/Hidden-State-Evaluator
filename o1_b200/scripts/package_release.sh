@@ -22,8 +22,25 @@ if [[ -e "$OUT" ]]; then
 fi
 
 cd "$ROOT"
-# refresh the package checksum manifest first: it ships inside the archive
+# The archive is defined by what is COMMITTED (see the git ls-files below),
+# so refuse a dirty tree before touching anything -- otherwise the release
+# describes a state that exists in no commit and cannot be reproduced from
+# a fresh clone.
+DIRTY="$(git status --porcelain -- o1_b200 || true)"
+if [[ -n "$DIRTY" ]]; then
+  echo "REFUSED: o1_b200/ has uncommitted changes; commit them first so the" >&2
+  echo "         release is reproducible from a fresh clone:" >&2
+  echo "$DIRTY" | head -20 >&2
+  exit 4
+fi
+# refresh the package checksum manifest: it ships inside the archive
 ./o1_b200/deploy/checksums.sh write >/dev/null
+if [[ -n "$(git status --porcelain -- o1_b200/SHA256SUMS || true)" ]]; then
+  echo "REFUSED: o1_b200/SHA256SUMS was stale and has been refreshed;" >&2
+  echo "         commit it, then re-run so the archive ships a manifest" >&2
+  echo "         that matches the commit it claims to be." >&2
+  exit 4
+fi
 
 python3 - "$OUT" <<'PYEOF'
 import os, stat, sys, zipfile
@@ -47,14 +64,20 @@ def included(path: str) -> bool:
             return False
     return True
 
-files = []
-for dirpath, dirnames, filenames in os.walk(os.path.join(root, "o1_b200")):
-    dirnames.sort()
-    for name in sorted(filenames):
-        rel = os.path.relpath(os.path.join(dirpath, name), root)
-        if included(rel):
-            files.append(rel)
-files.sort()
+# GIT-TRACKED files define the archive.  Walking the working tree shipped
+# whatever happened to be lying under o1_b200/ -- a scratch JSON, an editor
+# backup, a local config with a credential -- inside an archive advertised
+# as deterministic and reproducible.  Tracked-ness is also what makes a
+# fresh clone of the pushed commit reproduce the same zip.
+import subprocess as _sp
+_ls = _sp.run(["git", "ls-files", "-z", "--", "o1_b200"],
+              cwd=root, capture_output=True, check=True)
+tracked = [r for r in _ls.stdout.decode().split("\0") if r]
+if not tracked:
+    raise SystemExit("REFUSED: git ls-files listed nothing under o1_b200/; "
+                     "refusing to build a release from an unknown tree")
+files = sorted(rel for rel in tracked
+               if included(rel) and os.path.isfile(os.path.join(root, rel)))
 
 with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
     for rel in files:

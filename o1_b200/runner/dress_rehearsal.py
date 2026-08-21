@@ -23,9 +23,20 @@ from .persistence import atomic_write_text
 from .precommit_template import finalize, load_template, resolve
 from .provider_adapter import MockProviderAdapter
 from .runbuild import O1_MANIFEST_PATHS, build_validation_bundle
-from .selection import select_backend
+from .selection import derive_gates, select_backend
 from .state_machine import ZeroTouchStateMachine
 from .validation_corpus import disjointness_report, load_corpus
+
+#: Stages of the frozen BENCHMARK_ORDER the rehearsal measures locally:
+#: the reference, one replica and one batched configuration.
+REHEARSAL_BENCHMARK_STAGES = 6
+#: The two gate inputs that do not exist on a CPU rehearsal.  DECLARED, not
+#: measured, and labelled as such in the selection record.
+REHEARSAL_DECLARED_DEVICE_MEMORY = 180 * 10**9
+REHEARSAL_DECLARED_ENVIRONMENT = {
+    "compile_state": "OFF", "cuda_graph_state": "OFF",
+    "attention_backend": "eager",
+    "source": "DRESS_REHEARSAL_DECLARED_NOT_MEASURED"}
 
 
 class MockClock:
@@ -42,7 +53,8 @@ class MockClock:
 def build_handlers(corpus_dir: str, work_dir: str, provider: MockProviderAdapter,
                    clock: MockClock, *, subset: list[str],
                    fail_at: str | None = None,
-                   fail_exc: Exception | None = None) -> dict:
+                   fail_exc: Exception | None = None,
+                   benchmark_stages: int = REHEARSAL_BENCHMARK_STAGES) -> dict:
     artifact = {"kind": "synthetic", "device": "cpu", "seed_tag": 0}
 
     def maybe_fail(state):
@@ -97,46 +109,79 @@ def build_handlers(corpus_dir: str, work_dir: str, provider: MockProviderAdapter
                                os.path.join(work_dir, f"eq_{backend_id}"),
                                artifact, worker_count=w, batch_size=b,
                                task_subset=subset)
-            comp[backend_id] = compare_rows(ref["rows"], cand["rows"])
+            comp[f"{backend_id}_w{w}_b{b}"] = compare_rows(ref["rows"],
+                                                            cand["rows"])
         if not all(c["eligible_structurally"] for c in comp.values()):
             raise RuntimeError("structural equivalence gate failed")
-        ctx["equivalence"] = {k: {"structural": v["eligible_structurally"],
-                                  "core_identical": v["scientific_core_identical"]}
-                              for k, v in comp.items()}
-        return ctx["equivalence"]
+        # keyed by config_id with production's own verdict shape, so the
+        # gate derivation below is the production one, not a stand-in
+        comp["REFERENCE_SERIAL_w1_b1"] = {
+            "eligible_structurally": True, "scientific_core_identical": True,
+            "is_reference": True}
+        ctx["equivalence"] = comp
+        ctx["corpus_row_count"] = len(ref["rows"])
+        return {cid: {"structural": v["eligible_structurally"],
+                      "core_identical": v.get("scientific_core_identical")}
+                for cid, v in comp.items()}
 
     def non_o1_benchmark(ctx):
+        """The REAL harness on the synthetic runtime: one execute_rows call
+        per configuration, time-windowed stability, worker HBM reporting.
+        The numbers are LOCAL_SYNTHETIC and never a B200 result, but the
+        measurement path is the one the pod runs."""
         maybe_fail("NON_O1_BENCHMARK")
-        clock.advance(600.0)  # mocked benchmark wall time
-        ctx["benchmark"] = [
-            {"config_id": "REFERENCE_SERIAL_w1_b1", "backend": "REFERENCE_SERIAL",
-             "workers": 1, "batch": 1, "completed_rows_per_hour": 1200.0,
-             "peak_hbm_reserved_bytes": 4 * 10**10,
-             "steady_state_free_hbm_fraction": 0.75,
-             "throughput_stability_spread": 0.04},
-            {"config_id": "B200_REPLICA_w4_b1", "backend": "B200_REPLICA",
-             "workers": 4, "batch": 1, "completed_rows_per_hour": 4100.0,
-             "peak_hbm_reserved_bytes": 1.2 * 10**11,
-             "steady_state_free_hbm_fraction": 0.35,
-             "throughput_stability_spread": 0.08},
-            {"config_id": "B200_BATCHED_w1_b8", "backend": "B200_BATCHED",
-             "workers": 1, "batch": 8, "completed_rows_per_hour": 5200.0,
-             "peak_hbm_reserved_bytes": 6 * 10**10,
-             "steady_state_free_hbm_fraction": 0.6,
-             "throughput_stability_spread": 0.06}]
-        return {"benchmarked": len(ctx["benchmark"])}
+        from .benchmark_o1_b200 import run_benchmarks
+        rep = run_benchmarks(
+            corpus_dir, os.path.join(work_dir, "benchmark"),
+            mode="local-synthetic", task_subset=subset,
+            max_stages=benchmark_stages)
+        clock.advance(sum(float(r.get("execute_seconds") or 0.0)
+                          for r in rep["results"]))
+        ctx["benchmark_raw"] = [r for r in rep["results"]
+                                if not r.get("skipped")]
+        ctx["benchmark_mode"] = rep["mode"]
+        return {"benchmarked": len(ctx["benchmark_raw"]),
+                "mode": rep["mode"]}
 
     def backend_select(ctx):
+        """Production's gate derivation over real measurements.
+
+        The rehearsal used to assert all twelve gates True over invented
+        numbers, so a gate that no configuration could pass (the old
+        contiguous-quartile stability spread) was discovered only on a paid
+        accelerator.  Only the two inputs that do not exist locally are
+        DECLARED, and labelled as such: the device memory and the
+        environment report.
+        """
         maybe_fail("BACKEND_SELECT")
-        gates = {g: True for g in (
-            "structural_pass", "parser_verifier_pass",
-            "action_seed_mapping_exact", "intervention_pass", "transport_pass",
-            "resume_pass", "no_missing_or_duplicate_rows", "no_oom",
-            "free_hbm_fraction_ok", "no_unvalidated_optimization",
-            "throughput_stable", "scientific_config_unchanged")}
-        out = select_backend([{**c, **gates} for c in ctx["benchmark"]])
+        ctx["environment_report_raw"] = dict(REHEARSAL_DECLARED_ENVIRONMENT)
+        ctx["corpus_config_verified"] = bool(ctx.get("corpus_config"))
+        candidates = [
+            derive_gates(
+                e,
+                equivalence=(ctx.get("equivalence") or {}).get(e["config_id"]),
+                device_total_memory=REHEARSAL_DECLARED_DEVICE_MEMORY,
+                expected_rows=int(ctx.get("corpus_row_count") or 0),
+                environment=ctx["environment_report_raw"],
+                corpus_config_verified=ctx["corpus_config_verified"])
+            for e in ctx["benchmark_raw"]
+            if "config_id" in e and not e.get("oom_count")
+            and not e.get("integrity_failures")]
+        ctx["benchmark"] = candidates
+        out = select_backend(candidates)
         ctx["selected_backend"] = out["selected"]
-        return {"selected": out["selected"]["config_id"]}
+        atomic_write_text(
+            os.path.join(work_dir, "BACKEND_SELECTION.rehearsal.json"),
+            json.dumps({"label": "DRESS_REHEARSAL_LOCAL_SYNTHETIC",
+                        "declared_inputs": {
+                            "device_total_memory": REHEARSAL_DECLARED_DEVICE_MEMORY,
+                            "environment": ctx["environment_report_raw"]},
+                        **out}, indent=2, sort_keys=True, default=str) + "\n")
+        return {"selected": out["selected"]["config_id"],
+                "eligible": [c["config_id"] for c in out["eligible"]],
+                "gate_failures": {c["config_id"]: c["gate_failures"]
+                                  for c in out["all_judged"]
+                                  if c["gate_failures"]}}
 
     def precommit_build(ctx):
         maybe_fail("PRECOMMIT_BUILD")
@@ -249,11 +294,17 @@ def build_handlers(corpus_dir: str, work_dir: str, provider: MockProviderAdapter
 
 def run_rehearsal(corpus_dir: str, out_dir: str, *, subset: list[str],
                   fail_at: str | None = None,
-                  provider: MockProviderAdapter | None = None) -> dict:
+                  provider: MockProviderAdapter | None = None,
+                  benchmark_stages: int = REHEARSAL_BENCHMARK_STAGES) -> dict:
+    """``benchmark_stages``: how many frozen-order configurations the local
+    benchmark measures.  The full rehearsal measures the default; the
+    failure-injection rehearsals, which exercise the state machine rather
+    than the benchmark, may pass 1 (the reference only)."""
     clock = MockClock()
     provider = provider or MockProviderAdapter()
     handlers = build_handlers(corpus_dir, out_dir, provider, clock,
-                              subset=subset, fail_at=fail_at)
+                              subset=subset, fail_at=fail_at,
+                              benchmark_stages=benchmark_stages)
     wd = BudgetWatchdog(compute_runtime_limit_seconds(40.0, 2.99), clock=clock)
     machine = ZeroTouchStateMachine(provider, out_dir, handlers,
                                     watchdog=wd, clock=clock)

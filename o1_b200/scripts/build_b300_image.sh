@@ -86,7 +86,7 @@ print(json.dumps({
   'numpy': numpy.__version__,
   'arch_list_source': 'host wheel verification (build has no GPU); re-verified on the acquired GPU by deploy/hardware_gate.py',
   'arch_list': json.loads('$ARCH_LIST'),
-  'sm103_native_basis': 'sm_100 cubins run natively on sm_103 (NVIDIA same-major/higher-minor SASS rule); wheel additionally carries sm_103a arch-tuned kernels; NO PTX embedded so JIT fallback is impossible',
+  'sm103_native_basis': 'sm_100 cubins run natively on sm_103 (NVIDIA same-major/higher-minor SASS compatibility rule) and the wheel additionally carries 59 sm_103a arch-tuned cubins; NO PTX embedded so JIT fallback is impossible. arch_list above is torch.cuda.get_arch_list(), i.e. the build TARGET list, which does not enumerate arch-specific 'a' variants: the sm_103a/sm_100a cubin counts are cuobjdump evidence in deploy/FATBINARY_ARCH_EVIDENCE.json, and the loaded kernels are exercised on the acquired GPU by deploy/hardware_gate.py',
   'glibc': platform.libc_ver()[1],
 }))")
 

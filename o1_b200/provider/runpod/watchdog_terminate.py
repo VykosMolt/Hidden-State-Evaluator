@@ -20,6 +20,7 @@ import argparse
 import http.client
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -29,11 +30,34 @@ import time
 PRODUCTION_HOST = "api.runpod.io"
 
 
+#: Token shapes redacted regardless of whether the value is in THIS
+#: environment: a key loaded from RUNPOD_API_KEY_FILE is never in os.environ,
+#: and HF_TOKEN travels in the pod's `env` -- which this module logs, because
+#: the REST pod object includes it.
+_SECRET_PATTERNS = (
+    re.compile(r"\bhf_[A-Za-z0-9]{20,}\b"),
+    re.compile(r"\brpa_[A-Za-z0-9]{20,}\b"),
+    re.compile(r"\bghp_[A-Za-z0-9]{20,}\b"),
+)
+
+
 def _redact(text: str) -> str:
-    for var in ("RUNPOD_API_KEY", "RUNPOD_MOCK_API_KEY"):
+    for var in ("RUNPOD_API_KEY", "RUNPOD_MOCK_API_KEY", "HF_TOKEN",
+                "HUGGING_FACE_HUB_TOKEN"):
         key = os.environ.get(var, "")
-        if key:
+        if key and len(key) >= 8:
             text = text.replace(key, "[REDACTED]")
+    path = os.environ.get("RUNPOD_API_KEY_FILE")
+    if path:
+        try:
+            with open(path, encoding="utf-8") as fh:
+                filed = fh.read().strip()
+            if len(filed) >= 8:
+                text = text.replace(filed, "[REDACTED]")
+        except OSError:
+            pass
+    for pattern in _SECRET_PATTERNS:
+        text = pattern.sub("[REDACTED]", text)
     return text
 
 
@@ -129,8 +153,33 @@ def terminate_pod(pod_id: str, log, host="api.runpod.io", port=None,
 class WatchdogHandle:
     """Parent-side handle to the armed watchdog process."""
 
-    def __init__(self, proc: subprocess.Popen):
+    def __init__(self, proc: subprocess.Popen, log_path: str | None = None):
         self.proc = proc
+        self.log_path = log_path
+
+    def confirm_armed(self, timeout: float = 20.0, sleep=time.sleep) -> bool:
+        """Prove the watchdog is running AND wrote its armed record.
+
+        Popen succeeds even when the child dies immediately (bad
+        PYTHONPATH, import error, fork failure), and nothing used to check:
+        a watchdog that never started was recorded as ARMED, so the one
+        independent termination path could be absent while the lifecycle
+        report asserted it existed.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self.log_path and os.path.exists(self.log_path):
+                try:
+                    with open(self.log_path, encoding="utf-8") as fh:
+                        if any('"armed": true' in ln.lower()
+                               for ln in fh):
+                            return True
+                except OSError:
+                    pass
+            if self.proc.poll() is not None:
+                return False          # exited before arming
+            sleep(0.5)
+        return False
 
     def terminate_now(self) -> None:
         if self.proc.poll() is None:
@@ -151,9 +200,17 @@ def spawn_watchdog(*, pod_id: str, hard_limit_seconds: int,
            "--out", out_dir, "--host", host, "--scheme", scheme]
     if port:
         cmd += ["--port", str(port)]
+    # start_new_session: the watchdog must NOT share the driver's process
+    # group.  Without it a Ctrl-C, a closed terminal or a dropped SSH
+    # session signals both at once -- and run_session's handler does not
+    # catch KeyboardInterrupt (a BaseException), so nothing terminates the
+    # pod either.  The "independent" termination path died exactly when it
+    # was the only one left.
     proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL)
-    return WatchdogHandle(proc)
+                            stderr=subprocess.DEVNULL,
+                            start_new_session=True)
+    return WatchdogHandle(
+        proc, os.path.join(out_dir, "watchdog_termination.jsonl"))
 
 
 def main() -> int:

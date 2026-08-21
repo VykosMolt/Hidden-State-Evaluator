@@ -30,14 +30,45 @@ def run() -> Runner:
         final = json.load(open(os.path.join(out, "FINAL_STATUS.json")))
         assert final["machine_readable"] is True
         assert final["human_interaction_required"] is False
+        # the selection ran production's gate derivation over REAL local
+        # measurements (the harness, not invented numbers); the two inputs
+        # that cannot exist on a CPU rehearsal are declared and labelled
+        sel = json.load(open(os.path.join(
+            out, "BACKEND_SELECTION.rehearsal.json")))
+        assert sel["label"] == "DRESS_REHEARSAL_LOCAL_SYNTHETIC"
+        assert "NOT_MEASURED" in sel["declared_inputs"]["environment"]["source"]
+        judged = {c["config_id"]: c for c in sel["all_judged"]}
+        assert "REFERENCE_SERIAL_w1_b1" in judged
+        compared = {"REFERENCE_SERIAL_w1_b1", "B200_REPLICA_w2_b1",
+                    "B200_BATCHED_w1_b8"}
+        for cid, c in judged.items():
+            # only configurations the equivalence step actually compared
+            # carry a verdict; the others are INELIGIBLE, exactly as on the
+            # pod (a config with no equivalence verdict of its own never
+            # wins on throughput)
+            assert c["equivalence_measured_for_this_config"] is (
+                cid in compared), cid
+            if cid not in compared:
+                assert "structural_pass" in c["gate_failures"], cid
+            assert c["no_missing_or_duplicate_rows"] is True, cid
+            assert "throughput_stability_per_worker" in c
+            assert c["throughput_stability_basis"].startswith("per execution stream")
+        assert sel["selected"]["config_id"] in compared
+        bench = json.load(open(os.path.join(out, "benchmark",
+                                            "BENCHMARK_REPORT.json")))
+        assert bench["mode"] == "LOCAL_SYNTHETIC_DRESS_REHEARSAL"
+        replica = [r for r in bench["results"]
+                   if r["backend"] == "B200_REPLICA"][0]
+        assert "per_worker" in replica["gpu"] or \
+            "hbm_reserved_bytes_workers_peak_sum" in replica["gpu"]
     r.check("full mocked end-to-end dress rehearsal reaches COMPLETE with "
-            "confirmed termination and machine-readable status",
-            full_rehearsal)
+            "confirmed termination, machine-readable status and REAL gate "
+            "derivation over the local benchmark", full_rehearsal)
 
     def injection_every_state():
         for state in INJECTABLE:
             out = fresh_dir(f"inject_{state.lower()}")
-            status = run_rehearsal(CORPUS_DIR, out, subset=SUBSET,
+            status = run_rehearsal(CORPUS_DIR, out, subset=SUBSET, benchmark_stages=1,
                                    fail_at=state)
             assert status["outcome"] == f"ABORTED_AT_{state}", (state, status)
             later = [s for s in INJECTABLE
@@ -52,7 +83,7 @@ def run() -> Runner:
 
     def records_survive_late_failure():
         out = fresh_dir("inject_record_verify")
-        status = run_rehearsal(CORPUS_DIR, out, subset=SUBSET,
+        status = run_rehearsal(CORPUS_DIR, out, subset=SUBSET, benchmark_stages=1,
                                fail_at="RECORD_VERIFY")
         assert status["outcome"] == "ABORTED_AT_RECORD_VERIFY"
         records = os.path.join(out, "rehearsal_calibration", "records.jsonl")
@@ -68,7 +99,7 @@ def run() -> Runner:
             out = fresh_dir(f"pfail_{op}")
             provider = MockProviderAdapter(
                 fail_on={op: ProviderError(f"injected {op} failure")})
-            status = run_rehearsal(CORPUS_DIR, out, subset=SUBSET,
+            status = run_rehearsal(CORPUS_DIR, out, subset=SUBSET, benchmark_stages=1,
                                    provider=provider)
             assert status["outcome"].startswith("ABORTED_AT_"), (op, status)
     r.check("provider failure at every provider operation aborts cleanly",
@@ -78,7 +109,7 @@ def run() -> Runner:
         out = fresh_dir("pfail_terminate")
         provider = MockProviderAdapter(
             fail_on={"terminate_instance": ProviderError("stuck instance")})
-        status = run_rehearsal(CORPUS_DIR, out, subset=SUBSET,
+        status = run_rehearsal(CORPUS_DIR, out, subset=SUBSET, benchmark_stages=1,
                                provider=provider)
         assert status["termination"].get("termination_confirmed") is not True
         final = json.load(open(os.path.join(out, "FINAL_STATUS.json")))

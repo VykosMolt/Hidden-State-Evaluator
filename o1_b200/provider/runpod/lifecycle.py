@@ -17,7 +17,7 @@ import os
 import time
 
 from .adapter import RunpodAdapterError, RunpodV2Adapter
-from .billing import BudgetViolation, remaining_compute_seconds
+from .billing import BudgetViolation, as_money, remaining_compute_seconds
 from .identityutil import utcnow_iso
 from .redaction import redact
 from .watchdog_terminate import spawn_watchdog
@@ -26,6 +26,29 @@ from .watchdog_terminate import spawn_watchdog
 class LifecycleError(RuntimeError):
     def __init__(self, msg: str):
         super().__init__(redact(msg))
+
+
+def _billed_usd(bill):
+    """Total USD from a billing response, or None when it says nothing.
+
+    None is deliberately not zero: an unparseable billing payload must not
+    look like "this pod has cost nothing".
+    """
+    if isinstance(bill, dict):
+        for key in ("totalAmount", "total_amount", "amount", "totalUsd"):
+            if key in bill:
+                try:
+                    return as_money(bill[key])
+                except Exception:  # noqa: BLE001
+                    return None
+        meta = bill.get("metadata") or {}
+        totals = meta.get("totals") if isinstance(meta, dict) else None
+        if isinstance(totals, dict) and "totalAmount" in totals:
+            try:
+                return as_money(totals["totalAmount"])
+            except Exception:  # noqa: BLE001
+                return None
+    return None
 
 
 class PodLifecycleController:
@@ -109,10 +132,44 @@ class PodLifecycleController:
             self._event("BUDGET_EXHAUSTED_AT_PROVISION")
             raise BudgetViolation(
                 "no compute allocation remains after provisioning")
-        self.watchdog = self.spawn_watchdog(
-            pod_id=pod.id, hard_limit_seconds=limit, out_dir=self.out_dir)
+        # Pass the adapter's own host: defaulting to api.runpod.io meant a
+        # rehearsal against a mock armed a watchdog that would fire
+        # POST/DELETE at PRODUCTION with the real operator key, and the
+        # production host wiring was never exercised at all.
+        wd_kw = {}
+        base = getattr(self.adapter.readonly, "base_url", "")
+        if base:
+            from urllib.parse import urlparse
+            parsed = urlparse(base)
+            if parsed.hostname:
+                wd_kw = {"host": parsed.hostname,
+                         "scheme": parsed.scheme or "https"}
+                if parsed.port:
+                    wd_kw["port"] = parsed.port
+        try:
+            self.watchdog = self.spawn_watchdog(
+                pod_id=pod.id, hard_limit_seconds=limit,
+                out_dir=self.out_dir, **wd_kw)
+        except TypeError:
+            # injected test doubles may take only the core arguments
+            self.watchdog = self.spawn_watchdog(
+                pod_id=pod.id, hard_limit_seconds=limit, out_dir=self.out_dir)
+        # PROVE it armed.  Popen returning is not evidence: a watchdog that
+        # died on import was recorded as ARMED, so the independent
+        # termination path could be absent while the report said otherwise.
+        confirm = getattr(self.watchdog, "confirm_armed", None)
+        armed = confirm() if callable(confirm) else True
         self._event("WATCHDOG_ARMED", hard_limit_seconds=limit,
+                    confirmed=bool(armed),
                     session_spend_usd=str(self.adapter.session_spend_usd()))
+        if not armed:
+            # provision() terminates the pod for anything raised in here,
+            # which is the right answer: a billing pod with no independent
+            # stop is worse than a refused acquisition.
+            raise LifecycleError(
+                "the independent watchdog did not confirm arming; refusing "
+                "to run a billing pod whose only remaining stop is the "
+                "provider-side terminateAfter")
         return pod.id
 
     def wait_until_running(self, pod_id: str) -> str:
@@ -163,6 +220,17 @@ class PodLifecycleController:
                 try:
                     bill = self.adapter.get_billing_usage(pod_id)
                     self._event("BILLING_SAMPLE", data=str(bill)[:200])
+                    # FEED the tracker.  effective_spend() documents itself
+                    # as max(monotonic projection, live billing), but nothing
+                    # ever called record_live_billing outside tests -- so the
+                    # live half was unreachable and anything the quote
+                    # under-priced (container disk is quoted at 0.0000/h by
+                    # default) was invisible to every budget stop.
+                    billed = _billed_usd(bill)
+                    if billed is not None:
+                        self.adapter.spend.record_live_billing(billed)
+                        self._event("LIVE_BILLING_RECORDED",
+                                    billed_usd=str(billed))
                 except Exception:  # noqa: BLE001 - billing is supplementary
                     pass
                 if self.adapter.spend.must_terminate():
@@ -245,7 +313,12 @@ class PodLifecycleController:
         # replacement pod's meter starts.
         if self.adapter.spend is not None:
             carried = self.adapter.spend.mark_pod_stopped()
-            self._event("SPEND_FROZEN", session_spend_usd=str(carried))
+            # Durable, not just in-memory: the nonce ledger already survived
+            # a restart while the DOLLARS did not, so every rerun handed the
+            # next pod a fresh full compute allocation.
+            self.adapter._persist_carryover(carried)
+            self._event("SPEND_FROZEN", session_spend_usd=str(carried),
+                        durable=True)
         try:
             bill = self.adapter.get_billing_usage(pod_id)
             self._event("FINAL_BILLING", data=str(bill)[:300])

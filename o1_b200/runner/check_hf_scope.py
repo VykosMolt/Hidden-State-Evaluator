@@ -210,8 +210,18 @@ def main() -> int:
         wanted = required_from_manifest(manifest, root)
         missing = [r for r in wanted
                    if not os.path.exists(os.path.join(root, r))]
-    except OSError:
-        missing = []
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        # The pod manifest is baked into the image.  Absent or corrupt, it
+        # is the same on every pod this image produces: deterministic, so
+        # the marker goes out and the driver stops instead of reacquiring.
+        # (ValueError covers json.JSONDecodeError.)  Previously a corrupt
+        # manifest escaped as a traceback with no marker, exit 1, and a
+        # missing one was silently treated as "nothing to fetch".
+        print("ZERO_TOUCH_ABORTED_AT_HF_SCOPE")
+        print(f"REFUSED: the pod transfer manifest cannot be read "
+              f"({exc!r}); the image is not the one this session was "
+              f"sealed against", file=sys.stderr)
+        return 2
     if missing and not str(a.read_source).startswith("hf://"):
         print("ZERO_TOUCH_ABORTED_AT_HF_SCOPE")
         print(f"REFUSED: {missing} must still be fetched but "

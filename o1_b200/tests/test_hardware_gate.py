@@ -98,6 +98,44 @@ def run() -> Runner:
             lambda: refused("B300", _b300_facts(
                 arch_list=["sm_100", "compute_120"]), "PTX"))
 
+    def optimisation_state_is_observed_not_asserted():
+        import torch
+        from o1_b200.deploy.hardware_gate import observe_optimization_state
+
+        class Cfg:
+            _attn_implementation = "eager"
+
+        class M(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.config = Cfg()
+                self.lin = torch.nn.Linear(4, 4)
+
+            def forward(self, x):
+                return self.lin(x)
+
+        plain = observe_optimization_state(M())
+        assert plain["attn_implementation"] == "eager"
+        assert plain["compile_state"] == "OFF"
+        assert plain["cuda_graph_state"] == "OFF"
+        assert plain["observed"] is True
+        Cfg._attn_implementation = "sdpa"
+        assert observe_optimization_state(M())["attn_implementation"] == "sdpa"
+        Cfg._attn_implementation = "eager"
+        compiled = torch.compile(M())
+        assert observe_optimization_state(compiled)["compile_state"] == "ON"
+        # an env report built from the observation carries it; one built
+        # without carries UNOBSERVED (and validate_b200_report refuses it)
+        from o1_b200.runner import env_report as er
+        if torch.cuda.is_available():
+            rep = er.collect_pod_report(observed=plain)
+            assert rep["attention_backend"] == "eager"
+            assert rep["optimization_state_observed"] is True
+            rep = er.collect_pod_report()
+            assert rep["compile_state"] == "UNOBSERVED"
+    r.check("optimisation state is observed on the model, not asserted",
+            optimisation_state_is_observed_not_asserted)
+
     r.check("no CUDA at all refused",
             lambda: refused("B300", {"cuda_available": False}, "CUDA"))
 

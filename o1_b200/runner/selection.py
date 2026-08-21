@@ -24,10 +24,72 @@ REQUIRED_GATES = (
 
 MIN_FREE_HBM_FRACTION = 0.15
 MAX_THROUGHPUT_SPREAD = 0.25
+#: The frozen policy names REFERENCE_SERIAL the terminal fallback.  A
+#: fallback that can itself be refused on a PERFORMANCE gate is not a
+#: fallback, so this one gate — and only this one — is waived for the
+#: reference when nothing else is eligible.  Every scientific and safety
+#: gate still applies to it.
+TERMINAL_FALLBACK_BACKEND = "REFERENCE_SERIAL"
+TERMINAL_FALLBACK_WAIVABLE_GATES = ("throughput_stable",)
 
 
 class SelectionError(RuntimeError):
     pass
+
+
+def derive_gates(entry: dict, *, equivalence: dict | None,
+                 device_total_memory: int, expected_rows: int,
+                 environment: dict | None,
+                 corpus_config_verified: bool) -> dict:
+    """Mechanical gate derivation from real per-config measurements.
+
+    ONE implementation for the production entry and the dress rehearsal, so
+    the rehearsal exercises the gates the pod will apply instead of
+    asserting them True.  Every gate is derived from a measurement OF THIS
+    CONFIGURATION: a config with no equivalence verdict of its own is
+    ineligible; the row-count and environment gates are checked against
+    the corpus size and the recorded environment rather than asserted.
+    """
+    eq = equivalence
+    measured = eq is not None
+    structural = bool(measured and eq.get("eligible_structurally"))
+    core_identical = bool(measured and (eq.get("is_reference")
+                                        or eq.get("scientific_core_identical")))
+    total = int(device_total_memory or 0)
+    reserved = int((entry.get("gpu") or {}).get("hbm_reserved_bytes", 0) or 0)
+    free_frac = 1.0 - (reserved / total if total else 1.0)
+    expected_rows = int(expected_rows or 0)
+    rows_ok = (expected_rows > 0
+               and int(entry.get("n_rows", -1)) == expected_rows)
+    spread = entry.get("throughput_stability_spread")
+    env = environment or {}
+    no_unvalidated_opt = (env.get("compile_state") in ("OFF", "off", False)
+                          and env.get("cuda_graph_state") in
+                          ("OFF", "off", False)
+                          and env.get("attention_backend") == "eager")
+    return {
+        **entry,
+        "equivalence_measured_for_this_config": measured,
+        "completed_rows_per_hour":
+            float(entry.get("completed_rows_per_second", 0.0)) * 3600.0,
+        "peak_hbm_reserved_bytes": reserved,
+        "steady_state_free_hbm_fraction": free_frac,
+        "structural_pass": structural,
+        "parser_verifier_pass": (measured
+                                 and entry.get("integrity_failures", 1) == 0),
+        "action_seed_mapping_exact": core_identical,
+        "intervention_pass": core_identical,
+        "transport_pass": core_identical,
+        "resume_pass": entry.get(
+            "resume_remaining_after_completion", -1) == 0,
+        "no_missing_or_duplicate_rows": rows_ok,
+        "no_oom": entry.get("oom_count", 1) == 0,
+        "free_hbm_fraction_ok": free_frac >= MIN_FREE_HBM_FRACTION,
+        "no_unvalidated_optimization": no_unvalidated_opt,
+        "throughput_stable": (spread is not None
+                              and spread <= MAX_THROUGHPUT_SPREAD),
+        "scientific_config_unchanged": bool(corpus_config_verified),
+    }
 
 
 def is_eligible(candidate: dict) -> tuple[bool, list[str]]:
@@ -65,10 +127,32 @@ def select_backend(candidates: list[dict]) -> dict:
         ok, failures = is_eligible(c)
         judged.append({**c, "eligible": ok, "gate_failures": failures})
     eligible = [c for c in judged if c["eligible"]]
+    fallback_waiver = None
+    if not eligible:
+        for c in judged:
+            if c.get("backend") != TERMINAL_FALLBACK_BACKEND:
+                continue
+            blocking = [g for g in c["gate_failures"]
+                        if g not in TERMINAL_FALLBACK_WAIVABLE_GATES]
+            if blocking:
+                continue
+            fallback_waiver = {
+                "config_id": c["config_id"],
+                "waived_gates": list(c["gate_failures"]),
+                "rule": ("frozen policy: REFERENCE_SERIAL is the terminal "
+                         "fallback; only the throughput-stability performance "
+                         "gate may be waived for it, never a scientific or "
+                         "safety gate"),
+            }
+            c = {**c, "eligible": True,
+                 "terminal_fallback_waiver": fallback_waiver}
+            eligible = [c]
+            break
     if not eligible:
         raise SelectionError(
-            "no eligible backend configuration; REFERENCE_SERIAL must be "
-            "re-benchmarked or the session aborted")
+            "no eligible backend configuration and the terminal fallback "
+            "REFERENCE_SERIAL fails a scientific or safety gate: "
+            f"{[(c['config_id'], c['gate_failures']) for c in judged]}")
 
     def sort_key(c):
         return (
@@ -81,4 +165,5 @@ def select_backend(candidates: list[dict]) -> dict:
         )
 
     winner = sorted(eligible, key=sort_key)[0]
-    return {"selected": winner, "eligible": eligible, "all_judged": judged}
+    return {"selected": winner, "eligible": eligible, "all_judged": judged,
+            "terminal_fallback_waiver": fallback_waiver}

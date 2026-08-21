@@ -67,6 +67,9 @@ RESULT_ARCHIVE_REL = "results/o1_results.tar.gz"
 REQUIRED_CONFIG_KEYS = (
     "artifact_source", "result_destination", "image_digest_ref",
     "project", "identities",
+    # read with config[...] for the expected identity; absent used to raise
+    # a bare KeyError outside the authorization check
+    "package_zip_sha256", "budget_policy_sha256",
 )
 
 
@@ -141,7 +144,9 @@ def _render_all_profiles(config: dict) -> dict:
     return render_canonical_deployment(reqs, config["identities"])
 
 
-def _expected_result_digest(config: dict) -> tuple[str, str | None]:
+def _expected_result_digest(config: dict,
+                            launch_nonce: str | None = None
+                            ) -> tuple[str, str | None]:
     """The result digest the POD recorded, read from the durable store.
 
     Returns (state, digest) where state is:
@@ -170,7 +175,16 @@ def _expected_result_digest(config: dict) -> tuple[str, str | None]:
             local = os.path.join(tmp, "digest.json")
             store.fetch_file(target, local)
             with open(local, encoding="utf-8") as fh:
-                return ("VERIFIABLE", _json.load(fh)["sha256"])
+                doc = _json.load(fh)
+            # A sidecar from a DIFFERENT session is not this run's evidence.
+            # The result key is fixed and run-agnostic, so without this an
+            # aborted run adopts the previous session's archive AND the
+            # sidecar that vouches for it, and the cross-check passes.
+            if launch_nonce:
+                got = doc.get("launch_nonce", "")
+                if got != launch_nonce:
+                    return ("FOREIGN", got or None)
+            return ("VERIFIABLE", doc["sha256"])
     except Exception as exc:  # noqa: BLE001
         return ("ERROR", redact(str(exc))[:200])
 
@@ -301,10 +315,14 @@ def run_session(*, authorization_path: str, out_dir: str,
 
         def witness():
             try:
-                from o1_b200.runner.durability import store_for_destination
-                store = store_for_destination(destination)
-                return any(rel.endswith("o1_results.tar.gz")
-                           for rel in store.list_prefix("results"))
+                # THIS session's archive, not merely an archive.  The key is
+                # fixed and run-agnostic, so a leftover from a previous run
+                # otherwise satisfies the witness, turns an evicted pod into
+                # "COMPLETE", and the driver then downloads and reports the
+                # old session's numbers as this one's verified result.
+                state, _ = _expected_result_digest(
+                    config, auth.launch_nonce)
+                return state == "VERIFIABLE"
             except Exception:  # noqa: BLE001 - advisory witness only
                 return False
         return witness
@@ -328,7 +346,12 @@ def run_session(*, authorization_path: str, out_dir: str,
                     # Reacquiring cannot help — a fresh pod runs the same
                     # gates against the same artifacts and fails identically
                     # — so this must never be mistaken for an eviction.
-                    marker = tail.split("ZERO_TOUCH_ABORTED_AT_")[-1].split()[0]
+                    rest = tail.split("ZERO_TOUCH_ABORTED_AT_")[-1].split()
+                    # a log truncated exactly at the marker used to raise
+                    # IndexError into the broad handler below, degrading a
+                    # DETERMINISTIC failure into "log unavailable" -> a paid
+                    # reacquisition of a run that fails identically
+                    marker = rest[0] if rest else "UNSPECIFIED_STATE"
                     raise DeterministicPodFailure(
                         f"the pod aborted deterministically at {marker}; "
                         f"reacquisition would repeat it")
@@ -348,21 +371,47 @@ def run_session(*, authorization_path: str, out_dir: str,
 
     last_progress = progress_probe() if progress_probe else None
     evictions_seen = 0
+    zero_progress_streak = 0
 
     def zero_progress_abort() -> bool:
-        """True when a SECOND consecutive interruption arrives with zero new
-        durable progress — treated as a container defect, not an eviction."""
-        nonlocal last_progress, evictions_seen
+        """True when a SECOND CONSECUTIVE interruption arrives with zero new
+        durable progress — treated as a container defect, not an eviction.
+
+        "Consecutive" is a streak of interruptions each of which added no
+        durable rows.  The earlier form compared against the last value
+        and counted evictions cumulatively, so one productive pod followed
+        by ONE unproductive one aborted the session — a single eviction
+        before the replacement's first commit is ordinary spot behaviour.
+        """
+        nonlocal last_progress, evictions_seen, zero_progress_streak
         evictions_seen += 1
         if progress_probe is None:
             return False
         progress = progress_probe()
         if progress is None:            # unknown is not zero
             return False
-        if progress == last_progress and evictions_seen > 1:
-            return True
+        if last_progress is not None and progress <= last_progress:
+            zero_progress_streak += 1
+        else:
+            zero_progress_streak = 0
         last_progress = progress
-        return False
+        status["durable_rows_committed"] = progress
+        return zero_progress_streak >= 2
+
+    def no_progress_abort():
+        """The durable mirror still holds every row earlier pods committed;
+        the status says so, so a paid-for partial run is never reported as
+        if nothing existed."""
+        return finish(
+            "ABORTED_REPEATED_FAILURE_NO_PROGRESS",
+            error="two consecutive interruptions with zero new durable "
+                  "progress are treated as a container defect, not an "
+                  "eviction",
+            durable_rows_committed=last_progress,
+            durable_rows_location=(
+                config.get("result_destination", "") + "/durable_o1_records"
+                if config.get("result_destination") else None),
+            acquisitions_used=attempt)
 
     attempt = 0
     while True:
@@ -427,11 +476,7 @@ def run_session(*, authorization_path: str, out_dir: str,
             if startup == "EVICTED":
                 step("EVICTED_DURING_STARTUP", f"attempt {attempt}")
                 if zero_progress_abort():
-                    return finish(
-                        "ABORTED_REPEATED_FAILURE_NO_PROGRESS",
-                        error="a second consecutive interruption with zero "
-                              "durable progress is treated as a container "
-                              "defect, not an eviction")
+                    return no_progress_abort()
                 continue
             outcome = controller.monitor(pod_id, until=pod_done)
             step("MONITOR_RESULT", f"attempt {attempt}: {outcome}")
@@ -439,11 +484,7 @@ def run_session(*, authorization_path: str, out_dir: str,
                 if status["acquisitions"]:
                     status["acquisitions"][-1]["outcome"] = "EVICTED"
                 if zero_progress_abort():
-                    return finish(
-                        "ABORTED_REPEATED_FAILURE_NO_PROGRESS",
-                        error="a second consecutive interruption with zero "
-                              "durable progress is treated as a container "
-                              "defect, not an eviction")
+                    return no_progress_abort()
                 continue
             if outcome != "COMPLETE":
                 # SOFT_STOP (budget) and TERMINATED (external/watchdog) are
@@ -472,7 +513,8 @@ def run_session(*, authorization_path: str, out_dir: str,
                 config.get("result_source") or result_archive_uri(config)
                 or dest, dest)
             step("RESULTS_DOWNLOADED", dest)
-            witness_state, expected = _expected_result_digest(config)
+            witness_state, expected = _expected_result_digest(
+                config, auth.launch_nonce)
             if witness_state == "VERIFIABLE" and got.get("sha256") != expected:
                 confirmed = controller.terminate_and_confirm(pod_id)
                 return finish(
@@ -486,6 +528,15 @@ def run_session(*, authorization_path: str, out_dir: str,
             status["result_sha256"] = got.get("sha256")
             status["result_witness"] = witness_state
             status["result_digest_verified"] = witness_state == "VERIFIABLE"
+            if witness_state == "FOREIGN":
+                confirmed = controller.terminate_and_confirm(pod_id)
+                return finish(
+                    "ABORTED_FOREIGN_RESULT_WITNESS",
+                    termination_confirmed=confirmed,
+                    acquisitions_used=attempt,
+                    error=f"the published result sidecar belongs to launch "
+                          f"nonce {str(expected)[:12]!r}, not this session; "
+                          f"refusing to claim another run's results")
             if witness_state == "ERROR":
                 step("RESULT_WITNESS_UNAVAILABLE", expected)
         except DeterministicPodFailure as exc:
@@ -520,7 +571,26 @@ def run_session(*, authorization_path: str, out_dir: str,
                 return finish("ABORTED_TERMINATED" if confirmed
                               else "ABORTED_TERMINATION_UNCONFIRMED",
                               error=redact(str(exc)))
-            return finish("ABORTED_BEFORE_CREATE", error=redact(str(exc)))
+            # pod_id is None, but that does NOT prove nothing is billing:
+            # an ambiguous create, a refused duplicate, or a lost read-back
+            # all land here with a pod potentially alive on the provider.
+            # Saying "before create" while something bills is the single
+            # most misleading thing this file can tell an operator at 3am.
+            leftovers = []
+            try:
+                leftovers = [p.id for p in adapter.list_owned_instances()
+                             if p.status not in ("TERMINATED",)]
+            except Exception:  # noqa: BLE001 - best effort, never masks exc
+                leftovers = ["UNKNOWN (could not list owned pods)"]
+            if leftovers:
+                step("UNTERMINATED_PODS_PRESENT", ",".join(map(str, leftovers)))
+                return finish(
+                    "ABORTED_NO_POD_RECORDED_BUT_PODS_PRESENT",
+                    error=redact(str(exc)),
+                    termination_confirmed=False,
+                    unterminated_pods=leftovers)
+            return finish("ABORTED_BEFORE_CREATE", error=redact(str(exc)),
+                          termination_confirmed=True)
         # 8. terminate + confirm (always; stop is never final)
         confirmed = controller.terminate_and_confirm(pod_id)
         if not confirmed:

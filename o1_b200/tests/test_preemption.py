@@ -350,6 +350,32 @@ def run() -> Runner:
     r.check("a repeated interruption with zero durable progress aborts as a "
             "container defect instead of thrashing", zero_progress_repeat_aborts)
 
+    def one_unproductive_eviction_after_a_productive_pod_is_not_a_defect():
+        """progress 0 -> 50 -> 50 -> 50: the first pod committed rows, the
+        second was evicted before its first commit (ordinary spot), only
+        the THIRD consecutive zero-progress interruption is the defect.
+        The abort status must carry the durable progress that exists."""
+        d = fresh_dir("pre_noprog_streak")
+        sc = Scenario()
+        sc.evict_after_polls = 1
+        config, auth_path = _setup(d, max_pod_creations=8)
+        readings = iter([0, 50, 50, 50, 50])
+        status, sc = _run(d, sc, config, auth_path,
+                          progress_probe=lambda: next(readings))
+        assert status["outcome"] == "ABORTED_REPEATED_FAILURE_NO_PROGRESS", \
+            status["outcome"]
+        assert len(sc.rent_calls) == 3, (
+            f"{len(sc.rent_calls)} acquisitions: a single unproductive "
+            f"eviction after a productive pod must not abort")
+        assert status["durable_rows_committed"] == 50
+        assert "durable_rows_location" in status
+        if config.get("result_destination"):
+            assert status["durable_rows_location"].endswith(
+                "/durable_o1_records")
+    r.check("a single unproductive eviction after real progress is not a "
+            "container defect, and the abort records the durable rows",
+            one_unproductive_eviction_after_a_productive_pod_is_not_a_defect)
+
     def fallback_on_reacquisition():
         d = fresh_dir("pre_fall")
         sc = Scenario()

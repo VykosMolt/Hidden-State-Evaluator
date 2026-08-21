@@ -137,6 +137,18 @@ class LiveMutationAuthorization:
                 "launch_nonce creation budget exhausted (replay refused)")
         return cls(doc, path, nonce_ledger, now)
 
+    @property
+    def spend_ledger(self) -> str:
+        """Durable cumulative-spend record, beside the nonce ledger.
+
+        The nonce ledger already survives a restart, so the CREATION count
+        was durable while the DOLLARS were not: SpendTracker lived only in
+        adapter memory, and every restart handed the next pod a fresh full
+        compute allocation.  With max_pod_creations up to 8 that authorized
+        several times the budget the operator approved.
+        """
+        return self._nonce_ledger + ".spend"
+
     @staticmethod
     def _consumed_count(nonce_ledger: str, nonce: str) -> int:
         """Count consumed slots as LINES, never as set members.

@@ -91,6 +91,14 @@ of what earlier evicted pods already spent, so an eviction/reacquisition
 sequence can never authorize more total compute than the $40 allocation even
 if the driving orchestrator dies.
 
+`terminateAfter` is write-only at RunPod: the production schema accepts it
+on `PodRentInterruptableInput` but `Pod` has no such field (verified
+2026-08-21 by unauthenticated document validation, no mutation executed), so
+it can never be read back to prove it was armed. The session therefore never
+*relies* on it — the lifecycle refuses to run a pod unless the independent
+watchdog has confirmed arming (`confirm_armed`), and the provider backstop is
+treated as a bonus.
+
 ## Billing boundaries
 
 Spend is metered from POD CREATION (RunPod bills from provisioning, so a pod
