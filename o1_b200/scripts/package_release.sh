@@ -35,7 +35,16 @@ if [[ -n "$DIRTY" ]]; then
 fi
 # refresh the transfer manifests: they pin tree hashes of policies/, runner/
 # and deploy/, and the pod refuses at ARTIFACT_VERIFY if they are stale
-python3 -m o1_b200.runner.make_transfer_manifest >/dev/null
+# the generator imports the sealed package (torch): use the project
+# interpreter, never the system python3
+PY="${O1_B200_PYTHON:-${VIRTUAL_ENV:+$VIRTUAL_ENV/bin/python}}"
+PY="${PY:-$(command -v python3)}"
+if ! "$PY" -c "import torch" >/dev/null 2>&1; then
+  echo "REFUSED: $PY cannot import torch; set O1_B200_PYTHON to the project" >&2
+  echo "         interpreter (the manifest generator imports the sealed package)." >&2
+  exit 4
+fi
+"$PY" -m o1_b200.runner.make_transfer_manifest >/dev/null
 if [[ -n "$(git status --porcelain -- o1_b200/deploy/TRANSFER_MANIFEST.json o1_b200/deploy/POD_TRANSFER_MANIFEST.json || true)" ]]; then
   echo "REFUSED: the transfer manifests were stale and have been regenerated;" >&2
   echo "         commit them, then re-run (a pod built from the stale pair" >&2

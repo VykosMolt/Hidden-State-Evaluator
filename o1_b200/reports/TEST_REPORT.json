@@ -170,10 +170,12 @@
         "HOSTILE attempted confirmation launch despite authorization=false is refused",
         "HOSTILE real O1 calibration binding is refused by the local machine unconditionally"
       ],
-      "failed": 0,
-      "failures": [],
+      "failed": 1,
+      "failures": [
+        "full mocked end-to-end dress rehearsal reaches COMPLETE with confirmed termination, machine-readable status and REAL gate derivation over the local benchmark"
+      ],
       "module": "test_state_machine",
-      "passed": 7
+      "passed": 6
     },
     {
       "checks": [
@@ -279,12 +281,13 @@
         "full mocked zero-touch session: quote -> create -> RUNNING -> completion marker -> results downloaded -> TERMINATED confirmed",
         "failed preflight (B200 unavailable) refuses before create",
         "17-23. any on-pod stage failure (ERROR before completion) -> logs collected, pod terminated, diagnostic package local",
-        "24. output-transfer failure -> pod still terminated, loud abort"
+        "24. output-transfer failure -> pod still terminated, loud abort",
+        "the completion witness is a whole-line, session-level marker"
       ],
       "failed": 0,
       "failures": [],
       "module": "test_runpod_zero_touch",
-      "passed": 5
+      "passed": 6
     },
     {
       "checks": [
@@ -344,13 +347,10 @@
         "a session prefix in the durable destination scopes every key, so a fresh run cannot silently resume an old one",
         "an expired authorization still permits TERMINATION while refusing acquisition"
       ],
-      "failed": 2,
-      "failures": [
-        "the transfer manifests describe the committed tree (pod ARTIFACT_VERIFY would pass)",
-        "the image record's FL digest describes the FL tree the build would actually stage"
-      ],
+      "failed": 0,
+      "failures": [],
       "module": "test_launch_path",
-      "passed": 29
+      "passed": 31
     },
     {
       "checks": [
@@ -430,8 +430,8 @@
   ],
   "schema": "o1b200.test_report.v1",
   "scope_note": "Hardware-independent local validation only: synthetic runtime + non-O1 corpus + mocked provider/clock. No B200 hardware claim is made or implied.",
-  "total_failed": 2,
-  "total_passed": 270,
-  "utc": "2026-08-21T19:19:31Z",
-  "verdict": "2 FAILURES"
+  "total_failed": 1,
+  "total_passed": 272,
+  "utc": "2026-08-21T19:38:08Z",
+  "verdict": "1 FAILURES"
 }

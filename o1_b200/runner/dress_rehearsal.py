@@ -176,9 +176,20 @@ def build_handlers(corpus_dir: str, work_dir: str, provider: MockProviderAdapter
                             "environment": ctx["environment_report_raw"]},
                         **out}, indent=2, sort_keys=True, default=str) + "\n")
         return {"selected": out["selected"]["config_id"],
-                # loud: a rehearsal that only COMPLETEs via the terminal
-                # fallback waiver means no accelerated backend passed
+                # LOUD, never hidden: a rehearsal that COMPLETEs only via the
+                # terminal-fallback waiver means no accelerated backend
+                # passed the stability gate on THIS host.  The synthetic CPU
+                # stand-in cannot validate that gate (its prefill costs as
+                # much per position as decode, and a loaded host adds
+                # jitter), so the waiver is a recorded fact about the
+                # rehearsal, not evidence about the accelerator.
                 "terminal_fallback_waiver": out.get("terminal_fallback_waiver"),
+                "stability_gate_validated_locally": out.get(
+                    "terminal_fallback_waiver") is None,
+                "stability_gate_note": (
+                    "LOCAL_SYNTHETIC: throughput_stable is measured but the "
+                    "CPU stand-in does not reproduce accelerator decode "
+                    "throughput; only the gate DERIVATION is validated here"),
                 "eligible": [c["config_id"] for c in out["eligible"]],
                 "gate_failures": {c["config_id"]: c["gate_failures"]
                                   for c in out["all_judged"]
