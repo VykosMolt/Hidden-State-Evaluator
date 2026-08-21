@@ -170,12 +170,10 @@
         "HOSTILE attempted confirmation launch despite authorization=false is refused",
         "HOSTILE real O1 calibration binding is refused by the local machine unconditionally"
       ],
-      "failed": 1,
-      "failures": [
-        "full mocked end-to-end dress rehearsal reaches COMPLETE with confirmed termination, machine-readable status and REAL gate derivation over the local benchmark"
-      ],
+      "failed": 0,
+      "failures": [],
       "module": "test_state_machine",
-      "passed": 6
+      "passed": 7
     },
     {
       "checks": [
@@ -430,8 +428,8 @@
   ],
   "schema": "o1b200.test_report.v1",
   "scope_note": "Hardware-independent local validation only: synthetic runtime + non-O1 corpus + mocked provider/clock. No B200 hardware claim is made or implied.",
-  "total_failed": 1,
-  "total_passed": 272,
-  "utc": "2026-08-21T19:38:08Z",
-  "verdict": "1 FAILURES"
+  "total_failed": 0,
+  "total_passed": 273,
+  "utc": "2026-08-21T20:04:24Z",
+  "verdict": "ALL O1 B200 RUNNER TESTS PASSED"
 }
