@@ -192,13 +192,10 @@
         "HOSTILE secret material is refused by the transfer tooling",
         "HOSTILE corrupted artifact (hash mismatch) refused by manifest builder"
       ],
-      "failed": 2,
-      "failures": [
-        "fully resolved MOCK precommit finalizes but remains marked mock",
-        "precommit template freezes all scientific hashes; exactly the 12 hardware facts are unresolved"
-      ],
+      "failed": 0,
+      "failures": [],
       "module": "test_templates_and_integrity",
-      "passed": 12
+      "passed": 14
     },
     {
       "checks": [
@@ -283,14 +280,12 @@
         "failed preflight (B200 unavailable) refuses before create",
         "17-23. any on-pod stage failure (ERROR before completion) -> logs collected, pod terminated, diagnostic package local",
         "24. output-transfer failure -> pod still terminated, loud abort",
-        "the completion witness is a whole-line, session-level marker"
+        "the completion witness is a delimited, session-level marker"
       ],
-      "failed": 1,
-      "failures": [
-        "the completion witness is a whole-line, session-level marker"
-      ],
+      "failed": 0,
+      "failures": [],
       "module": "test_runpod_zero_touch",
-      "passed": 5
+      "passed": 6
     },
     {
       "checks": [
@@ -351,13 +346,10 @@
         "a session prefix in the durable destination scopes every key, so a fresh run cannot silently resume an old one",
         "an expired authorization still permits TERMINATION while refusing acquisition"
       ],
-      "failed": 2,
-      "failures": [
-        "ARTIFACT_VERIFY consumes an hf:// artifact source by cross-checking the fetch report, never as a manifest path",
-        "the image record's FL digest describes the FL tree the build would actually stage"
-      ],
+      "failed": 0,
+      "failures": [],
       "module": "test_launch_path",
-      "passed": 30
+      "passed": 32
     },
     {
       "checks": [
@@ -429,18 +421,16 @@
         "mock server still 401s any key other than the synthetic mock credential (auth not weakened)",
         "independent watchdog path never sends the operator credential to a non-production host"
       ],
-      "failed": 1,
-      "failures": [
-        "complete local/mock RunPod suite passes IDENTICALLY with no credential vars, fake RUNPOD_API_KEY, fake key+file, and a world-readable key file"
-      ],
+      "failed": 0,
+      "failures": [],
       "module": "test_credential_isolation",
-      "passed": 4
+      "passed": 5
     }
   ],
   "schema": "o1b200.test_report.v1",
   "scope_note": "Hardware-independent local validation only: synthetic runtime + non-O1 corpus + mocked provider/clock. No B200 hardware claim is made or implied.",
-  "total_failed": 6,
-  "total_passed": 268,
-  "utc": "2026-08-21T21:48:44Z",
-  "verdict": "6 FAILURES"
+  "total_failed": 0,
+  "total_passed": 274,
+  "utc": "2026-08-21T22:02:53Z",
+  "verdict": "ALL O1 B200 RUNNER TESTS PASSED"
 }
