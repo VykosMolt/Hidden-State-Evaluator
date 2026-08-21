@@ -1,6 +1,6 @@
 {
   "base_image_digest": "python@sha256:23c59390fc717bf09f9336908199a0ae75d9c4264bf296123f94ad772fea3b52",
-  "build_timestamp_utc": "2026-08-21T19:55:41Z",
+  "build_timestamp_utc": "2026-08-21T21:55:00Z",
   "dependency_lock_sha256": "53c15b49312dbe6b1ca1e399ae9cf6045c1bdbc53ab1f825a5d3cfbf0870335b",
   "dockerfile_sha256": "3f000a4f2a96f64afd247eeb96d6505f7b0192ee18f9695e3fabcacc1cac73d6",
   "environment": {
@@ -23,9 +23,9 @@
     "transformers": "4.54.1"
   },
   "foundation_learner_layout": "/opt/foundation_learner/foundation_learner (import root /opt/foundation_learner); pregen episode corpus NOT baked \u2014 campaign/fetch_pregen.py materialises and hash-verifies it on the pod",
-  "foundation_learner_source_sha256": "0c991e722d16189f8482eacc5ba70787ecfb644791a7f124f889ccd798500333",
-  "image_id_local": "sha256:3b2fac6a619768884885e7ffab0de5c981bd7c0d8ccf6e62b2cbb4c7a8edc227",
-  "image_name": "o1-b300-runner:v0.3.4",
+  "foundation_learner_source_sha256": "5e86458cca5d0c11f60e2bcd2f3fc0fd2449e2a153d2e094f2f4e731ab665811",
+  "image_id_local": "sha256:34cf46564f5cdeb52959f640c431964235dcb29800aaa5f1d21a70ea00838bc6",
+  "image_name": "o1-b300-runner:v0.3.5",
   "notes": "no FP8/FP4/quantization/speculative/vLLM/TensorRT-LLM/SGLang; no startup installation/compilation/clone/resolution; checkpoint never baked; no credentials",
   "platform": "linux/amd64",
   "registry_digest_ref": "UNRESOLVED_UNTIL_PUSH (docker push prints repo@sha256:...)",
