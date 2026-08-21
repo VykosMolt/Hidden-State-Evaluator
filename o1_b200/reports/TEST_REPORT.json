@@ -347,13 +347,10 @@
         "a session prefix in the durable destination scopes every key, so a fresh run cannot silently resume an old one",
         "an expired authorization still permits TERMINATION while refusing acquisition"
       ],
-      "failed": 2,
-      "failures": [
-        "ARTIFACT_VERIFY consumes an hf:// artifact source by cross-checking the fetch report, never as a manifest path",
-        "the transfer manifests describe the committed tree (pod ARTIFACT_VERIFY would pass)"
-      ],
+      "failed": 0,
+      "failures": [],
       "module": "test_launch_path",
-      "passed": 31
+      "passed": 33
     },
     {
       "checks": [
@@ -433,8 +430,8 @@
   ],
   "schema": "o1b200.test_report.v1",
   "scope_note": "Hardware-independent local validation only: synthetic runtime + non-O1 corpus + mocked provider/clock. No B200 hardware claim is made or implied.",
-  "total_failed": 2,
-  "total_passed": 273,
-  "utc": "2026-08-21T22:28:13Z",
-  "verdict": "2 FAILURES"
+  "total_failed": 0,
+  "total_passed": 275,
+  "utc": "2026-08-21T22:37:52Z",
+  "verdict": "ALL O1 B200 RUNNER TESTS PASSED"
 }
