@@ -759,8 +759,26 @@ class SessionSupervisor:
             raise SupervisorError(f"{state}: no command configured")
         shell = isinstance(command, str)
         started = self.clock.monotonic()
+        env = self._child_env()
+        if state == "RUN_O1_CALIBRATION" and timeout:
+            # O1 plans against O1_SESSION_AUTHORIZED_SECONDS: its affordability
+            # gate, pre-calibration budget and watchdog.  Inheriting the
+            # pod's WHOLE allowance while this supervisor kills it at
+            # o1_timeout_seconds let O1 admit a calibration it could never
+            # finish — killed at the timeout, everything paid, nothing
+            # produced.  Hand O1 its real bound (and the wall-clock it has
+            # already lost), so O1's own gate refuses CHEAPLY, before
+            # calibration, when it cannot fit.
+            inherited = env.get(POD_AUTHORIZED_SECONDS_ENV, "").strip()
+            try:
+                pod_limit = float(inherited) if inherited else float("inf")
+            except ValueError:
+                pod_limit = float("inf")
+            bound = max(0.0, min(pod_limit, float(timeout)) - self._elapsed())
+            env[POD_AUTHORIZED_SECONDS_ENV] = str(int(bound))
+            env["O1_PHASE_BOUND_BY_FL"] = "1"
         proc = self.runner(command, shell=shell, capture_output=True, text=True,
-                           timeout=timeout, env=self._child_env(),
+                           timeout=timeout, env=env,
                            cwd=self.payload.get("o1_workdir") or None)
         seconds = self.clock.monotonic() - started
         # RE-EMIT the child's output on our own streams.  capture_output

@@ -645,3 +645,28 @@ def test_dangling_intents_pair_by_nonce_not_position(tmp_path):
     # withdrawal is idempotent and only resolves its OWN intent
     events = [e["event"] for e in sg.read_ledger(ledger, guard=guard)]
     assert events == [sg.EVENT_INTENT, sg.EVENT_ABORTED]
+
+
+def test_the_o1_child_is_told_its_real_bound_not_the_whole_pod_allowance(
+        tmp_path, monkeypatch):
+    """O1's affordability gate plans against O1_SESSION_AUTHORIZED_SECONDS.
+    Inheriting the pod's whole allowance while FL kills O1 at
+    o1_timeout_seconds admitted a calibration that could never finish."""
+    marker = tmp_path / "TERMINATED.log"
+    path = fixtures(tmp_path, marker)
+    cfg = json.load(open(path, encoding="utf-8"))
+    cfg["o1_timeout_seconds"] = 300.0
+    cfg["o1_entry_command"] = [sys.executable, "-c",
+                               "import os; print('BOUND=' + os.environ['O1_SESSION_AUTHORIZED_SECONDS'])"]
+    json.dump(cfg, open(path, "w", encoding="utf-8"))
+    monkeypatch.setenv("O1_SESSION_AUTHORIZED_SECONDS", "21200")
+    sup = make_supervisor(tmp_path, path)
+    rec = sup.state_RUN_O1_CALIBRATION()
+    bound = int(rec["stdout_tail"].split("BOUND=")[1].split()[0])
+    assert bound <= 300, bound
+    assert bound > 250          # minus only this supervisor's elapsed time
+    # other commands keep the pod's allowance untouched
+    rec2 = sup._run_command([sys.executable, "-c",
+                             "import os; print(os.environ['O1_SESSION_AUTHORIZED_SECONDS'])"],
+                            state="X")
+    assert rec2["stdout_tail"].strip() == "21200"
