@@ -391,6 +391,8 @@
         "C2. artifact source/result destination ARE deployment identity; launch-variable values and secrets are not",
         "D1. the records mirror snapshots before hashing, so a row landing mid-push cannot poison the manifest",
         "D1/D4. durable row count is published and readable off-pod (the zero-progress guard's real input)",
+        "D1. checkpoint mirror is one atomic commit; row mirror batches",
+        "SIGTERM on eviction mirrors the records file once and exits with no verdict marker",
         "D3. hub access is scoped to the transfer helper: the parent stays offline-locked and the helper refuses if it is not",
         "D3/F4. HF transfers are digest-verified end to end and fail closed on disagreement",
         "E5. the CUDA floor is a numeric version comparison, not a string compare",
@@ -412,7 +414,7 @@
       "failed": 0,
       "failures": [],
       "module": "test_review_repairs",
-      "passed": 28
+      "passed": 30
     },
     {
       "checks": [
@@ -446,7 +448,7 @@
   "schema": "o1b200.test_report.v1",
   "scope_note": "Hardware-independent local validation only: synthetic runtime + non-O1 corpus + mocked provider/clock. No B200 hardware claim is made or implied.",
   "total_failed": 0,
-  "total_passed": 282,
-  "utc": "2026-08-22T08:53:59Z",
+  "total_passed": 284,
+  "utc": "2026-08-22T12:01:20Z",
   "verdict": "ALL O1 B200 RUNNER TESTS PASSED"
 }
