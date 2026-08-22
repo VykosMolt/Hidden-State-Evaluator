@@ -961,6 +961,27 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
              "image_digest": os.environ.get("O1_IMAGE_DIGEST", "")},
             indent=2, sort_keys=True) + "\n")
         store.push_file(sidecar, "results/o1_results.tar.gz.sha256")
+        # The O1 RESULT MANIFEST for the Foundation Learner handover: the
+        # FL supervisor verifies O1's records by recomputing the digests this
+        # file lists (o1b200.transfer_manifest.v1 shape, absolute container
+        # paths) and never reads their content.  Written LAST, after the
+        # archive is durable, so its existence means "O1 is done and
+        # transferred".
+        atomic_write_text(
+            os.path.join(out_dir, "O1_RESULT_MANIFEST.json"),
+            json.dumps({
+                "schema": "o1b200.transfer_manifest.v1",
+                "artifacts": {
+                    "o1_results_archive": {
+                        "path": archive, "kind": "file", "sha256": digest},
+                    "o1_records": {
+                        "path": os.path.join(out_dir, "o1_records.jsonl"),
+                        "kind": "file",
+                        "sha256": ctx.get("records_sha256") or sha256_file(
+                            os.path.join(out_dir, "o1_records.jsonl"))},
+                },
+                "launch_nonce": os.environ.get("O1_LAUNCH_NONCE", ""),
+            }, indent=2, sort_keys=True) + "\n")
         _log_event(out_dir, "RESULTS_PUBLISHED", sha256=digest)
         return {"transferred": True, "sha256": digest}
 
