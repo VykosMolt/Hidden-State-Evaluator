@@ -30,8 +30,13 @@ reported as a deliberate selection, not as a fallback.
 
 The pinned RunPod REST API v2 contract has **no interruptible surface at
 all** — no spot price in the catalog, no purchase-mode field on
-`CreatePodRequest`, no eviction state. Spot pods exist only behind the
-GraphQL `podRentInterruptable` mutation.
+`CreatePodRequest`, no eviction state. (RunPod's *other* REST surface,
+`rest.runpod.io/v1`, does expose `PodCreateInput.interruptible` and a
+readable `Pod.interruptible`, verified 2026-08-22 — but it has no bid
+field and no GPU catalog/pricing path.) What needs GraphQL is therefore
+**bid control and price discovery** (`gpuTypes.lowestPrice`:
+`minimumBidPrice`, `stockStatus`), which exist nowhere else, plus the
+`podRentInterruptable` mutation that takes the bid.
 
 So acquisition alone runs on a separately pinned GraphQL surface
 (`provider/runpod/graphql_spot.py`, contract in

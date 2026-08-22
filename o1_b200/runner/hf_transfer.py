@@ -74,6 +74,25 @@ def do_push(repo_id: str, local: str, remote_rel: str) -> dict:
             "bytes": os.path.getsize(local)}
 
 
+def do_push_many(repo_id: str, pairs_path: str) -> dict:
+    """ONE Hub commit for many files.  ``pairs_path`` is a JSON list of
+    {"local": ..., "remote_rel": ...}.  The row mirror used to issue one
+    commit per committed row (hundreds per session); the Hub's own
+    guidance is to batch — thousands of commits to one repo degrade it."""
+    _assert_online_capable()
+    from huggingface_hub import CommitOperationAdd, HfApi
+    with open(pairs_path, encoding="utf-8") as fh:
+        pairs = json.load(fh)
+    ops = [CommitOperationAdd(path_in_repo=p["remote_rel"],
+                              path_or_fileobj=p["local"]) for p in pairs]
+    digests = {p["remote_rel"]: sha256_file(p["local"]) for p in pairs}
+    if ops:
+        HfApi(token=os.environ.get("HF_TOKEN")).create_commit(
+            repo_id=repo_id, repo_type="model", operations=ops,
+            commit_message=f"o1 durable rows: {len(ops)} file(s)")
+    return {"pushed": len(ops), "sha256": digests}
+
+
 def do_fetch(repo_id: str, remote_rel: str, local: str) -> dict:
     _assert_online_capable()
     from huggingface_hub import hf_hub_download
@@ -179,7 +198,8 @@ def do_scope(repo_id: str, mode: str) -> dict:
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("command",
-                   choices=["push", "fetch", "list", "snapshot", "scope"])
+                   choices=["push", "push-many", "fetch", "list", "snapshot",
+                            "scope"])
     p.add_argument("--repo", required=True)
     p.add_argument("--local")
     p.add_argument("--remote-rel")
@@ -188,6 +208,8 @@ def main() -> int:
     a = p.parse_args()
     if a.command == "push":
         out = do_push(a.repo, a.local, a.remote_rel)
+    elif a.command == "push-many":
+        out = do_push_many(a.repo, a.local)
     elif a.command == "fetch":
         out = do_fetch(a.repo, a.remote_rel, a.local)
     elif a.command == "snapshot":

@@ -76,6 +76,40 @@ def _require_env(name: str) -> str:
     return v
 
 
+def _install_eviction_flush(records_mirror, records_path_ref: dict) -> None:
+    """Spot eviction delivers SIGTERM a few seconds before SIGKILL.  That is
+    not enough to checkpoint the model, but it is enough to mirror the
+    records file once more (up to 24 committed rows sit between periodic
+    syncs).  The mirror SNAPSHOTS the file before hashing, so a row
+    mid-append is either wholly in or wholly out of the snapshot; the
+    process then exits non-zero with no marker (an eviction is not a
+    verdict).  ``records_path_ref["path"]`` is bound once calibration
+    starts; before that the handler only exits."""
+    import signal
+
+    def _on_term(signum, _frame):
+        try:
+            path = records_path_ref.get("path")
+            if path and os.path.exists(path):
+                records_mirror.sync_checkpoint(
+                    path, {"rows": _existing_row_count(path),
+                           "progress": "eviction_flush"})
+        except Exception:  # noqa: BLE001 - best effort under a deadline
+            pass
+        finally:
+            try:
+                print("EVICTION_FLUSH: SIGTERM received; pending committed "
+                      "rows pushed", flush=True)
+            except Exception:  # noqa: BLE001
+                pass
+            os._exit(143)
+
+    try:
+        signal.signal(signal.SIGTERM, _on_term)
+    except (ValueError, OSError):
+        pass        # not the main thread / unsupported: no handler, no harm
+
+
 def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
                               clock) -> dict:
     profile_key = _require_env("O1_ACQUIRED_PROFILE")
@@ -88,6 +122,8 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
     store = store_for_destination(result_destination)
     records_mirror = CheckpointDurability(
         store, remote_prefix="durable_o1_records")
+    records_path_ref: dict = {}
+    _install_eviction_flush(records_mirror, records_path_ref)
 
     def precheck(ctx):
         ctx["instance_ref"] = provider.start_instance()
@@ -673,6 +709,7 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
         # 1. restore any durable records from an earlier evicted pod, so the
         #    sealed orchestrator resumes at the next missing canonical row
         records_path = os.path.join(out_dir, "o1_records.jsonl")
+        records_path_ref["path"] = records_path
         progress_path = os.path.join(out_dir, "o1_progress.json")
         prior = records_mirror.restore_latest(os.path.join(
             out_dir, "durable_restore"))

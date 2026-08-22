@@ -380,6 +380,88 @@ def run() -> Runner:
             "(the zero-progress guard's real input)",
             d1_row_count_marker_is_published)
 
+    def d1_mirror_commits_are_batched_and_atomic():
+        """payload + manifest land in ONE store call (one Hub commit), and
+        the row mirror pushes all pending rows in one call."""
+        from o1_b200.runner.durability import (
+            CheckpointDurability, LocalDurableStore, RowDurability,
+        )
+        d = fresh_dir("repair_batched")
+        calls = []
+
+        class Counting(LocalDurableStore):
+            def push_files(self, pairs):
+                # the mirror must call THIS (one commit); the base class
+                # then delegates per file for the local store
+                calls.append(("many", len(pairs)))
+                self._in_batch = True
+                try:
+                    return super().push_files(pairs)
+                finally:
+                    self._in_batch = False
+
+            def push_file(self, local_path, remote_rel):
+                if not getattr(self, "_in_batch", False):
+                    calls.append(("one", remote_rel))
+                return super().push_file(local_path, remote_rel)
+
+        store = Counting(os.path.join(d, "durable"))
+        mirror = CheckpointDurability(store, remote_prefix="durable_o1_records")
+        records = os.path.join(d, "o1_records.jsonl")
+        with open(records, "w", encoding="utf-8") as fh:
+            for i in range(3):
+                fh.write(json.dumps({"row": i}) + "\n")
+        mirror.sync_checkpoint(records, {"progress": "partial"})
+        assert calls == [("many", 2)], calls      # payload + LATEST together
+        assert mirror.latest_row_count() == 3
+        calls.clear()
+        run_dir = os.path.join(d, "run")
+        os.makedirs(os.path.join(run_dir, "rows"))
+        for i in range(4):
+            with open(os.path.join(run_dir, "rows", f"r{i}.json"), "w") as fh:
+                fh.write("{}")
+        rows = RowDurability(run_dir, store, remote_prefix="durable_rows")
+        out = rows.sync_now()
+        assert out["pushed"] == 4 and calls == [("many", 4)], calls
+    r.check("D1. checkpoint mirror is one atomic commit; row mirror batches",
+            d1_mirror_commits_are_batched_and_atomic)
+
+    def eviction_flush_mirrors_the_records_file_and_exits():
+        """SIGTERM (spot eviction) -> one more records mirror, then exit
+        143 with NO marker.  Run in a subprocess so os._exit is contained."""
+        import subprocess
+        import sys
+        d = fresh_dir("repair_evict_flush")
+        root = os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))))
+        code = f"""
+import os, json, signal, sys, time
+sys.path.insert(0, {root!r})
+from o1_b200.runner.durability import CheckpointDurability, LocalDurableStore
+from o1_b200.runner import production_entry as pe
+store = LocalDurableStore({os.path.join(d, 'durable')!r})
+mirror = CheckpointDurability(store, remote_prefix='durable_o1_records')
+ref = {{}}
+pe._install_eviction_flush(mirror, ref)
+p = {os.path.join(d, 'o1_records.jsonl')!r}
+open(p, 'w').write(json.dumps({{'row': 0}}) + '\\n' + json.dumps({{'row': 1}}) + '\\n')
+ref['path'] = p
+os.kill(os.getpid(), signal.SIGTERM)
+time.sleep(5)
+print('NOT REACHED')
+"""
+        proc = subprocess.run([sys.executable, "-c", code],
+                              capture_output=True, text=True, timeout=60)
+        assert proc.returncode == 143, (proc.returncode, proc.stderr[-400:])
+        assert "EVICTION_FLUSH" in proc.stdout
+        assert "ZERO_TOUCH_" not in proc.stdout
+        from o1_b200.runner.durability import CheckpointDurability, LocalDurableStore
+        store = LocalDurableStore(os.path.join(d, "durable"))
+        assert CheckpointDurability(
+            store, remote_prefix="durable_o1_records").latest_row_count() == 2
+    r.check("SIGTERM on eviction mirrors the records file once and exits "
+            "with no verdict marker", eviction_flush_mirrors_the_records_file_and_exits)
+
     # ---------------- D3: hub reachability is scoped, not global --------
 
     def d3_transfer_helper_is_the_only_online_surface():

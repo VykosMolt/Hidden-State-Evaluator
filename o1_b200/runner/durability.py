@@ -50,6 +50,14 @@ class DurableStore:
     def push_file(self, local_path: str, remote_rel: str) -> dict:
         raise NotImplementedError
 
+    def push_files(self, pairs: list[tuple[str, str]]) -> dict:
+        """Push many (local, remote_rel) pairs; ONE commit where the store
+        supports it.  Default: per file."""
+        out = {}
+        for local_path, remote_rel in pairs:
+            out[remote_rel] = self.push_file(local_path, remote_rel)["sha256"]
+        return {"pushed": len(out), "sha256": out}
+
     def fetch_file(self, remote_rel: str, local_path: str) -> dict:
         raise NotImplementedError
 
@@ -156,6 +164,29 @@ class HfDurableStore(DurableStore):
                 f"push digest disagreement for {remote_rel}")
         return {"remote": remote_rel, "sha256": want}
 
+    def push_files(self, pairs: list[tuple[str, str]]) -> dict:
+        if not pairs:
+            return {"pushed": 0, "sha256": {}}
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False,
+                                         encoding="utf-8") as fh:
+            json.dump([{"local": l, "remote_rel": r} for l, r in pairs], fh)
+            manifest = fh.name
+        try:
+            out = self._runner(["push-many", "--repo", self.repo_id,
+                                "--local", manifest])
+        finally:
+            try:
+                os.remove(manifest)
+            except OSError:
+                pass
+        got = out.get("sha256") or {}
+        for local_path, remote_rel in pairs:
+            if got.get(remote_rel) != sha256_file(local_path):
+                raise DurabilityError(
+                    f"push digest disagreement for {remote_rel}")
+        return {"pushed": len(pairs), "sha256": got}
+
     def fetch_file(self, remote_rel: str, local_path: str) -> dict:
         out = self._runner(["fetch", "--repo", self.repo_id,
                             "--remote-rel", remote_rel, "--local", local_path])
@@ -191,6 +222,12 @@ class _PrefixedStore(DurableStore):
         out = dict(self.inner.push_file(local_path, self._k(remote_rel)))
         out["remote"] = remote_rel
         return out
+
+    def push_files(self, pairs: list[tuple[str, str]]) -> dict:
+        out = self.inner.push_files([(l, self._k(r)) for l, r in pairs])
+        cut = len(self.prefix) + 1 if self.prefix else 0
+        return {"pushed": out.get("pushed", 0),
+                "sha256": {k[cut:]: v for k, v in (out.get("sha256") or {}).items()}}
 
     def fetch_file(self, remote_rel: str, local_path: str) -> dict:
         return self.inner.fetch_file(self._k(remote_rel), local_path)
@@ -251,18 +288,33 @@ class RowDurability:
         pushed, failed = [], []
         if not os.path.isdir(self.rows_dir):
             return {"pushed": 0, "failed": 0}
-        for name in sorted(os.listdir(self.rows_dir)):
-            if not name.endswith(".json") or name in self._synced:
-                continue
-            local = os.path.join(self.rows_dir, name)
-            try:
-                self.store.push_file(local, self._remote(name))
+        pending = [(os.path.join(self.rows_dir, name), name)
+                   for name in sorted(os.listdir(self.rows_dir))
+                   if name.endswith(".json") and name not in self._synced]
+        if not pending:
+            return {"pushed": 0, "failed": 0}
+        # ONE commit per sync, not one per row: a session of thousands of
+        # rows was thousands of Hub commits, each a subprocess + round trip
+        # on paid time, against the Hub's own batching guidance
+        try:
+            self.store.push_files([(local, self._remote(name))
+                                   for local, name in pending])
+            for _, name in pending:
                 self._synced.add(name)
                 pushed.append(name)
-            except Exception as exc:  # noqa: BLE001
-                failed.append(name)
-                self.on_event("DURABILITY_SYNC_FAILED", row=name,
-                              error=str(exc)[:200])
+        except Exception as exc:  # noqa: BLE001
+            # fall back to per-file so one bad row cannot hold the rest back
+            self.on_event("DURABILITY_BATCH_SYNC_FAILED", rows=len(pending),
+                          error=str(exc)[:200])
+            for local, name in pending:
+                try:
+                    self.store.push_file(local, self._remote(name))
+                    self._synced.add(name)
+                    pushed.append(name)
+                except Exception as exc2:  # noqa: BLE001
+                    failed.append(name)
+                    self.on_event("DURABILITY_SYNC_FAILED", row=name,
+                                  error=str(exc2)[:200])
         if pushed:
             self.on_event("DURABILITY_SYNCED", rows=len(pushed))
         if failed:
@@ -343,7 +395,6 @@ class CheckpointDurability:
                     archive_path.endswith(".jsonl"):
                 with open(snapshot, encoding="utf-8") as fh:
                     rows = sum(1 for ln in fh if ln.strip())
-            self.store.push_file(snapshot, f"{self.remote_prefix}/{name}")
             manifest = {"archive": name, "sha256": digest, **meta}
             if rows is not None:
                 manifest["rows"] = rows
@@ -351,7 +402,13 @@ class CheckpointDurability:
             with open(tmp, "w", encoding="utf-8") as fh:
                 json.dump(manifest, fh, indent=2, sort_keys=True)
             try:
-                self.store.push_file(tmp, f"{self.remote_prefix}/LATEST.json")
+                # ONE atomic commit for payload + manifest: stronger than the
+                # payload-then-manifest ordering (both land or neither), and
+                # half the commits — the session mirrors every 25 rows, so
+                # this was ~370 commits against one repo per calibration
+                self.store.push_files([
+                    (snapshot, f"{self.remote_prefix}/{name}"),
+                    (tmp, f"{self.remote_prefix}/LATEST.json")])
             finally:
                 os.remove(tmp)
         finally:
