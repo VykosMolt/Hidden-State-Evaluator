@@ -9,7 +9,7 @@ rental, and nothing here spends money.
 
 | item | value |
 |---|---|
-| image | `o1-b300-runner:v0.3.6` (local id `sha256:30474495…`; B300 primary / B200 explicit fallback, INTERRUPTIBLE) |
+| image | `o1-b300-runner:v0.3.7` (local id `sha256:55f2c45d…`; B300 primary / B200 explicit fallback, INTERRUPTIBLE) |
 | base | `python:3.14-slim-bookworm`, pinned by digest `python@sha256:23c59390…` |
 | venv | `/opt/venv` |
 | torch | `2.12.1+cu130` (stable; identical wheel verified locally on sm_120 incl. the real-checkpoint smoke) |
