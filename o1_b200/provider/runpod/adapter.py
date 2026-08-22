@@ -78,19 +78,76 @@ TERMINATE_AFTER_MARGIN_SECONDS = 30 * 60
 TERMINATE_AFTER_READ_BACK = "IMPOSSIBLE: not a Pod field (verified 2026-08-21)"
 
 
+_LINE_KEYS = ("line", "message", "msg", "text", "log", "m", "content")
+
+
+def _sse_lines(text: str) -> list[str] | None:
+    """Decode text/event-stream frames into their log lines, or None when
+    the text is not SSE.  Each ``data:`` payload is the spec's
+    ``{"ts","source","line"}`` object (or a bare string)."""
+    if "data:" not in text:
+        return None
+    out: list[str] = []
+    saw_data = False
+    for ln in text.splitlines():
+        if not ln.startswith("data:"):
+            continue
+        saw_data = True
+        payload = ln[len("data:"):].strip()
+        try:
+            obj = json.loads(payload)
+        except ValueError:
+            out.append(payload)
+            continue
+        if isinstance(obj, dict):
+            for key in _LINE_KEYS:
+                if isinstance(obj.get(key), str):
+                    out.append(obj[key])
+                    break
+            else:
+                out.append(json.dumps(obj, sort_keys=True))
+        else:
+            out.append(str(obj))
+    return out if saw_data else None
+
+
+class WitnessShapeUnrecognised(RuntimeError):
+    """The log body mentions ZERO_TOUCH_ but no line-anchored marker could
+    be read: the provider's log shape is not one we decode.  Loud, because
+    "no verdict" is indistinguishable from an eviction and costs pods."""
+
+
 def normalize_log_body(raw) -> str:
     """The provider's log body as newline-delimited lines of text.
 
-    The endpoint may return a bare string, ``{"logs": "..."}``, a list of
-    lines, or a list of objects each carrying a message field.  The
-    completion witness is LINE-anchored, so a list must become real lines:
-    json.dumps of the body produced one escaped line in which no verdict
-    could ever match.
+    Accepts: text/event-stream (the pinned spec), a bare string, a JSON
+    string body, ``{"logs": ...}`` / ``{"lines": ...}`` envelopes (nested
+    once), a list of lines, or a list of objects carrying a line field.
+    The completion witness is LINE-anchored, so every shape must become
+    real lines.
     """
-    if isinstance(raw, dict):
-        raw = raw.get("logs", raw.get("lines", raw))
     if isinstance(raw, str):
-        return raw
+        stripped = raw.strip()
+        sse = _sse_lines(raw)
+        if sse is not None:
+            return "\n".join(sse)
+        if stripped[:1] in ("{", "["):
+            try:
+                raw = json.loads(stripped)
+            except ValueError:
+                return raw
+        else:
+            return raw
+    for _ in range(2):
+        if isinstance(raw, dict):
+            raw = raw.get("logs", raw.get("lines", raw.get("data", raw)))
+        else:
+            break
+    if raw is None:
+        return ""
+    if isinstance(raw, str):
+        sse = _sse_lines(raw)
+        return "\n".join(sse) if sse is not None else raw
     if isinstance(raw, list):
         lines = []
         for item in raw:
@@ -98,7 +155,7 @@ def normalize_log_body(raw) -> str:
                 lines.append(item)
             elif isinstance(item, dict):
                 msg = None
-                for key in ("message", "msg", "line", "text", "log"):
+                for key in _LINE_KEYS:
                     if isinstance(item.get(key), str):
                         msg = item[key]
                         break
@@ -241,7 +298,11 @@ class RunpodV2Adapter:
         return self._logs(pod_id, "system", tail)
 
     def _logs(self, pod_id: str, source: str, tail: int) -> str:
-        raw = self.readonly.get(
+        # The pinned v2 spec (openapi/runpod_v2_openapi.json) serves this
+        # endpoint as text/event-stream: "data: {ts, source, line}" frames.
+        # Fetch it as TEXT; normalize_log_body decodes SSE, JSON, or plain
+        # lines into newline-delimited text for the line-anchored witness.
+        raw = self.readonly.get_text(
             f"/v2/pods/{pod_id}/logs?source={source}&tail={int(tail)}")
         return redact(normalize_log_body(raw))
 

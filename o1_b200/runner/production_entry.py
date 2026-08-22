@@ -338,7 +338,9 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
             os.path.join(out_dir, "EQUIVALENCE_REPORT.real.json"),
             json.dumps(comp, indent=2, sort_keys=True, default=str) + "\n")
         ran = [cid for cid, v in comp.items()
-               if not v.get("skipped") and not v.get("is_reference")]
+               if not v.get("is_reference") and not str(
+                   v.get("skipped", "")).startswith("precalibration cost rule")
+               and v.get("skipped") != "prior stage not clean"]
         return {**{cid: v.get("eligible_structurally")
                    for cid, v in sorted(comp.items())},
                 "precalibration_overrun": ctx.get("precalibration_overrun"),

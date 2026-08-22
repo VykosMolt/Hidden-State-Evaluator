@@ -117,10 +117,13 @@ class _BaseTransport:
             "method": method, "url": redact(url), "status": status,
             "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
 
-    def _send_once(self, method: str, path: str, body: dict | None):
+    def _send_once(self, method: str, path: str, body: dict | None,
+                   accept: str | None = None):
         url = self.base_url + path
         data = None
         headers = self._headers()
+        if accept:
+            headers["Accept"] = accept
         if body is not None:
             data = json.dumps(body).encode("utf-8")
             headers["Content-Type"] = "application/json"
@@ -162,6 +165,32 @@ class _BaseTransport:
         raise TransportError(
             f"{method} {path}: unknown HTTP status {status}; the pinned "
             f"contract does not define it — failing closed")
+
+    def get_text(self, path: str, accept: str = "text/event-stream") -> str:
+        """GET a NON-JSON body (the pinned v2 spec serves pod logs as
+        text/event-stream).  Retries like ``get``; returns the raw text.
+        ``json.loads``-ing an SSE body raised MalformedResponse on every
+        poll, which made the completion witness permanently unavailable."""
+        attempt = 0
+        while True:
+            status, raw, retry_after = self._send_once("GET", path, None,
+                                                       accept=accept)
+            if status in RETRYABLE_STATUS and attempt < MAX_GET_RETRIES:
+                attempt += 1
+                delay = min(BACKOFF_CAP_SECONDS,
+                            BACKOFF_BASE_SECONDS * (2 ** (attempt - 1)))
+                delay = delay * (0.5 + self._rng())
+                if retry_after:
+                    try:
+                        delay = max(delay, float(retry_after))
+                    except ValueError:
+                        pass
+                self._sleep(delay)
+                continue
+            if status in (200, 201):
+                return (raw or b"").decode("utf-8", errors="replace")
+            # non-2xx: reuse the JSON error mapping (bodies are JSON there)
+            return self._parse("GET", path, status, raw)
 
     def get(self, path: str) -> dict | list | None:
         attempt = 0

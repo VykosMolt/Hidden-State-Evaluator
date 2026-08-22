@@ -204,7 +204,29 @@ class _Handler(BaseHTTPRequestHandler):
             if pod is None:
                 self._err(404, "Not Found", "no such pod")
                 return
-            self._reply(200, {"logs": s.log_text})
+            # The pinned v2 spec serves logs as text/event-stream with
+            # "data: {ts, source, line}" frames — emit exactly that.
+            # log_shape="json" keeps the legacy {"logs": ...} envelope so
+            # both decoders stay exercised.
+            if getattr(s, "log_shape", "sse") == "json":
+                self._reply(200, {"logs": s.log_text})
+                return
+            if getattr(s, "log_shape", "sse") == "unavailable":
+                self._err(503, "Service Unavailable", "log endpoint down")
+                return
+            frames = []
+            for i, line in enumerate(s.log_text.splitlines()):
+                frames.append(f"id: 2026-06-01T12:00:00Z/{i:012d}")
+                frames.append("data: " + json.dumps(
+                    {"ts": "2026-06-01T12:00:00Z", "source": "container",
+                     "line": line}))
+                frames.append("")
+            body = ("\n".join(frames) + "\n").encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
             return
         m = re.match(r"^/v2/pods/([^/?]+)$", self.path)
         if m:

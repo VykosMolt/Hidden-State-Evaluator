@@ -36,7 +36,7 @@ import os
 import re
 import time
 
-from .adapter import RunpodV2Adapter
+from .adapter import WitnessShapeUnrecognised, RunpodV2Adapter
 from .authorization import (
     AuthorizationError, CLI_FLAG, LiveMutationAuthorization,
 )
@@ -370,6 +370,13 @@ def run_session(*, authorization_path: str, out_dir: str,
             try:
                 tail = adapter.get_container_logs(pod.id, tail=50)
                 verdict = completion_verdict(tail)
+                if verdict is None and "ZERO_TOUCH_" in tail and any(
+                        tok in tail for tok in ("ZERO_TOUCH_COMPLETE",
+                                                "ZERO_TOUCH_ABORTED_AT_")):
+                    raise WitnessShapeUnrecognised(
+                        "the container log carries a completion token but "
+                        "no line-anchored marker could be read; the log "
+                        "shape is not one the driver decodes")
                 if verdict and verdict != "COMPLETE":
                     # The pod reached a DETERMINISTIC verdict and said so.
                     # Reacquiring cannot help — a fresh pod runs the same
@@ -386,12 +393,22 @@ def run_session(*, authorization_path: str, out_dir: str,
                 # result witness is consulted only when the log endpoint
                 # itself is unavailable (below).
                 return verdict == "COMPLETE"
-            except DeterministicPodFailure:
+            except (DeterministicPodFailure, WitnessShapeUnrecognised):
                 raise
             except Exception:  # noqa: BLE001 - log endpoint may lag
                 if attempt_i + 1 < retries:
                     sleep(2.0)
         step("COMPLETION_WITNESS_LOG_UNAVAILABLE", pod.id)
+        # The durable O1 archive may stand in for an unreadable log ONLY
+        # when it can actually witness the session's end: the pod must have
+        # EXITED, and the session must be O1-only.  In a combined session
+        # the archive appears at the end of the O1 PHASE, hours before the
+        # FL half finishes; consulting it from the RUNNING-pod poll loop
+        # reported a live FL session COMPLETE and terminated it.
+        if config.get("fl_session_config"):
+            return False
+        if getattr(pod, "status", None) != "EXITED":
+            return False
         return bool(result_witness and result_witness())
 
     if progress_probe is None:
@@ -574,6 +591,16 @@ def run_session(*, authorization_path: str, out_dir: str,
             controller.collect_logs(pod_id)
             confirmed = controller.terminate_and_confirm(pod_id)
             return finish("ABORTED_DETERMINISTIC_POD_FAILURE",
+                          termination_confirmed=confirmed,
+                          acquisitions_used=attempt, error=redact(str(exc)))
+        except WitnessShapeUnrecognised as exc:
+            # the pod printed a verdict the driver cannot read: stop after
+            # ONE pod, with the log collected, rather than reacquire against
+            # a decoder defect
+            step("WITNESS_SHAPE_UNRECOGNISED", exc)
+            controller.collect_logs(pod_id)
+            confirmed = controller.terminate_and_confirm(pod_id)
+            return finish("ABORTED_WITNESS_SHAPE_UNRECOGNISED",
                           termination_confirmed=confirmed,
                           acquisitions_used=attempt, error=redact(str(exc)))
         except BudgetViolation as exc:

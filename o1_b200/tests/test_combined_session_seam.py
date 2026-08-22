@@ -127,24 +127,80 @@ def run() -> Runner:
     cut_after_o1 = complete_log[:complete_log.index("O1_PHASE_COMPLETE")
                                 + len("O1_PHASE_COMPLETE\n")]
 
+    def _combined_setup(d, **kw):
+        """A COMBINED-session config with the O1 archive + sidecar ALREADY
+        published under THIS launch nonce — exactly the state of a real
+        session after the O1 phase, i.e. the state in which the old
+        result-witness fallback reported COMPLETE."""
+        store = os.path.join(d, "durable_results")
+        config, auth_path = tp._setup(d, extra_config={
+            "fl_session_config": "/opt/foundation_learner/foundation_learner/"
+                                 "deploy/FL_SESSION_CONFIG.json",
+            "result_destination": store}, **kw)
+        os.makedirs(os.path.join(store, "results"))
+        with open(os.path.join(store, "results", "o1_results.tar.gz"), "wb") as fh:
+            fh.write(b"o1 archive")
+        with open(auth_path, encoding="utf-8") as fh:
+            nonce = json.load(fh)["launch_nonce"]
+        with open(os.path.join(store, "results", "o1_results.tar.gz.sha256"),
+                  "w", encoding="utf-8") as fh:
+            json.dump({"archive": "o1_results.tar.gz", "sha256": "0" * 64,
+                       "rows": 4608, "launch_nonce": nonce}, fh)
+        return config, auth_path
+
     def the_driver_does_not_terminate_the_pod_after_the_o1_phase():
         """The critical defect: the O1 phase's marker must not be read as
-        the pod's verdict.  A RUNNING pod whose log ends at the O1 phase
-        keeps being monitored; when that pod is then evicted (EXITED with no
-        session marker) the driver REACQUIRES rather than reporting COMPLETE."""
+        the pod's verdict, and the O1 archive (published at the END OF THE
+        O1 PHASE) must not witness the session's end.  A RUNNING pod whose
+        log ends at the O1 phase keeps being monitored; when it is evicted
+        (EXITED, no session marker) the driver REACQUIRES."""
         d = fresh_dir("seam_mid_o1")
         sc = Scenario()
         sc.log_text = cut_after_o1
         sc.lifecycle_plan = ["PROVISIONING", "STARTING", "RUNNING", "EXITED"]
-        config, auth_path = tp._setup(d, max_pod_creations=2)
+        config, auth_path = _combined_setup(d, max_pod_creations=2)
         status, sc = tp._run(d, sc, config, auth_path)
         assert status["outcome"] != "COMPLETE", status["outcome"]
         assert len(sc.rent_calls) >= 2, (
             "the driver did not reacquire after a mid-session eviction: it "
-            "read the O1 phase as the session's completion")
-    r.check("a pod evicted after the O1 phase (FL half unfinished) is "
-            "REACQUIRED, never reported COMPLETE",
+            "read the O1 phase (or the O1 archive) as the session's completion")
+    r.check("a pod evicted after the O1 phase (FL half unfinished, O1 archive "
+            "already durable) is REACQUIRED, never reported COMPLETE",
             the_driver_does_not_terminate_the_pod_after_the_o1_phase)
+
+    def an_unreadable_log_endpoint_never_promotes_the_o1_archive_to_completion():
+        """The log-unavailable fallback: with the O1 archive durable and the
+        log endpoint 503ing, a COMBINED session must not be reported
+        COMPLETE (the archive witnesses the O1 PHASE, not the session)."""
+        d = fresh_dir("seam_log_down")
+        sc = Scenario()
+        sc.log_text = cut_after_o1
+        sc.log_shape = "unavailable"
+        sc.lifecycle_plan = ["PROVISIONING", "STARTING", "RUNNING", "EXITED"]
+        config, auth_path = _combined_setup(d, max_pod_creations=2)
+        status, sc = tp._run(d, sc, config, auth_path)
+        assert status["outcome"] != "COMPLETE", status["outcome"]
+        assert len(sc.rent_calls) >= 2
+    r.check("a combined session with the log endpoint down and the O1 "
+            "archive durable is never reported COMPLETE",
+            an_unreadable_log_endpoint_never_promotes_the_o1_archive_to_completion)
+
+    def the_sse_log_shape_yields_the_verdict():
+        """The mock now speaks the pinned spec's text/event-stream framing;
+        the witness must read it (the transport json.loads-ed every body
+        before, so no verdict was ever readable on a real pod)."""
+        from o1_b200.provider.runpod.adapter import normalize_log_body
+        from o1_b200.provider.runpod.zero_touch import completion_verdict
+        sse = ("id: 2026-06-01T12:00:00Z/000000000001\n"
+               "data: {\"ts\":\"t\",\"source\":\"container\",\"line\":\"O1_PHASE_COMPLETE\"}\n\n"
+               "id: 2026-06-01T12:00:00Z/000000000002\n"
+               "data: {\"ts\":\"t\",\"source\":\"container\",\"line\":\"ZERO_TOUCH_COMPLETE\"}\n\n")
+        assert completion_verdict(normalize_log_body(sse)) == "COMPLETE"
+        assert completion_verdict(normalize_log_body(sse.replace(
+            "ZERO_TOUCH_COMPLETE", "ZERO_TOUCH_ABORTED_AT_RUN_FL_LADDER"))) \
+            == "RUN_FL_LADDER"
+    r.check("the pinned text/event-stream log shape yields the verdict",
+            the_sse_log_shape_yields_the_verdict)
 
     def the_driver_completes_on_the_session_marker():
         d = fresh_dir("seam_complete")
@@ -172,20 +228,20 @@ def run() -> Runner:
     r.check("a deterministic FL-half abort stops the session after ONE paid "
             "acquisition", a_deterministic_fl_abort_stops_the_session)
 
-    def the_entrypoint_hands_over_to_the_fl_supervisor_exactly_once():
-        """The recursion guard, executed: start_b300.sh with a session config
-        set and the depth marker already active must NOT dispatch to FL."""
+    def the_entrypoint_recursion_guard_is_present():
+        """Static check only (the entrypoint's pre-entry steps need a hub
+        credential to execute): the guard text and its position before the
+        FL dispatch.  Executed behaviour of the guard is covered by
+        test_campaign_check_hf_scope in the FL repo."""
         start = os.path.join(_ROOT, "o1_b200", "deploy", "start_b300.sh")
-        env = dict(os.environ, O1_FL_SESSION_CONFIG="/nonexistent.json",
-                   O1_B300_ENTRY_ACTIVE="1", O1_B200_PYTHON=sys.executable,
-                   O1_B200_OUT=fresh_dir("seam_entry_out"),
-                   O1_B200_ARTIFACTS_ROOT=fresh_dir("seam_entry_art"))
         proc = subprocess.run(["bash", "-n", start], capture_output=True)
         assert proc.returncode == 0
         text = open(start, encoding="utf-8").read()
         assert 'FL_CONFIG=""' in text and "O1_B300_ENTRY_ACTIVE" in text
-    r.check("the entrypoint's recursion guard is intact",
-            the_entrypoint_hands_over_to_the_fl_supervisor_exactly_once)
+        assert text.index("O1_B300_ENTRY_ACTIVE") < text.index(
+            "combined session: handing over")
+    r.check("the entrypoint's recursion guard is present before the FL "
+            "dispatch (static)", the_entrypoint_recursion_guard_is_present)
     return r
 
 

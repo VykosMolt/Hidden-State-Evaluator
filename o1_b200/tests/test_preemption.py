@@ -41,7 +41,7 @@ def _fake_spawn(**_kw):
     return FakeWatchdog()
 
 
-def _setup(d, *, max_pod_creations=4):
+def _setup(d, *, max_pod_creations=4, extra_config=None):
     config = {
         "project": "O1_B200", "package_zip_sha256": "p" * 64,
         "budget_policy_sha256": "b" * 64,
@@ -50,6 +50,9 @@ def _setup(d, *, max_pod_creations=4):
         "adapter_commit": "test",
         "result_source": os.path.join(d, "fake_results.tar.gz"),
     }
+    # identity fields (e.g. fl_session_config) must be present BEFORE the
+    # authorization is rendered: they are part of deployment_spec_sha256
+    config.update(extra_config or {})
     with open(config["result_source"], "wb") as fh:
         fh.write(b"results")
     rendered = _render_all_profiles(config)

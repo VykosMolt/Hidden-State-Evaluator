@@ -38,17 +38,21 @@ export HF_HUB_OFFLINE=1
 export CUBLAS_WORKSPACE_CONFIG=":4096:8"
 export PYTHONPATH="$ROOT"
 
-if ! mkdir -p "$OUT" "$ARTIFACTS" 2>"${TMPDIR:-/tmp}/.mkdir_err"; then
-  # an unattached volume or a full container disk is a per-pod condition a
-  # replacement may not repeat (transient: no marker, the driver may
-  # reacquire); a read-only rootfs is the image's own (deterministic)
-  if grep -qiE "read-only file system" "${TMPDIR:-/tmp}/.mkdir_err"; then
-    echo "ZERO_TOUCH_ABORTED_AT_PRE_ENTRY_MKDIR"
-  else
-    echo "REFUSED (transient): cannot create $OUT / $ARTIFACTS: $(cat "${TMPDIR:-/tmp}/.mkdir_err")" >&2
-  fi
+MKDIR_ERR="$(LC_ALL=C mkdir -p "$OUT" "$ARTIFACTS" 2>&1 >/dev/null)" || {
+  # Default DETERMINISTIC (one pod): a wrongly-deterministic call costs one
+  # acquisition, a wrongly-transient one costs four.  Only "No space left"
+  # (a full container disk) is treated as a per-pod condition; a read-only
+  # rootfs, a mis-permissioned mount or an empty reason are the image's or
+  # the template's own and repeat on every pod.
+  case "$MKDIR_ERR" in
+    *"No space left"*)
+      echo "REFUSED (transient): cannot create $OUT / $ARTIFACTS: $MKDIR_ERR" >&2 ;;
+    *)
+      echo "[start_b300] REFUSED: cannot create $OUT / $ARTIFACTS: ${MKDIR_ERR:-no reason reported}" >&2
+      echo "ZERO_TOUCH_ABORTED_AT_PRE_ENTRY_MKDIR" ;;
+  esac
   exit 1
-fi
+}
 
 # Every pre-entry step below fails DETERMINISTICALLY (same image, same
 # config, same artifacts -> same refusal), so a non-zero exit must carry the

@@ -71,6 +71,7 @@ docker build --platform linux/amd64 \
   -f o1_b200/deploy/Dockerfile.b300 \
   -t "$IMAGE_NAME:$VERSION_TAG" .
 
+PREV_IMAGE_ID="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('image_id_local',''))" "$ROOT/o1_b200/provider/runpod/CONTAINER_IMAGE_RECORD.json" 2>/dev/null || true)"
 IMAGE_ID=$(docker inspect --format '{{.Id}}' "$IMAGE_NAME:$VERSION_TAG")
 DOCKERFILE_SHA=$(sha256sum o1_b200/deploy/Dockerfile.b300 | cut -d' ' -f1)
 LOCK_SHA=$(sha256sum o1_b200/deploy/requirements.b300.lock | cut -d' ' -f1)
@@ -131,9 +132,14 @@ rm -rf build_ctx
 # The four operator documents quote the local image id; rewrite them from
 # the record so a documented cross-check can never name an image that no
 # longer exists (test_launch_path pins this correspondence).
+# Anchored to the PREVIOUS local id (read from the record before it was
+# overwritten) so a registry digest or any other sha256 in those documents
+# is never rewritten.
 for doc in "$ROOT/o1_b200/README.md" "$ROOT/o1_b200/deploy/README.md" \
            "$ROOT/o1_b200/provider/runpod/PRE_RENTAL_PREREQUISITES.md" \
            "$ROOT/o1_b200/provider/runpod/REGISTRY_PUSH_PROCEDURE.md"; do
-  sed -i -E "s/sha256:[0-9a-f]{64}/$IMAGE_ID/g" "$doc"
+  if [[ -n "${PREV_IMAGE_ID:-}" ]]; then
+    sed -i "s|$PREV_IMAGE_ID|$IMAGE_ID|g" "$doc"
+  fi
 done
 echo "BUILD OK -> $OUT"
