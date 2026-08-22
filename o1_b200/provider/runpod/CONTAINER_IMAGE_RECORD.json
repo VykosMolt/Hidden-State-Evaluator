@@ -28,7 +28,7 @@
   "image_name": "o1-b300-runner:v0.3.8",
   "notes": "no FP8/FP4/quantization/speculative/vLLM/TensorRT-LLM/SGLang; no startup installation/compilation/clone/resolution; checkpoint never baked; no credentials",
   "platform": "linux/amd64",
-  "registry_digest_ref": "UNRESOLVED_UNTIL_PUSH (docker push prints repo@sha256:...)",
+  "registry_digest_ref": "ghcr.io/vykosmolt/o1-b300-runner@sha256:60cb33c677de0f7e2513f186e57260186dfbd5de8fab5404af651ea86e0d28b0",
   "schema": "o1b300.container_image_record.v2",
   "supported_driver_range": ">= r580 (CUDA 13.0 requirement; RunPod B300/B200 hosts report CUDA 13.0/13.2)",
   "system_packages": "base python:3.14-slim-bookworm only; no extra apt packages installed",
@@ -38,5 +38,6 @@
   },
   "torch_wheel_sha256": "c84c5988b3e416669ed3790d772479af5934d1788119288d8bddd9c4cb207285",
   "triton_wheel_sha256": "c56cb810349d3699020b5b7695429b9b997574dab1b9f46b2b63fa23d7954894",
-  "wheelset_manifest_sha256": "a2577028a5a82fc301e38bef6a33bc40940aa12f9bff11683176ad66290910d9"
+  "wheelset_manifest_sha256": "a2577028a5a82fc301e38bef6a33bc40940aa12f9bff11683176ad66290910d9",
+  "registry_pushed_utc": "2026-08-22"
 }
