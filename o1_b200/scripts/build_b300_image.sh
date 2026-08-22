@@ -6,7 +6,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WHEELS_SRC="${O1_B300_WHEELS:-/home/moloch/b200_build_cache/wheels_b300}"
 IMAGE_NAME="${1:-o1-b300-runner}"
-VERSION_TAG="${2:-v0.3.10}"
+VERSION_TAG="${2:-v0.3.11}"
 OUT="$ROOT/o1_b200/provider/runpod/CONTAINER_IMAGE_RECORD.json"
 
 cd "$ROOT"

@@ -1,6 +1,6 @@
 {
   "base_image_digest": "python@sha256:23c59390fc717bf09f9336908199a0ae75d9c4264bf296123f94ad772fea3b52",
-  "build_timestamp_utc": "2026-08-22T12:27:32Z",
+  "build_timestamp_utc": "2026-08-22T13:28:57Z",
   "dependency_lock_sha256": "53c15b49312dbe6b1ca1e399ae9cf6045c1bdbc53ab1f825a5d3cfbf0870335b",
   "dockerfile_sha256": "3f000a4f2a96f64afd247eeb96d6505f7b0192ee18f9695e3fabcacc1cac73d6",
   "environment": {
@@ -23,12 +23,12 @@
     "transformers": "4.54.1"
   },
   "foundation_learner_layout": "/opt/foundation_learner/foundation_learner (import root /opt/foundation_learner); pregen episode corpus NOT baked \u2014 campaign/fetch_pregen.py materialises and hash-verifies it on the pod",
-  "foundation_learner_source_sha256": "dc2f029ebbddeb9aa4bb089961b3bc094adae7be2ebb322e69870778833eab56",
-  "image_id_local": "sha256:338bf51765ad0263103d79e581de30e143d9e5d7eb2cd0ed6e0854369b1b015c",
-  "image_name": "o1-b300-runner:v0.3.10",
+  "foundation_learner_source_sha256": "f5429b003fc190a81d6ee783ba389a2877dd57f0574317d5902670c0c87a4add",
+  "image_id_local": "sha256:6591e5a5d4554c4f031e548aa73702a80310a76da9229d39e20c15dab016ee11",
+  "image_name": "o1-b300-runner:v0.3.11",
   "notes": "no FP8/FP4/quantization/speculative/vLLM/TensorRT-LLM/SGLang; no startup installation/compilation/clone/resolution; checkpoint never baked; no credentials",
   "platform": "linux/amd64",
-  "registry_digest_ref": "ghcr.io/vykosmolt/o1-b300-runner@sha256:338bf51765ad0263103d79e581de30e143d9e5d7eb2cd0ed6e0854369b1b015c",
+  "registry_digest_ref": "ghcr.io/vykosmolt/o1-b300-runner@sha256:6591e5a5d4554c4f031e548aa73702a80310a76da9229d39e20c15dab016ee11",
   "schema": "o1b300.container_image_record.v2",
   "supported_driver_range": ">= r580 (CUDA 13.0 requirement; RunPod B300/B200 hosts report CUDA 13.0/13.2)",
   "system_packages": "base python:3.14-slim-bookworm only; no extra apt packages installed",

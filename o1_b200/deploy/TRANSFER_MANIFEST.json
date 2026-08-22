@@ -39,7 +39,7 @@
     "deploy_scripts": {
       "kind": "tree",
       "path": "/home/moloch/ouro_worktrees/o1-v2-b200-runner/o1_b200/deploy",
-      "sha256": "00f94485fdd09d40239e4f4239215e4f23fe821a6968546a8550f1951a848d20",
+      "sha256": "1e27ec22bb42d56c9203c89828495799b742a66ef658ea3fd99a189815d6865f",
       "transfer_out_of_band": false
     },
     "freeze_manifest": {
@@ -75,7 +75,7 @@
     "runner_source": {
       "kind": "tree",
       "path": "/home/moloch/ouro_worktrees/o1-v2-b200-runner/o1_b200/runner",
-      "sha256": "5390651e6c9d2b9bb62946741ad99b73a4f7725cdfaf45f514a49e757ec3347b",
+      "sha256": "6ddb23a09399ab3a5189bb56a6762e4ca97389ff0c3deea81cee431fca62068e",
       "transfer_out_of_band": false
     },
     "tokenizer_binding": {
