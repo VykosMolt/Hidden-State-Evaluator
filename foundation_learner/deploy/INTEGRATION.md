@@ -186,14 +186,31 @@ the pod.
 | `o1_timeout_seconds` | **≤ 45 % of the allowance** (≈ 9,000 s on B200) | bounds the O1 phase; `validate()` refuses if it does not leave `o1_timeout + 3,000 s` below the allowance |
 | `fl_minimum_seconds` | leave at the default (3,000 s) | the frozen 1,200 s transfer reserve plus one minimal stage |
 
-With those values the ladder receives ≥ 55 % of every pod's allowance,
-and on a replacement pod (O1 already complete and skipped on resume) it
-receives the whole remaining allocation. The O1 phase's own affordability
-gate projects at the serial rate; if O1 cannot fit in its timeout it
-aborts at `CALIBRATION_AFFORDABILITY_CHECK` *before* calibration starts,
-and the session reports `ABORTED_AT_O1_HALT_OR_COMPLETE` with the pod
-terminated — no FL time is spent on a session that could not have
-completed O1.
+With those values the ladder receives **whatever remains after O1
+closes**: at most 55 % of the allowance, minus the O1→FL handover states
+(`VERIFY_O1_RECORDS`, `TRANSFER_O1_RECORDS` — bounded by
+`o1_transfer_timeout_seconds` — `CLOSE_O1_PROCESS`, `RELOAD_PRISTINE_OURO`),
+which are charged to the same allowance. On a replacement pod (O1 already
+complete and skipped on resume) it receives the whole remaining allocation
+minus the supervisor's own elapsed time and the 1,200 s transfer reserve.
+
+`o1_timeout_seconds` is a **session kill switch, not a phase bound**: if
+O1 exceeds it the session aborts at `RUN_O1_CALIBRATION`, the pod is
+terminated, and no FL time is spent. O1's own affordability gate (an
+O1-side state) projects at the serial rate and refuses *before*
+calibration when it cannot fit; FL then aborts at `O1_HALT_OR_COMPLETE`
+on O1's non-zero exit.
+
+`terminate_command` as shipped prints a handover note and exits 0: the pod
+carries no provider credential by design, so the *session marker* the
+supervisor prints last is what stops the bill — the off-pod driver
+terminates on it, with the independent watchdog and the provider
+`terminateAfter` as backstops (`o1_b200/docs/TERMINATION_LADDER.md`).
+
+Under INTERRUPTIBLE capacity, two evictions *inside* `SEALED_EVAL` consume
+both sealed-opening attempts permanently (each interrupted attempt is
+counted by its write-ahead intent). Keep the sealed evaluation short and
+let it run on a fresh allowance rather than at the end of a long pod.
 
 ## 7. Local validation status
 

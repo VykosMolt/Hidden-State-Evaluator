@@ -537,11 +537,12 @@ class SealedUnlock:
         self.declare_intent()
         resolved = loader_guard(path, unlock=self, guard=self.guard,
                                 context="sealed_gate.read_shard")
-        # from here a sealed file IS opened: an exception anywhere below
-        # (decipher, decode, parse) must count as an attempt, not as
-        # "read nothing" — ``reads`` is only appended on success
-        self.reads_started = True
         with open(resolved, "rb") as fh:
+            # the sealed file IS open from here: an exception anywhere
+            # below (decipher, decode, parse) counts as an attempt, not as
+            # "read nothing" — ``reads`` is only appended on success.  An
+            # ENOENT/EACCES from open() itself read nothing and withdraws.
+            self.reads_started = True
             raw = fh.read()
         plaintext = unseal_bytes(raw, self._key)
         try:

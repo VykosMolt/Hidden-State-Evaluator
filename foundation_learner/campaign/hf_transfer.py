@@ -122,6 +122,9 @@ def do_fetch(repo_id: str, remote_rel: str, local: str) -> dict:
     # verification to it, so a concurrent push cannot make the check
     # compare bytes from one commit against identity from another
     revision = api.repo_info(repo_id, repo_type="model").sha
+    if not revision:
+        raise RuntimeError(f"{repo_id}: repo_info returned no commit sha; "
+                           f"refusing an unpinned fetch")
     got = hf_hub_download(repo_id=repo_id, filename=remote_rel,
                           revision=revision,
                           token=os.environ.get("HF_TOKEN"))

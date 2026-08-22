@@ -1334,7 +1334,8 @@ def _terminate_without_supervisor(config: "SessionConfig", out_dir: str,
     The command comes straight from the raw config payload; nothing else
     is trusted at this point.
     """
-    payload = getattr(config, "payload", None) or {}
+    payload = getattr(config, "payload", None)
+    payload = payload if isinstance(payload, Mapping) else {}
     command = payload.get("terminate_command")
     note = {"event": "TERMINATE_WITHOUT_SUPERVISOR",
             "reason": repr(exc)[:400], "terminate_command": bool(command)}
@@ -1396,7 +1397,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             # terminate_command before giving up on termination
             try:
                 config = SessionConfig.load(args.config)
-            except Exception:  # noqa: BLE001
+            except BaseException:  # noqa: BLE001 - nothing may escape here
                 config = None
         if config is not None:
             _terminate_without_supervisor(config, args.out, exc)

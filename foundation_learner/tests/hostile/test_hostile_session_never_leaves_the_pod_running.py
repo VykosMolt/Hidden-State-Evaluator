@@ -544,22 +544,36 @@ def test_deterministic_setup_errors_carry_the_marker_and_terminate(
     assert not ss._transient_setup_error(FileNotFoundError(2, "x"))
     assert not ss._transient_setup_error(PermissionError(13, "x"))
     assert not ss._transient_setup_error(OSError(errno.EROFS, "ro"))
-    # a config that cannot be LOADED still fires terminate_command from the
-    # raw file and prints the marker
+    # a config whose FIRST load fails transiently (EIO) is re-read raw for
+    # its terminate_command: terminate fires, and the transient class
+    # carries no deterministic marker
     marker = tmp_path / "TERMINATED.log"
     path = fixtures(tmp_path, marker)
-    bad_out = tmp_path / "blocked" / "out"
-    (tmp_path / "blocked").mkdir()
-    (tmp_path / "blocked").chmod(0o500)
-    monkeypatch.setattr(ss, "build_parser", lambda: _Parser(path, bad_out))
-    try:
-        with pytest.raises(BaseException):
-            ss.main([])
-    finally:
-        (tmp_path / "blocked").chmod(0o700)
+    real_load = ss.SessionConfig.load
+    calls = {"n": 0}
+
+    def flaky_load(p):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OSError(errno.EIO, "disk read error")
+        return real_load(p)
+    monkeypatch.setattr(ss.SessionConfig, "load", staticmethod(flaky_load))
+    monkeypatch.setattr(ss, "build_parser", lambda: _Parser(path, tmp_path / "o"))
+    with pytest.raises(OSError):
+        ss.main([])
+    out = capsys.readouterr()
+    assert "REFUSED (transient)" in out.err
+    assert "ZERO_TOUCH_ABORTED_AT_" not in out.out
+    assert marker.exists(), "terminate_command did not fire from the raw config"
+    # ...and a DETERMINISTIC load failure (unreadable file) prints the marker
+    marker.unlink()
+    calls["n"] = 5
+    monkeypatch.setattr(ss.SessionConfig, "load", staticmethod(
+        lambda p: (_ for _ in ()).throw(PermissionError(13, "denied"))))
+    with pytest.raises(PermissionError):
+        ss.main([])
     out = capsys.readouterr()
     assert "ZERO_TOUCH_ABORTED_AT_SUPERVISOR_SETUP" in out.out
-    assert marker.exists()
 
 
 def test_drain_failure_keeps_event_names_and_never_duplicates(tmp_path):
@@ -618,14 +632,16 @@ def test_dangling_intents_pair_by_nonce_not_position(tmp_path):
     kwargs = dict(ledger_path=ledger, dev_decisions_path=decisions,
                   split_manifest_path=os.path.join(
                       pregen, "family_split_manifest.json"), guard=guard)
-    # pod A: intent, read, SIGKILL (no abort, no withdraw)
+    # pod A: intent, read, SIGKILL (no abort, no withdraw) -> dangling A
     a = sg.open_sealed(**kwargs)
     a.read_shard(shard)
-    # pod B: intent then withdrawn (read nothing), twice on the same unlock
+    # pod B: aborts WITHOUT an intent of its own (read nothing): the
+    # positional counter decremented A's dangling intent here and granted a
+    # THIRD opening; nonce pairing does not
     b = sg.open_sealed(**kwargs)
-    b.declare_intent()
-    assert b.withdraw_intent("x") is not None
-    assert b.withdraw_intent("x") is None          # idempotent
-    # A's interrupted attempt must still count: one dangling + zero aborted
-    c = sg.open_sealed(**kwargs)
-    assert c.prior_aborted == 1, c.prior_aborted
+    b.abort("attempt 2")
+    with pytest.raises(sg.LedgerError, match="budget"):
+        sg.open_sealed(**kwargs)
+    # withdrawal is idempotent and only resolves its OWN intent
+    events = [e["event"] for e in sg.read_ledger(ledger, guard=guard)]
+    assert events == [sg.EVENT_INTENT, sg.EVENT_ABORTED]
