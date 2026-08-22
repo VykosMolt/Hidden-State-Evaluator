@@ -14,6 +14,9 @@
 # config.  A DRESS REHEARSAL may proceed with unresolved
 # fields and is loudly labelled DRESS_REHEARSAL in every artefact it writes.
 set -euo pipefail
+# container uptime witness for the supervisor's provisioning charge (the O1
+# entrypoint stamps it earlier when it dispatched here; keep the earliest)
+export O1_POD_ENTRY_EPOCH="${O1_POD_ENTRY_EPOCH:-$(date +%s)}"
 
 usage() {
   cat >&2 <<'USAGE'

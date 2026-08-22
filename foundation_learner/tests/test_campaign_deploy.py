@@ -9,6 +9,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 
 import pytest
 
@@ -239,3 +240,45 @@ def test_the_resolved_session_config_is_a_real_session():
         "o1-v2-b200-runner", "o1_b200", "runner", "production_entry.py")
     if os.path.isfile(o1):
         assert "O1_RESULT_MANIFEST.json" in open(o1, encoding="utf-8").read()
+
+
+def test_the_shipped_transfer_command_is_not_killed_by_the_offline_lock(tmp_path):
+    """The pod runs HF_HUB_OFFLINE=1; the supervisor strips it for the
+    transfer commands.  Run the SHIPPED fl_transfer_command through the
+    supervisor's real _run_command env and prove the failure (no token, no
+    network) is NOT the offline refusal that aborted a paid session at its
+    last step."""
+    import subprocess
+    from foundation_learner.campaign import session_supervisor as ss
+
+    path = os.path.join(DEPLOY, "FL_SESSION_CONFIG.json")
+    payload = ss.SessionConfig.load(path).validate()
+    cmd = list(payload["fl_transfer_command"])
+    # the baked interpreter does not exist here; the module does
+    cmd[0] = sys.executable
+    cmd[cmd.index("--local") + 1] = str(tmp_path / "FL_ARTIFACTS.zip")
+    (tmp_path / "FL_ARTIFACTS.zip").write_bytes(b"zip")
+
+    class Sup:
+        payload = {}
+        rehearsal = True
+        clock = type("C", (), {"monotonic": staticmethod(lambda: 0.0)})()
+        _t0 = None
+        _elapsed = staticmethod(lambda: 0.0)
+        _child_env = ss.SessionSupervisor._child_env
+        runner = staticmethod(lambda *a, **k: subprocess.run(
+            *a, **{**k, "env": {**k["env"], "HF_TOKEN": "",
+                                 "HF_HUB_DISABLE_IMPLICIT_TOKEN": "1"},
+                   "timeout": 120}))
+
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+    try:
+        rec = ss.SessionSupervisor._run_command(
+            Sup(), cmd, state="TRANSFER_FL_ARTIFACTS", timeout=120)
+    finally:
+        os.environ.pop("HF_HUB_OFFLINE", None)
+        os.environ.pop("TRANSFORMERS_OFFLINE", None)
+    out = rec["stdout_tail"] + rec["stderr_tail"]
+    assert "HF_HUB_OFFLINE is still set" not in out, out
+    assert rec["returncode"] != 0          # no token / no network: fails LATER

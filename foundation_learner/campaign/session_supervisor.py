@@ -120,6 +120,11 @@ O1_CLOSE_RECEIPT = "O1_CLOSE_RECEIPT.json"
 #: but finite, because waiting forever costs money either way.
 TERMINATE_TIMEOUT_SECONDS = 900.0
 TRANSFER_TIMEOUT_SECONDS = 900.0
+#: Charged against the pod allowance before this supervisor's clock starts
+#: (image pull + container start + fetches + gates); the entry script may
+#: stamp O1_POD_ENTRY_EPOCH so the measured container uptime is used when
+#: larger.
+PROVISIONING_ALLOWANCE_SECONDS = 1200.0
 #: Least FL time a real combined session must leave after the O1 timeout:
 #: the frozen final-transfer reserve (1200 s) plus one minimal stage.
 FL_MINIMUM_SECONDS_DEFAULT = 1200.0 + 1800.0
@@ -137,6 +142,11 @@ CLOSE_O1_TIMEOUT_SECONDS = 900.0
 
 class SupervisorError(RuntimeError):
     """A supervisor invariant refused."""
+
+
+class TransientO1Failure(SupervisorError):
+    """The O1 child refused for a reason a replacement pod may not repeat:
+    the session aborts WITHOUT the deterministic marker."""
 
 
 class NoStageAdmitted(SupervisorError):
@@ -760,6 +770,16 @@ class SessionSupervisor:
         shell = isinstance(command, str)
         started = self.clock.monotonic()
         env = self._child_env()
+        if state in ("TRANSFER_FL_ARTIFACTS", "TRANSFER_O1_RECORDS"):
+            # The pod runs model loading HF_HUB_OFFLINE-locked; hub access
+            # happens only in hf_transfer subprocesses spawned with the
+            # flags stripped.  The configured TRANSFER commands are hub
+            # uploads too and must get the same environment — with the
+            # flags inherited, the shipped fl_transfer_command refused at
+            # _assert_online_capable after the whole session was paid for.
+            from .hf_transfer import OFFLINE_FLAGS
+            for flag in OFFLINE_FLAGS:
+                env.pop(flag, None)
         if state == "RUN_O1_CALIBRATION" and timeout:
             # O1 plans against O1_SESSION_AUTHORIZED_SECONDS: its affordability
             # gate, pre-calibration budget and watchdog.  Inheriting the
@@ -888,6 +908,17 @@ class SessionSupervisor:
         # The exit status is the one outcome-free signal FL may consult; the
         # marker content stays unread.
         if rc != 0:
+            tails = (entry.get("stdout_tail") or "") + (entry.get("stderr_tail") or "")
+            if "REFUSED (transient)" in tails:
+                # the O1 child classified its own failure as transient (a
+                # hub outage during its scope probe): re-emit the class so
+                # the driver's eviction path applies, instead of converting
+                # it into a deterministic session abort
+                print("REFUSED (transient): the O1 phase failed transiently; "
+                      "a replacement pod may succeed", file=sys.stderr,
+                      flush=True)
+                raise TransientO1Failure(
+                    f"O1 entry exited {rc} with a transient refusal")
             raise SupervisorError(
                 f"O1_HALT: the O1 entry exited with returncode {rc}; its "
                 f"completion artefacts are present but a non-zero exit is "
@@ -994,6 +1025,22 @@ class SessionSupervisor:
         """
         authorized = float(self.payload["session_authorized_seconds"])
         source = "config.session_authorized_seconds"
+        # The pod's allowance (and the independent watchdog armed with it)
+        # counts from POD CREATION; this supervisor's clock starts at
+        # START_SESSION.  Everything before that — image pull, container
+        # start, credential scope, the 5 GB checkpoint fetch and hash, the
+        # hardware gate, the pregen fetch — was billed against the same
+        # allowance and would otherwise be paid out of the 1,200 s
+        # final-transfer reserve.  Charge a fixed provisioning allowance,
+        # or the measured container uptime when the entry stamped it.
+        provisioning = PROVISIONING_ALLOWANCE_SECONDS
+        stamp = os.environ.get("O1_POD_ENTRY_EPOCH", "").strip()
+        if stamp:
+            try:
+                provisioning = max(provisioning,
+                                   time.time() - float(stamp))
+            except ValueError:
+                pass
         raw = os.environ.get(POD_AUTHORIZED_SECONDS_ENV, "").strip()
         if not raw and not self.rehearsal:
             raise SupervisorError(
@@ -1009,6 +1056,9 @@ class SessionSupervisor:
                     f"a number") from exc
             if pod_limit < authorized:
                 authorized, source = pod_limit, POD_AUTHORIZED_SECONDS_ENV
+        if not self.rehearsal:
+            authorized = max(0.0, authorized - provisioning)
+            source += f" minus provisioning {provisioning:.0f}s"
         return authorized, source
 
     def _elapsed(self) -> float:
@@ -1216,6 +1266,8 @@ class SessionSupervisor:
         elif failed_state == "RUN_FL_LADDER" and isinstance(
                 failure_exc, NoStageAdmitted):
             outcome = "NO_STAGE_ADMITTED"
+        elif isinstance(failure_exc, TransientO1Failure):
+            outcome = f"ABORTED_TRANSIENT_AT_{failed_state}"
         else:
             outcome = f"ABORTED_AT_{failed_state}"
         status = {
@@ -1224,6 +1276,7 @@ class SessionSupervisor:
             "label": self.label(),
             "rehearsal": self.rehearsal,
             "outcome": outcome,
+            "transient": isinstance(failure_exc, TransientO1Failure),
             "failed_state": failed_state,
             "failure": failure,
             "states_completed": list(self.completed),
@@ -1269,6 +1322,8 @@ def _namespace_o1_markers(text: str) -> str:
 
 
 def _session_marker(status: Mapping[str, Any]) -> str:
+    if status.get("transient"):
+        return "REFUSED (transient): session aborted for a transient cause"
     """The combined session's completion witness for the off-pod driver.
 
     Both literals are written here verbatim (not assembled) for the same

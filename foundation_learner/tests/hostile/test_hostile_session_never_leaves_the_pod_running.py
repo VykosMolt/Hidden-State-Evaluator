@@ -670,3 +670,32 @@ def test_the_o1_child_is_told_its_real_bound_not_the_whole_pod_allowance(
                              "import os; print(os.environ['O1_SESSION_AUTHORIZED_SECONDS'])"],
                             state="X")
     assert rec2["stdout_tail"].strip() == "21200"
+
+
+def test_a_real_session_charges_provisioning_against_the_allowance(
+        tmp_path, monkeypatch):
+    """The pod allowance (and the watchdog armed with it) counts from pod
+    creation; the supervisor's clock from START_SESSION.  Without the
+    charge the pull/fetch/gate time came out of the final-transfer
+    reserve and the watchdog could fire mid-transfer."""
+    import time as _time
+    marker = tmp_path / "TERMINATED.log"
+    path = fixtures(tmp_path, marker)
+    cfg = json.load(open(path, encoding="utf-8"))
+    cfg["rehearsal"] = False
+    cfg["fl_transfer_command"] = [sys.executable, "-c", "print('ft')"]
+    cfg["checkpoint_tree_sha256"] = sha256_tree(cfg["checkpoint_dir"])
+    cfg["session_authorized_seconds"] = 20000.0
+    cfg["o1_timeout_seconds"] = 9000.0
+    json.dump(cfg, open(path, "w", encoding="utf-8"))
+    monkeypatch.setenv("O1_SESSION_AUTHORIZED_SECONDS", "20000")
+    monkeypatch.delenv("O1_POD_ENTRY_EPOCH", raising=False)
+    sup = make_supervisor(tmp_path, path)
+    authorized, source = sup._pod_authorized_seconds()
+    assert authorized == 20000 - ss.PROVISIONING_ALLOWANCE_SECONDS
+    assert "provisioning" in source
+    # a container that has already been up longer than the fixed allowance
+    # is charged its measured uptime instead
+    monkeypatch.setenv("O1_POD_ENTRY_EPOCH", str(_time.time() - 3000))
+    authorized, _ = sup._pod_authorized_seconds()
+    assert 16990 <= authorized <= 17001, authorized

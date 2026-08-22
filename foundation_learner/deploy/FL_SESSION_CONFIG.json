@@ -4,7 +4,7 @@
   "label": "FL_B300_CAMPAIGN",
   "rehearsal": false,
   "o1_entry_command": "/opt/o1_b200/o1_b200/deploy/start_b300.sh",
-  "o1_timeout_seconds": 9000.0,
+  "o1_timeout_seconds": 14000.0,
   "o1_completion_markers": [
     "/outputs/FINAL_STATUS.json"
   ],
@@ -62,5 +62,5 @@
   "fl_extra": {},
   "fl_durable_destination": "hf://Vykos/o1-b200-results/FL_B300_CAMPAIGN",
   "fl_transfer_timeout_seconds": 900.0,
-  "_resolved_note": "Resolved 2026-08-22 for the first combined B300/B200 session. O1 gets at most 9,000 s (<= 45% of the ~21,200 s B200 allowance; ~50% of the ~18,000 s B300 allowance, still leaving the 3,000 s FL minimum); the supervisor takes min(session_authorized_seconds, O1_SESSION_AUTHORIZED_SECONDS) on the pod. FL results and the durable mirror live under the FL_B300_CAMPAIGN prefix of the existing results repo (no new HF repo was created)."
+  "_resolved_note": "Resolved 2026-08-22 for the first combined B300/B200 session. O1 gets at most 14,000 s: the local reference-rate probe (o1_b200/reports/LOCAL_REFERENCE_RATE_PROBE.json, 27 s/row on a laptop 5070 Ti) projects ~7,000-9,000 s for 4,608 rows on a B200, and O1's affordability gate needs 1.3x + 1,500 s. FL receives what O1 does not USE (its clock is actual elapsed), with the 3,000 s minimum guaranteed on both profiles (14,000 + 3,000 < 18,250 B300 / 21,200 B200). The supervisor takes min(session_authorized_seconds, O1_SESSION_AUTHORIZED_SECONDS) minus a provisioning allowance. FL results and the durable mirror live under the FL_B300_CAMPAIGN prefix of the existing results repo."
 }
