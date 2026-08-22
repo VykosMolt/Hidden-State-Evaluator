@@ -1,6 +1,6 @@
 # O1 B300 Runner — Architecture
 
-Package: `O1_B300_RUNNER_v0.3.8`, status
+Package: `O1_B300_RUNNER_v0.3.9`, status
 `B300 PREEMPTIBLE SOFTWARE COMPLETE / HARDWARE UNVALIDATED`. Targets a
 RunPod Pod, Secure Cloud, exactly one GPU, purchase mode INTERRUPTIBLE
 (spot): primary profile NVIDIA B300 SXM6 AC (Blackwell Ultra, sm_103, CC
