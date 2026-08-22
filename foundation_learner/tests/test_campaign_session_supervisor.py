@@ -418,3 +418,16 @@ def test_transfer_timeout_does_not_block_termination(tmp_path):
     assert status["close_out"]["transfer"]["status"] == "FAILED"
     assert status["close_out"]["terminate"]["status"] == "COMPLETED"
     assert marker.exists()
+
+
+def test_an_o1_manifest_with_no_entries_is_refused_not_vacuously_passed(tmp_path):
+    """O1's digest SIDECAR ({"archive": ..., "sha256": ...}) is not a manifest
+    shape; bound by mistake it verified nothing and passed."""
+    path, o1_root, _ = fixtures(tmp_path)
+    sidecar = os.path.join(o1_root, "o1_results.tar.gz.sha256")
+    os.makedirs(o1_root, exist_ok=True)
+    with open(sidecar, "w", encoding="utf-8") as fh:
+        json.dump({"archive": "o1_results.tar.gz", "sha256": "0" * 64}, fh)
+    sup, _ = supervisor(tmp_path, path)
+    with pytest.raises(ss.SupervisorError, match="no path/digest pairs"):
+        sup.custodian.verify_manifest(sidecar)

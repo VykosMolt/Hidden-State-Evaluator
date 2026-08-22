@@ -215,3 +215,27 @@ def test_the_budget_policy_is_referenced_and_separate_from_o1():
     assert "FL_BUDGET_POLICY.json" in text
     assert "runner/budget.py" in text
     assert "1200" in text and "1.25" in text
+
+
+def test_the_resolved_session_config_is_a_real_session():
+    """deploy/FL_SESSION_CONFIG.json is the config the pod runs: it must
+    validate as a REAL session (not rehearsal, nothing unresolved) and
+    its O1 bindings must name what O1 actually writes."""
+    from foundation_learner.campaign import session_supervisor as ss
+    from foundation_learner.campaign.o1_isolation import FROZEN_FORBIDDEN_ROOTS
+
+    path = os.path.join(DEPLOY, "FL_SESSION_CONFIG.json")
+    payload = ss.SessionConfig.load(path).validate()
+    assert payload["rehearsal"] is False
+    assert not payload.get("_unresolved_fields")
+    assert payload["o1_hash_manifests"] == ["/outputs/O1_RESULT_MANIFEST.json"]
+    assert payload["o1_completion_markers"] == ["/outputs/FINAL_STATUS.json"]
+    assert tuple(payload["o1_roots"]) == FROZEN_FORBIDDEN_ROOTS
+    assert payload["fl_pregen_source"].startswith("hf://Vykos/o1-b200-staging/")
+    assert payload["o1_timeout_seconds"] + 3000 < payload["session_authorized_seconds"]
+    # the O1 runner really writes the manifest this config verifies
+    o1 = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__))))),
+        "o1-v2-b200-runner", "o1_b200", "runner", "production_entry.py")
+    if os.path.isfile(o1):
+        assert "O1_RESULT_MANIFEST.json" in open(o1, encoding="utf-8").read()

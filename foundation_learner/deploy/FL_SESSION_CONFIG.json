@@ -1,0 +1,66 @@
+{
+  "schema": "flb200.session_config.v1",
+  "session_id": "FL_B300_CAMPAIGN_2026-08-22",
+  "label": "FL_B300_CAMPAIGN",
+  "rehearsal": false,
+  "o1_entry_command": "/opt/o1_b200/o1_b200/deploy/start_b300.sh",
+  "o1_timeout_seconds": 9000.0,
+  "o1_completion_markers": [
+    "/outputs/FINAL_STATUS.json"
+  ],
+  "o1_hash_manifests": [
+    "/outputs/O1_RESULT_MANIFEST.json"
+  ],
+  "o1_transfer_command": [
+    "/opt/venv/bin/python",
+    "-c",
+    "import os,sys; ok=all(os.path.isfile(p) for p in ('/outputs/o1_results.tar.gz.sha256','/outputs/O1_RESULT_MANIFEST.json')); print('O1 transferred its own results' if ok else 'O1 result receipt missing'); sys.exit(0 if ok else 3)"
+  ],
+  "o1_transfer_timeout_seconds": 600.0,
+  "o1_close_command": null,
+  "o1_workdir": null,
+  "o1_roots": [
+    "/outputs",
+    "/opt/o1_b200",
+    "/artifacts/AXIS_PACKAGE_V2",
+    "/artifacts/COHORTS",
+    "/artifacts/calibration_seed_matrix.json",
+    "/artifacts/policies",
+    "/workspace/o1_calibration"
+  ],
+  "o1_forbidden_roots_extra": [],
+  "checkpoint_dir": "/artifacts/ouro_rltt_local",
+  "checkpoint_tree_sha256": "a701f7a75300ddf57098572fef3894bef59d5179580ec7eae7cd561a36056889",
+  "pregen_root": "/workspace/foundation_learner/artifacts_fl/pregen",
+  "fl_pregen_source": "hf://Vykos/o1-b200-staging/artifacts_fl/pregen",
+  "fl_out_dir": "/workspace/foundation_learner/session",
+  "session_authorized_seconds": 21200.0,
+  "fl_transfer_command": [
+    "/opt/venv/bin/python",
+    "-m",
+    "foundation_learner.campaign.hf_transfer",
+    "push",
+    "--repo",
+    "Vykos/o1-b200-results",
+    "--local",
+    "/workspace/foundation_learner/session/FL_ARTIFACTS.zip",
+    "--remote-rel",
+    "FL_B300_CAMPAIGN/results/FL_ARTIFACTS.zip"
+  ],
+  "terminate_command": [
+    "/bin/sh",
+    "-c",
+    "echo 'FL TERMINATE handover: the off-pod driver terminates this pod on the session marker (TERMINATION_LADDER stop 1); watchdog + terminateAfter are armed'"
+  ],
+  "fl_device": "cuda",
+  "fl_scope": "PEFT_MODE",
+  "fl_root_seed": 20260809,
+  "fl_max_tokens_per_batch": 2048,
+  "fl_tiny_model": false,
+  "fl_eval_episode_cap": null,
+  "fl_train_example_cap": null,
+  "fl_extra": {},
+  "fl_durable_destination": "hf://Vykos/o1-b200-results/FL_B300_CAMPAIGN",
+  "fl_transfer_timeout_seconds": 900.0,
+  "_resolved_note": "Resolved 2026-08-22 for the first combined B300/B200 session. O1 gets at most 9,000 s (<= 45% of the ~21,200 s B200 allowance; ~50% of the ~18,000 s B300 allowance, still leaving the 3,000 s FL minimum); the supervisor takes min(session_authorized_seconds, O1_SESSION_AUTHORIZED_SECONDS) on the pod. FL results and the durable mirror live under the FL_B300_CAMPAIGN prefix of the existing results repo (no new HF repo was created)."
+}

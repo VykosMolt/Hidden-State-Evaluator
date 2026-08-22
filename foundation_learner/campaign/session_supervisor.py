@@ -357,7 +357,7 @@ class O1RecordCustodian:
 
     def verify_manifest(self, manifest_path: str) -> dict:
         """Recompute every listed digest.  File-level hashing only."""
-        entries = self.manifest_entries(manifest_path)
+        entries = self.manifest_entries(manifest_path)   # refuses if empty
         checked = 0
         missing: list[str] = []
         mismatched: list[str] = []
