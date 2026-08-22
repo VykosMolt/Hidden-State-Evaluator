@@ -176,7 +176,7 @@ def validate_spot_offer(profile: AcceleratorProfile, spot: dict) -> Decimal:
 
 def build_quote(selection: dict, spot: dict, *, datacenter_id: str,
                 disk_gb: int, disk_hourly_usd, schema_sha256: str,
-                adapter_commit: str, now=time.time) -> dict:
+                adapter_commit: str, now=time.monotonic) -> dict:
     profile: AcceleratorProfile = selection["profile"]
     gpu: GpuTypeModel = selection["gpu"]
     if datacenter_id not in selection["datacenters"]:
@@ -222,7 +222,7 @@ def build_quote(selection: dict, spot: dict, *, datacenter_id: str,
     return quote
 
 
-def check_quote_fresh(quote: dict, now=time.time) -> None:
+def check_quote_fresh(quote: dict, now=time.monotonic) -> None:
     age = float(now()) - float(quote["retrieved_monotonic_epoch"])
     if age > float(quote.get("validity_seconds", QUOTE_VALIDITY_SECONDS)):
         raise QuoteError(

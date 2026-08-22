@@ -8,7 +8,7 @@
   "deployment_spec_sha256": "UNRESOLVED (request_sha256 of the freshly rendered canonical ALL-PROFILE deployment spec: B300 primary + B200 fallback)",
   "expires_utc": "UNRESOLVED (short UTC expiry, e.g. now + 2h, format %Y-%m-%dT%H:%M:%SZ)",
   "launch_nonce": "UNRESOLVED (unique >=16 chars; each pod creation consumes one slot; replay refused)",
-  "max_pod_creations": "UNRESOLVED (small positive integer <= 8; bounds initial acquisition + eviction reacquisitions of INTERRUPTIBLE capacity)",
+  "max_pod_creations": "UNRESOLVED (set to 4 = MAX_POD_ACQUISITIONS: the in-process ceiling is per invocation, this durable one is per authorization; keeping them equal is what makes the bound hold across driver reruns)",
   "package_zip_sha256": "UNRESOLVED (sha256 of the deployed O1_B200_RUNNER package zip)",
   "project": "UNRESOLVED (must be 'O1_B300_CALIBRATION')",
   "provider": "UNRESOLVED (must be 'runpod')",

@@ -165,6 +165,15 @@ class LiveMutationAuthorization:
         return sum(1 for ln in lines
                    if ln == nonce or ln.startswith(nonce + "/"))
 
+    def nonce_slots_consumed(self) -> int:
+        """How many creation slots this authorization has used (durable):
+        a consumed slot is proof that a create was ATTEMPTED."""
+        try:
+            return self._consumed_count(self._nonce_ledger,
+                                        self._doc["launch_nonce"])
+        except Exception:  # noqa: BLE001
+            return 0
+
     def consume_nonce(self) -> None:
         """Burn ONE creation slot (called immediately before each create).
 

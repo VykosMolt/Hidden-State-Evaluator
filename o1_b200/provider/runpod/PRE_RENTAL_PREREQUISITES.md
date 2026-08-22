@@ -14,26 +14,38 @@ PRIVATE HF ARTIFACT STAGING:     PASS
 POD-SIDE DOWNLOAD HASH TEST:     PASS   (stage_artifacts_hf verify)
 RESULT DESTINATION ROUND-TRIP:   PASS   (stage_artifacts_hf result-roundtrip)
 HF TOKEN SCOPE (READ + WRITE):   PASS   (runner.check_hf_scope)
+FL PREGEN STAGED + ANCHORED:     PASS   (scripts/stage_pregen_hf.py; campaign.fetch_pregen verify)
+FL HF SCOPE (pregen read +
+  FL_B300_CAMPAIGN write):       PASS   (campaign.check_hf_scope --config FL_SESSION_CONFIG.json)
+FL SESSION CONFIG:               RESOLVED, BAKED, validates as a real session
 RUNPOD_SESSION_CONFIG:           ZERO UNRESOLVED REQUIRED FIELDS
+REFERENCE RATE PROBE:            RECORDED (reports/LOCAL_REFERENCE_RATE_PROBE.json)
+GHCR DIGEST RESOLVES:            docker manifest inspect <image_digest_ref>
 ```
 
-Current state, 2026-08-18 — every line below verified live against the real
-APIs, not asserted:
+Current state, 2026-08-22:
 
 ```text
-RUNPOD READ-ONLY PREFLIGHT:      PASS   (GET-only; 0 pods owned, $0 lifetime spend)
-REMOTE IMAGE DIGEST:             PENDING   <-- the only remaining blocker
+RUNPOD READ-ONLY PREFLIGHT:      PASS   (2026-08-18, GET-only; 0 pods owned, $0 lifetime spend)
+REMOTE IMAGE DIGEST:             RESOLVED (public GHCR; bound in RUNPOD_SESSION_CONFIG.json,
+                                          CONTAINER_IMAGE_RECORD.json, FL environment_lock.json)
 PRIVATE HF ARTIFACT STAGING:     PASS   (31 files, private, 5.0 GB)
 POD-SIDE DOWNLOAD HASH TEST:     PASS   (6/6 re-downloaded, hashes exact)
 RESULT DESTINATION ROUND-TRIP:   PASS   (probe up, down, hash-compared)
 HF TOKEN SCOPE (READ + WRITE):   PASS   (auth_check + real write probe)
-RUNPOD_SESSION_CONFIG:           2 UNRESOLVED (image_digest_ref, package_zip_sha256)
+FL PREGEN STAGED + ANCHORED:     PASS   (2026-08-21: 64 files; anchors match the package manifest)
+FL HF SCOPE:                     re-run before launch (token may have been rotated)
+FL SESSION CONFIG:               RESOLVED (o1_timeout 14,000 s from the rate probe)
+RUNPOD_SESSION_CONFIG:           ZERO UNRESOLVED REQUIRED FIELDS
+REFERENCE RATE PROBE:            27 s/row on a laptop 5070 Ti -> ~7,000-9,000 s projected for 4,608 rows on B200
+GHCR DIGEST RESOLVES:            verified with docker manifest inspect after each push
 ```
 
-Both unresolved config fields fall out of the same GHCR push:
-`image_digest_ref` is the digest the push prints, and `package_zip_sha256` is
-read from the generated `.sha256` sidecar at launch (it cannot be baked in,
-because this file ships *inside* the archive it would hash).
+`package_zip_sha256` is pasted into the worktree copy after packaging (it
+cannot be baked in, because this file ships *inside* the archive it would
+hash). The authorization must be minted AFTER every such change: each one
+changes `deployment_spec_sha256`. Set `max_pod_creations: 4` — it is the
+durable counterpart of the in-process `MAX_POD_ACQUISITIONS`.
 
 Token scope: the fine-grained token `lifetime-rltt-b300` (identity `Vykos`)
 carries `repo.content.read` + `repo.write` across the `Vykos` namespace;

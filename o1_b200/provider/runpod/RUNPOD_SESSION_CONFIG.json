@@ -1,6 +1,6 @@
 {
   "_fl_session_config_note": "EMPTY = O1-only session (the default). A pod-visible path here selects the COMBINED O1 -> Foundation Learner session; the FL package is baked into image v0.3.2+ at /opt/foundation_learner, and the named file must also be present on the pod (staged alongside the artifacts or mounted) - start_b300.sh refuses before any scientific work if either is absent. This value is DEPLOYMENT IDENTITY: it changes deployment_spec_sha256, so switching a session from O1-only to combined requires a FRESH rental authorization ceremony. Bound 2026-08-22 to the config baked with the FL source (image v0.3.10+); the first session is the COMBINED O1 -> FL session.",
-  "_profile_preference_note": "Order in which the FROZEN accelerator profiles are tried. Both are covered by the rental authorization, so reordering adds no capability \u2014 it only expresses which part the operator wants FIRST. Set [\"B200\",\"B300\"] to prefer the B200 (e.g. when B300 demand makes it unobtainable); the session still falls back to the other profile and records the reason. Unknown profile names are refused.",
+  "_profile_preference_note": "Order in which the FROZEN accelerator profiles are tried. Both are covered by the rental authorization, so reordering adds no capability \u2014 it only expresses which part the operator wants FIRST. Set [\"B200\",\"B300\"] to prefer the B200 (e.g. when B300 demand makes it unobtainable); the session still falls back to the other profile and records the reason. Unknown profile names are refused. First paid session: B200 FIRST \u2014 its sm_100 SASS is the directly-validated path (the sm_103 claim rests on cuobjdump evidence never exercised on hardware), and B300 showed no interruptible availability at the last read-only check.",
   "_result_source_note": "REMOVED and derived: the archive lives at result_destination + 'results/o1_results.tar.gz'. Storing it separately let the session prefix move the publish path while the driver kept reading the old one, which turned a fully successful paid run into ABORTED_TERMINATED. zero_touch.result_archive_uri() is the one source.",
   "_status": "RESOLVED 2026-08-22: image_digest_ref bound to the v0.3.10 registry push (public GHCR package); package_zip_sha256 bound to the v0.3.10 archive. zero_touch still requires the rental authorization ceremony before any pod is created.",
   "adapter_commit": "b19751972e9b7d950ee83cf5d3661c60b563b654",
@@ -17,8 +17,8 @@
   "image_digest_ref": "ghcr.io/vykosmolt/o1-b300-runner@sha256:338bf51765ad0263103d79e581de30e143d9e5d7eb2cd0ed6e0854369b1b015c",
   "package_zip_sha256": "a50c0e4d996f08d9e4d95142f588b45d24045a088de40a6d56a6c5dfeb2d048d",
   "profile_preference": [
-    "B300",
-    "B200"
+    "B200",
+    "B300"
   ],
   "project": "O1_B300_CALIBRATION",
   "result_destination": "hf://Vykos/o1-b200-results/O1_B300_CALIBRATION",

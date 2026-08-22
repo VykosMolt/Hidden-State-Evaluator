@@ -23,6 +23,9 @@
 # eviction of the interruptible pod is recoverable at the next-missing-row
 # boundary.
 set -euo pipefail
+# container uptime witness: the FL supervisor charges provisioning time
+# (pull, start, fetches, gates) against the pod allowance from this stamp
+export O1_POD_ENTRY_EPOCH="${O1_POD_ENTRY_EPOCH:-$(date +%s)}"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PY="${O1_B200_PYTHON:-/opt/venv/bin/python}"

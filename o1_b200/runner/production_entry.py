@@ -59,7 +59,7 @@ ROOT = sealed_import.WORKTREE_ROOT
 CHECKPOINT_DIR = os.environ.get("O1_CHECKPOINT_DIR",
                                 "/artifacts/ouro_rltt_local")
 O1_ROWS_TOTAL = 4608
-RECORDS_SYNC_EVERY_ROWS = 25
+RECORDS_SYNC_EVERY_ROWS = 50
 RECORDS_SYNC_POLL_SECONDS = 15.0
 
 
@@ -798,11 +798,34 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
         # it after an eviction would both break resume and overwrite the
         # session's external pre-registration after partial results exist.
         durable_key = "commitments/CALIBRATION_PRECOMMIT.sealed.json"
+        pin_key = durable_key + ".sha256"
         reused = False
         try:
-            if durable_key in store.list_prefix("commitments"):
+            listing = store.list_prefix("commitments")
+            if durable_key in listing:
                 store.fetch_file(durable_key, sealed_precommit_path)
+                # The reused document is the one every row binds to and
+                # the key is mutable: verify it against the digest pinned
+                # at mint time.  A missing pin (a session minted before the
+                # pin existed) is recorded, not silently accepted.
+                if pin_key in listing:
+                    pin_local = sealed_precommit_path + ".pin"
+                    store.fetch_file(pin_key, pin_local)
+                    with open(pin_local, encoding="utf-8") as fh:
+                        want = json.load(fh).get("sha256")
+                    got = sha256_file(sealed_precommit_path)
+                    if want != got:
+                        raise ProductionEntryError(
+                            f"the durable sealed precommit does not match "
+                            f"its mint-time digest ({want} != {got}); a "
+                            f"substituted pre-registration is refused")
+                else:
+                    _log_event(out_dir, "COMMITMENT_PIN_ABSENT",
+                               note="reused sealed precommit has no "
+                                    "mint-time digest pin")
                 reused = True
+        except ProductionEntryError:
+            raise
         except Exception as exc:  # noqa: BLE001 - absent witness = fresh mint
             _log_event(out_dir, "COMMITMENT_FETCH_FAILED", error=str(exc)[:200])
         if not reused:
@@ -826,8 +849,15 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
                     f"sealed precommit regeneration failed:\n"
                     f"{regen.stdout[-1000:]}{regen.stderr[-1000:]}")
             # publish the one-time external witness (write-once: a later pod
-            # reuses it, and the branch above never re-mints over it)
-            store.push_file(sealed_precommit_path, durable_key)
+            # reuses it, and the branch above never re-mints over it) WITH
+            # its mint-time digest, in one commit
+            pin_local = sealed_precommit_path + ".pin"
+            atomic_write_text(pin_local, json.dumps(
+                {"sha256": sha256_file(sealed_precommit_path),
+                 "minted_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                                             time.gmtime())}) + "\n")
+            store.push_files([(sealed_precommit_path, durable_key),
+                              (pin_local, pin_key)])
         _log_event(out_dir, "SEALED_PRECOMMIT_BOUND", reused=reused)
         # 3. run the sealed v2.1 orchestrator (never re-implemented) as a
         #    subprocess; mirror the records file periodically for durability
@@ -919,15 +949,11 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
             rows_now = _existing_row_count(records_path)
             if rows_now - last_mirrored >= RECORDS_SYNC_EVERY_ROWS:
                 records_mirror.sync_checkpoint(
-                    records_path, {"rows": rows_now, "progress": "partial"})
+                    records_path, {"rows": rows_now, "progress": "partial"},
+                    extra_files=([(progress_path,
+                                   "durable_progress/PROGRESS.json")]
+                                 if os.path.exists(progress_path) else []))
                 last_mirrored = rows_now
-                if os.path.exists(progress_path):
-                    try:
-                        store.push_file(progress_path,
-                                        "durable_progress/PROGRESS.json")
-                    except Exception as exc:  # noqa: BLE001 - provenance only
-                        _log_event(out_dir, "PROGRESS_SYNC_FAILED",
-                                   error=str(exc)[:200])
         drain.join(timeout=60)
         if drain_state["error"]:
             _log_event(out_dir, "ORCHESTRATOR_LOG_CAPTURE_DEGRADED",

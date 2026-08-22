@@ -109,6 +109,10 @@ MIN_VIABLE_SESSION_SECONDS = 2 * 3600
 # repeat failure with zero synced progress is treated as a container defect
 # (loud abort), never retried as an eviction.
 MAX_POD_ACQUISITIONS = 4
+#: The least remaining allowance worth creating a pod for: image pull (13.8
+#: GB) + checkpoint fetch (5 GB) + hash + hardware gate take ~20-30 min
+#: before any science can happen.  A pod with less than this is pure cost.
+MIN_REACQUISITION_SECONDS = 1800
 
 
 class PolicyViolation(RuntimeError):

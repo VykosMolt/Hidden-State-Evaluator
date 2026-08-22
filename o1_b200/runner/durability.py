@@ -374,7 +374,8 @@ class CheckpointDurability:
         self.remote_prefix = remote_prefix.strip("/")
         self.on_event = on_event or (lambda *a, **k: None)
 
-    def sync_checkpoint(self, archive_path: str, meta: dict) -> dict:
+    def sync_checkpoint(self, archive_path: str, meta: dict,
+                        extra_files: list | None = None) -> dict:
         """Push checkpoint + manifest; the manifest is pushed LAST so a
         half-pushed checkpoint is never referenced.
 
@@ -388,6 +389,17 @@ class CheckpointDurability:
         name = os.path.basename(archive_path)
         snapshot = archive_path + ".mirror_snapshot"
         shutil.copyfile(archive_path, snapshot)
+        if archive_path.endswith(".jsonl"):
+            # a concurrent appender may have been mid-write: keep only
+            # whole lines, so the mirrored file never carries a torn tail
+            # and the row count never counts a partial record
+            with open(snapshot, "rb") as fh:
+                raw = fh.read()
+            cut = raw.rfind(b"\n")
+            keep = raw[:cut + 1] if cut >= 0 else b""
+            if len(keep) != len(raw):
+                with open(snapshot, "wb") as fh:
+                    fh.write(keep)
         try:
             digest = sha256_file(snapshot)
             rows = None
@@ -406,9 +418,13 @@ class CheckpointDurability:
                 # payload-then-manifest ordering (both land or neither), and
                 # half the commits — the session mirrors every 25 rows, so
                 # this was ~370 commits against one repo per calibration
+                # extra_files (e.g. the progress witness) ride the SAME
+                # commit: they used to be a second commit per sync
                 self.store.push_files([
                     (snapshot, f"{self.remote_prefix}/{name}"),
-                    (tmp, f"{self.remote_prefix}/LATEST.json")])
+                    (tmp, f"{self.remote_prefix}/LATEST.json"),
+                    *[(local, rel) for local, rel in (extra_files or [])
+                      if os.path.isfile(local)]])
             finally:
                 os.remove(tmp)
         finally:

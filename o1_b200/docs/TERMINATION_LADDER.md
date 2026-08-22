@@ -7,8 +7,11 @@ marked ★ against the real driver and the real FL supervisor.
 
 Budget facts: per-pod allowance = remaining allocation net of earlier pods
 (`O1_SESSION_AUTHORIZED_SECONDS`); at most `MAX_POD_ACQUISITIONS = 4` pods
-per session; the driver refuses to create a pod once the USD allocation is
-exhausted, regardless of the slot count.
+per invocation and `max_pod_creations` (set it to 4) per authorization; the
+spend ledger and the creation ledger live beside the AUTHORIZATION file
+(not `--out`), the running pod's spend is checkpointed to the ledger every
+poll, and the ledger is consulted BEFORE a pod is created. The provider
+`terminateAfter` margin is bounded by the USD 5 non-compute reserve.
 
 ## Stops, strongest first
 
@@ -77,7 +80,13 @@ to `O1_PHASE_*` and prints the session marker exactly once, at the end.
 | downloaded archive digest ≠ the pod's sidecar | — | 1 | no (`ABORTED_RESULT_DIGEST_MISMATCH`) |
 | sidecar belongs to another launch nonce | — | 1 | no (`ABORTED_FOREIGN_RESULT_WITNESS`) |
 | log shape not decodable | — | 1 | no (`ABORTED_WITNESS_SHAPE_UNRECOGNISED`) |
-| ambiguous create, pod not adoptable | — | **3 only** | no (`ABORTED_NO_POD_RECORDED_BUT_PODS_PRESENT`, termination unconfirmed) |
+| ambiguous create, leftover pods found | — | 1 on every leftover | no (`ABORTED_NO_POD_RECORDED_BUT_PODS_PRESENT`; `termination_confirmed` only if every leftover confirmed) |
+| ambiguous create, nothing visible yet or listing failed | — | 3 (and an operator check) | no (`ABORTED_CREATE_OUTCOME_UNKNOWN`, never reported as "confirmed") |
+| evicted pod's termination unconfirmed | — | stop 2/3 on the remnant | **no** (`ABORTED_TERMINATION_UNCONFIRMED`; a second pod on top of a remnant is a double spend) |
+| remaining allocation < 1,800 s | — | — | no (`ABORTED_BUDGET`: not worth a pull) |
+| deterministic failure recorded by an earlier invocation | — | — | no (`REFUSED_DETERMINISTIC_FAILURE_ON_RECORD`, durable marker beside the authorization) |
+| `HF_TOKEN` unset with an hf:// source | — | — | no (`REFUSED_HF_TOKEN_UNSET`, before any pod) |
+| transient O1-child failure in a combined session | `REFUSED (transient)` | 6 then 1 | yes |
 
 ## The money bound
 

@@ -31,6 +31,7 @@ datacenter/backend/bid, monitor spend, press Terminate, or repair anything.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -44,7 +45,7 @@ from .billing import BudgetViolation, remaining_compute_seconds
 from .identityutil import utcnow_iso
 from .lifecycle import LifecycleError, PodLifecycleController
 from .pod_request import build_pod_request, render_canonical_deployment
-from .policy import MAX_POD_ACQUISITIONS, PROFILE_PREFERENCE, PROFILES_BY_KEY
+from .policy import MIN_REACQUISITION_SECONDS, MAX_POD_ACQUISITIONS, PROFILE_PREFERENCE, PROFILES_BY_KEY
 from .preflight import run_preflight
 from .redaction import redact, register_env_secrets
 
@@ -99,6 +100,42 @@ def completion_verdict(log_tail: str) -> str | None:
         verdict = "COMPLETE" if m.group(1) == "COMPLETE" else (
             m.group(2) or "UNSPECIFIED_STATE")
     return verdict
+
+
+def _refusal_marker_path(authorization_path: str, config: dict) -> str:
+    key = hashlib.sha256(json.dumps(
+        {"image": config.get("image_digest_ref"),
+         "artifact_source": config.get("artifact_source"),
+         "result_destination": config.get("result_destination"),
+         "fl_session_config": config.get("fl_session_config", "")},
+        sort_keys=True).encode()).hexdigest()[:16]
+    return f"{authorization_path}.deterministic_refusal.{key}.json"
+
+
+def _record_deterministic_refusal(authorization_path: str, config: dict,
+                                  error: str) -> None:
+    try:
+        path = _refusal_marker_path(authorization_path, config)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump({"schema": "o1b300.deterministic_refusal.v1",
+                       "utc": utcnow_iso(), "error": redact(error)[:1000],
+                       "image_digest_ref": config.get("image_digest_ref")},
+                      fh, indent=2, sort_keys=True)
+    except OSError:
+        pass
+
+
+def _prior_deterministic_refusal(authorization_path: str, config: dict):
+    path = _refusal_marker_path(authorization_path, config)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except (OSError, ValueError):
+        doc = {}
+    doc["marker"] = path
+    return doc
 
 
 def result_archive_uri(config: dict) -> str:
@@ -273,6 +310,26 @@ def run_session(*, authorization_path: str, out_dir: str,
         return status
 
     config = config or load_session_config(root)
+    # A9: a previous invocation recorded that THIS deployment fails
+    # deterministically on the pod; refuse before any money moves
+    prior = _prior_deterministic_refusal(authorization_path, config)
+    if prior:
+        step("DETERMINISTIC_REFUSAL_ON_RECORD", prior.get("error", "")[:200])
+        return finish("REFUSED_DETERMINISTIC_FAILURE_ON_RECORD",
+                      error=prior.get("error"),
+                      note=(f"remove {prior.get('marker')} after fixing the "
+                            f"cause (a new image digest or config clears it "
+                            f"automatically)"))
+    # F5: the pod needs HF_TOKEN for the checkpoint fetch and the durable
+    # mirror, and the driver needs it for the result download; nothing
+    # checked it before the first billable pod
+    if str(config.get("artifact_source", "")).startswith("hf://") \
+            and not os.environ.get("HF_TOKEN"):
+        return finish("REFUSED_HF_TOKEN_UNSET",
+                      error="HF_TOKEN is unset but the session fetches its "
+                            "artifacts from an hf:// source; the pod would "
+                            "refuse at HF_SCOPE after the image pull was "
+                            "paid for")
     expected_identity = {
         "project": config["project"],
         "package_zip_sha256": config["package_zip_sha256"],
@@ -307,7 +364,10 @@ def run_session(*, authorization_path: str, out_dir: str,
         auth = LiveMutationAuthorization.verify(
             path=authorization_path, expected_identity=expected_identity,
             cli_args=cli_args,
-            nonce_ledger=os.path.join(out_dir, "consumed_nonces.txt"))
+            # keyed to the AUTHORIZATION, never to --out: a rerun with a
+            # different out-dir must not get a fresh creation budget and a
+            # fresh USD allocation under the same authorization
+            nonce_ledger=authorization_path + ".consumed_nonces")
     except AuthorizationError as exc:
         step("AUTHORIZATION_REFUSED", exc)
         return finish("LIVE_MUTATION_NOT_AUTHORIZED", error=str(exc))
@@ -499,6 +559,14 @@ def run_session(*, authorization_path: str, out_dir: str,
                 return finish("ABORTED_BUDGET",
                               error="no compute allocation remains; refusing "
                                     "to acquire another pod")
+            if limit < MIN_REACQUISITION_SECONDS:
+                return finish("ABORTED_BUDGET",
+                              error=f"only {limit}s of allocation remain, "
+                                    f"below the {MIN_REACQUISITION_SECONDS}s a "
+                                    f"pod needs to pull, fetch and pass its "
+                                    f"gates; refusing to pay for a pod that "
+                                    f"cannot do science",
+                              acquisitions_used=attempt - 1)
             env_values = dict(identity_env_values(config))
             env_values.update({
                 "O1_ACQUIRED_PROFILE": quote["profile"],
@@ -520,6 +588,13 @@ def run_session(*, authorization_path: str, out_dir: str,
             pod_id = controller.provision(req, rendered)
             # 5. run
             startup = controller.wait_until_running(pod_id)
+            if startup == "EVICTED_TERMINATION_UNCONFIRMED":
+                return finish("ABORTED_TERMINATION_UNCONFIRMED",
+                              termination_confirmed=False,
+                              acquisitions_used=attempt,
+                              error="the evicted pod's termination could "
+                                    "not be confirmed; refusing to acquire "
+                                    "another pod on top of a possible remnant")
             if startup == "EVICTED":
                 step("EVICTED_DURING_STARTUP", f"attempt {attempt}")
                 if zero_progress_abort():
@@ -527,6 +602,15 @@ def run_session(*, authorization_path: str, out_dir: str,
                 continue
             outcome = controller.monitor(pod_id, until=pod_done)
             step("MONITOR_RESULT", f"attempt {attempt}: {outcome}")
+            if outcome == "EVICTED_TERMINATION_UNCONFIRMED":
+                if status["acquisitions"]:
+                    status["acquisitions"][-1]["outcome"] = outcome
+                return finish("ABORTED_TERMINATION_UNCONFIRMED",
+                              termination_confirmed=False,
+                              acquisitions_used=attempt,
+                              error="the evicted pod's termination could "
+                                    "not be confirmed; refusing to acquire "
+                                    "another pod on top of a possible remnant")
             if outcome == "EVICTED":
                 if status["acquisitions"]:
                     status["acquisitions"][-1]["outcome"] = "EVICTED"
@@ -590,6 +674,9 @@ def run_session(*, authorization_path: str, out_dir: str,
             step("DETERMINISTIC_POD_FAILURE", exc)
             controller.collect_logs(pod_id)
             confirmed = controller.terminate_and_confirm(pod_id)
+            # A9: durable, keyed to THIS deployment + image: a rerun must
+            # not pay to repeat a failure that repeats by construction
+            _record_deterministic_refusal(authorization_path, config, str(exc))
             return finish("ABORTED_DETERMINISTIC_POD_FAILURE",
                           termination_confirmed=confirmed,
                           acquisitions_used=attempt, error=redact(str(exc)))
@@ -633,19 +720,49 @@ def run_session(*, authorization_path: str, out_dir: str,
             # all land here with a pod potentially alive on the provider.
             # Saying "before create" while something bills is the single
             # most misleading thing this file can tell an operator at 3am.
-            leftovers = []
-            try:
-                leftovers = [p.id for p in adapter.list_owned_instances()
-                             if p.status not in ("TERMINATED",)]
-            except Exception:  # noqa: BLE001 - best effort, never masks exc
-                leftovers = ["UNKNOWN (could not list owned pods)"]
+            # A just-created pod may be invisible for a while on both
+            # surfaces; list repeatedly before concluding, and TERMINATE
+            # whatever is found (the authorization's terminate stays valid
+            # past expiry).  A consumed nonce slot proves a create was
+            # attempted, so "termination_confirmed" is never claimed then.
+            leftovers: list = []
+            listing_failed = False
+            for _probe in range(6):
+                try:
+                    leftovers = [p.id for p in adapter.list_owned_instances()
+                                 if p.status not in ("TERMINATED",)]
+                    listing_failed = False
+                except Exception:  # noqa: BLE001 - best effort, never masks exc
+                    listing_failed = True
+                if leftovers:
+                    break
+                sleep(20.0)
+            create_attempted = bool(
+                getattr(auth, "nonce_slots_consumed", lambda: 0)())
             if leftovers:
                 step("UNTERMINATED_PODS_PRESENT", ",".join(map(str, leftovers)))
+                confirmed_all = True
+                for lid in leftovers:
+                    try:
+                        ok = controller.terminate_and_confirm(lid)
+                    except Exception:  # noqa: BLE001
+                        ok = False
+                    step("LEFTOVER_TERMINATION", f"{lid}: {'confirmed' if ok else 'UNCONFIRMED'}")
+                    confirmed_all = confirmed_all and ok
                 return finish(
                     "ABORTED_NO_POD_RECORDED_BUT_PODS_PRESENT",
                     error=redact(str(exc)),
+                    termination_confirmed=confirmed_all,
+                    unterminated_pods=[] if confirmed_all else leftovers)
+            if listing_failed or create_attempted:
+                return finish(
+                    "ABORTED_CREATE_OUTCOME_UNKNOWN",
+                    error=redact(str(exc)),
                     termination_confirmed=False,
-                    unterminated_pods=leftovers)
+                    note=("a create may have been attempted (nonce slot "
+                          "consumed) or the owned-pod listing failed; an "
+                          "operator must check the provider console before "
+                          "any further acquisition"))
             return finish("ABORTED_BEFORE_CREATE", error=redact(str(exc)),
                           termination_confirmed=True)
         # 8. terminate + confirm (always; stop is never final)

@@ -379,6 +379,49 @@ def run() -> Runner:
             "container defect, and the abort records the durable rows",
             one_unproductive_eviction_after_a_productive_pod_is_not_a_defect)
 
+    def unconfirmed_termination_stops_reacquisition():
+        """An evicted pod whose termination could not be confirmed may still
+        bill; a second pod on top of it is a double spend.  The driver must
+        STOP, not continue to the next acquisition."""
+        import o1_b200.provider.runpod.lifecycle as lc
+        d = fresh_dir("pre_unconfirmed")
+        sc = Scenario()
+        sc.evict_after_polls = 1
+        config, auth_path = _setup(d, max_pod_creations=4)
+        original = lc.PodLifecycleController.terminate_and_confirm
+        lc.PodLifecycleController.terminate_and_confirm = (
+            lambda self, pod_id, **kw: False)
+        try:
+            status, sc = _run(d, sc, config, auth_path)
+        finally:
+            lc.PodLifecycleController.terminate_and_confirm = original
+        assert status["outcome"] == "ABORTED_TERMINATION_UNCONFIRMED", status["outcome"]
+        assert status["termination_confirmed"] is False
+        assert len(sc.rent_calls) == 1, "reacquired on top of an unconfirmed remnant"
+    r.check("an unconfirmed termination after eviction stops the session "
+            "instead of reacquiring", unconfirmed_termination_stops_reacquisition)
+
+    def a_fresh_process_reads_the_durable_ledger_before_creating():
+        """session_spend_usd() returned "0" for a fresh process; with USD 38
+        already on the ledger the pre-create budget gate passed and a pod
+        was created that _arm_spend then refused.  The ledger is keyed to
+        the AUTHORIZATION file, so a rerun with another --out cannot reset
+        it either."""
+        from o1_b200.provider.runpod.authorization import LiveMutationAuthorization
+        d = fresh_dir("pre_ledger_first")
+        config, auth_path = _setup(d, max_pod_creations=4)
+        with open(auth_path + ".consumed_nonces.spend", "w", encoding="utf-8") as fh:
+            json.dump({"schema": "o1b300.spend_ledger.v1",
+                       "carryover_usd": "39.50"}, fh)
+        sc = Scenario()
+        sc.log_text = "ZERO_TOUCH_COMPLETE\n"
+        status, sc = _run(os.path.join(d, "other_out"), sc, config, auth_path)
+        assert status["outcome"] == "ABORTED_BUDGET", status["outcome"]
+        assert len(sc.rent_calls) == 0, "a pod was created with the allocation spent"
+    r.check("the durable spend ledger is consulted BEFORE a pod is created, "
+            "and is keyed to the authorization, not --out",
+            a_fresh_process_reads_the_durable_ledger_before_creating)
+
     def fallback_on_reacquisition():
         d = fresh_dir("pre_fall")
         sc = Scenario()

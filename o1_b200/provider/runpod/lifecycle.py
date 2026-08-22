@@ -184,7 +184,8 @@ class PodLifecycleController:
             if "EVICTION_SUSPECTED" in str(exc):
                 self._event("EVICTED_BEFORE_RUNNING", pod_id=pod_id)
                 self.collect_logs(pod_id)
-                self.terminate_and_confirm(pod_id)
+                if not self.terminate_and_confirm(pod_id):
+                    return "EVICTED_TERMINATION_UNCONFIRMED"
                 return "EVICTED"
             self._event("STARTUP_FAILED", error=str(exc))
             self.collect_logs(pod_id)
@@ -233,6 +234,10 @@ class PodLifecycleController:
                                     billed_usd=str(billed))
                 except Exception:  # noqa: BLE001 - billing is supplementary
                     pass
+                # A1: the durable ledger must carry THIS pod's spend, not
+                # just earlier pods' carryover, or a driver crash mid-pod
+                # (Ctrl-C, OOM, reboot) resets the budget on the rerun
+                self.adapter.checkpoint_spend()
                 if self.adapter.spend.must_terminate():
                     self._event("BUDGET_HARD_STOP")
                     self.terminate_and_confirm(pod_id)
@@ -252,8 +257,12 @@ class PodLifecycleController:
                 self._event("EVICTED", pod_id=pod_id)
                 self.collect_logs(pod_id)
                 # spend is frozen INSIDE terminate_and_confirm, after the
-                # confirmation poll: a pod still bills while terminating
-                self.terminate_and_confirm(pod_id)
+                # confirmation poll: a pod still bills while terminating.
+                # An UNCONFIRMED termination must stop the session: the
+                # remnant may still bill, and a second pod on top of it is
+                # exactly the double-spend the ladder forbids.
+                if not self.terminate_and_confirm(pod_id):
+                    return "EVICTED_TERMINATION_UNCONFIRMED"
                 return "EVICTED"
             if pod.status == "ERROR":
                 self._event("CONTAINER_FAILURE", status=pod.status)

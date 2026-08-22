@@ -114,7 +114,11 @@ class ZeroTouchStateMachine:
                 "(confirmation_authorized=false is frozen)")
 
     def _run_state(self, state: str) -> None:
-        if self.watchdog is not None and state not in ("TERMINATE", "COMPLETE"):
+        # 95% = "stop launching NEW work, preserve/transfer records"; the
+        # record verification and transfer ARE the preservation and must
+        # run inside the soft-stop window (the hard stop still applies)
+        if self.watchdog is not None and state not in (
+                "TERMINATE", "COMPLETE", "RECORD_VERIFY", "RESULT_TRANSFER"):
             self.watchdog.check_may_launch_work(state)
         if state == "CALIBRATION":
             self._guard_calibration()

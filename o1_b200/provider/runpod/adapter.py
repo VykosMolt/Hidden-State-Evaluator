@@ -43,6 +43,7 @@ from .models import (
     CreatePodRequestModel, GpuTypeModel, PodModel, SchemaIncompatibility,
 )
 from .policy import (
+    RESERVED_NONCOMPUTE_USD,
     MIN_CUDA_VERSION, PROFILES_BY_KEY, PURCHASE_MODE, QUOTE_VALIDITY_SECONDS,
 )
 from .pod_request import (
@@ -385,9 +386,17 @@ class RunpodV2Adapter:
         # REMAINING allocation (never the full one), so the sum of all pods'
         # unattended horizons can never exceed the compute budget even if
         # this orchestrator dies mid-session
+        # the margin is bounded by the non-compute reserve in dollars: a
+        # fixed 30 min at USD 20/h is USD 10 of unattended exposure, twice
+        # the reserve
+        rate = as_money(self.accepted_quote["total_projected_hourly_usd"])
+        margin = TERMINATE_AFTER_MARGIN_SECONDS
+        if rate > 0:
+            margin = min(margin, int(
+                (as_money(RESERVED_NONCOMPUTE_USD) / rate) * 3600))
         terminate_after = time.strftime(
             "%Y-%m-%dT%H:%M:%SZ",
-            time.gmtime(self.clock() + limit + TERMINATE_AFTER_MARGIN_SECONDS))
+            time.gmtime(self.clock() + limit + margin))
         env = dict(req.env)
         env["O1_LAUNCH_NONCE"] = self.authorization.launch_nonce
         req_with_nonce = CreatePodRequestModel(
@@ -459,8 +468,28 @@ class RunpodV2Adapter:
                    "desiredStatus": created.get("desiredStatus")})
 
     def session_spend_usd(self):
-        """Cumulative session spend including every earlier evicted pod."""
-        return self.spend.effective_spend() if self.spend is not None else "0"
+        """Cumulative session spend including every earlier evicted pod —
+        and, before this process has armed a meter, the DURABLE ledger.
+        Returning "0" for a fresh process let a rerun pass the pre-create
+        budget gate with USD 38 already spent and create a pod it then
+        refused to run."""
+        in_memory = (self.spend.effective_spend()
+                     if self.spend is not None else as_money("0"))
+        try:
+            persisted = self._persisted_carryover()
+        except Exception:  # noqa: BLE001 - an unreadable ledger is fail-closed elsewhere
+            persisted = as_money("0")
+        return max(as_money(in_memory), persisted)
+
+    def checkpoint_spend(self) -> None:
+        """Persist the RUNNING pod's spend so a driver crash mid-pod (Ctrl-C,
+        OOM, reboot) cannot reset the budget: before this, the ledger held
+        only earlier pods' carryover until terminate_and_confirm."""
+        if self.spend is not None:
+            try:
+                self._persist_carryover(self.spend.effective_spend())
+            except Exception:  # noqa: BLE001 - never fail the poll on a ledger write
+                pass
 
     def _persisted_carryover(self):
         """Cumulative spend recorded by earlier PROCESSES of this session."""
