@@ -430,21 +430,23 @@
     {
       "checks": [
         "the real FL supervisor emits exactly one driver marker, at the session's end",
-        "a pod evicted after the O1 phase (FL half unfinished) is REACQUIRED, never reported COMPLETE",
+        "a pod evicted after the O1 phase (FL half unfinished, O1 archive already durable) is REACQUIRED, never reported COMPLETE",
+        "a combined session with the log endpoint down and the O1 archive durable is never reported COMPLETE",
+        "the pinned text/event-stream log shape yields the verdict",
         "the full combined log yields COMPLETE with one acquisition and a terminated pod",
         "a deterministic FL-half abort stops the session after ONE paid acquisition",
-        "the entrypoint's recursion guard is intact"
+        "the entrypoint's recursion guard is present before the FL dispatch (static)"
       ],
       "failed": 0,
       "failures": [],
       "module": "test_combined_session_seam",
-      "passed": 5
+      "passed": 7
     }
   ],
   "schema": "o1b200.test_report.v1",
   "scope_note": "Hardware-independent local validation only: synthetic runtime + non-O1 corpus + mocked provider/clock. No B200 hardware claim is made or implied.",
   "total_failed": 0,
-  "total_passed": 280,
-  "utc": "2026-08-22T08:36:17Z",
+  "total_passed": 282,
+  "utc": "2026-08-22T08:53:59Z",
   "verdict": "ALL O1 B200 RUNNER TESTS PASSED"
 }
