@@ -366,6 +366,8 @@
         "budget soft-stop and external termination are reported as ABORTED_*, never as COMPLETE",
         "a repeated interruption with zero durable progress aborts as a container defect instead of thrashing",
         "a single unproductive eviction after real progress is not a container defect, and the abort records the durable rows",
+        "an unconfirmed termination after eviction stops the session instead of reacquiring",
+        "the durable spend ledger is consulted BEFORE a pod is created, and is keyed to the authorization, not --out",
         "reacquisition re-runs profile selection: B300 evicted+gone -> explicit recorded B200 fallback -> COMPLETE",
         "reacquisition re-quotes: a changed interruptible price is re-derived, never cached",
         "O1 rows: committed+synced rows survive eviction; unsynced work is regenerated from the next missing row; corrupt mirrors are quarantined",
@@ -376,7 +378,7 @@
       "failed": 0,
       "failures": [],
       "module": "test_preemption",
-      "passed": 18
+      "passed": 20
     },
     {
       "checks": [
@@ -448,7 +450,7 @@
   "schema": "o1b200.test_report.v1",
   "scope_note": "Hardware-independent local validation only: synthetic runtime + non-O1 corpus + mocked provider/clock. No B200 hardware claim is made or implied.",
   "total_failed": 0,
-  "total_passed": 284,
-  "utc": "2026-08-22T12:34:42Z",
+  "total_passed": 286,
+  "utc": "2026-08-22T13:36:18Z",
   "verdict": "ALL O1 B200 RUNNER TESTS PASSED"
 }
