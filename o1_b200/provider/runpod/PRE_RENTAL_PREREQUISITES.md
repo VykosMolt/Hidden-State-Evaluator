@@ -121,18 +121,18 @@ pod's commitment is never overwritten.
 ## 2. Remote image publication
 
 Follow `REGISTRY_PUSH_PROCEDURE.md` (3 commands + one visibility click).
-The B300 image is already built locally as `o1-b300-runner:v0.3.9`, local
-image id `sha256:8982bf90a81793a15de37cb26a78534c783f6ccca7fd2050cfb4c7f6cda3cae5`
+The B300 image is already built locally as `o1-b300-runner:v0.3.10`, local
+image id `sha256:338bf51765ad0263103d79e581de30e143d9e5d7eb2cd0ed6e0854369b1b015c`
 (rebuilt after the adversarial-review fixes);
 the registry digest is UNRESOLVED until the operator pushes. After pushing,
 use the printed REMOTE manifest digest — the immutable reference
 `ghcr.io/vykosmolt/o1-b300-runner@sha256:<remote-manifest-digest>` — in
 `RUNPOD_SESSION_CONFIG.json` (`image_digest_ref`). Do NOT rely on the
-`v0.3.9` tag after pushing; mutable tags are refused by the adapter.
+`v0.3.10` tag after pushing; mutable tags are refused by the adapter.
 Cross-check that GHCR reports the same digest the push returned:
 
 ```sh
-docker buildx imagetools inspect ghcr.io/vykosmolt/o1-b300-runner:v0.3.9 \
+docker buildx imagetools inspect ghcr.io/vykosmolt/o1-b300-runner:v0.3.10 \
   | grep Digest        # must equal the digest printed by docker push
 ```
 
