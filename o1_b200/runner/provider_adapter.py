@@ -176,6 +176,11 @@ class LocalProviderAdapter(ProviderAdapter):
         self.terminated = False
         self.results: dict = {}
 
+    #: This adapter terminates NOTHING: it flips an in-memory flag.  On a real
+    #: pod the accelerator is stopped by the OFF-POD driver, so any
+    #: confirmation produced here is not evidence of anything.
+    authoritative_termination = False
+
     def quote_instance(self) -> dict:
         return {"instance_type": "local.dress-rehearsal", "gpu": "LOCAL",
                 "gpu_count": 1, "hourly_rate_usd": 0.0, "region": "local"}

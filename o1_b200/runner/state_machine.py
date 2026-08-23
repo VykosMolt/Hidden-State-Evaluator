@@ -127,17 +127,30 @@ class ZeroTouchStateMachine:
         self.context["results"][state] = result
 
     def _terminate(self) -> dict:
-        info = {"termination_requested": False, "termination_confirmed": False}
+        # Whether THIS process can confirm a termination at all.  On a real
+        # pod the provider here is LocalProviderAdapter, an in-memory stub:
+        # it flips a flag and the accelerator is actually stopped off-pod.
+        # Reporting termination_confirmed=True from it asserted a safety
+        # property that was never exercised, in the one file an operator
+        # reads at 3am to decide whether something is still billing.
+        authoritative = bool(getattr(self.provider,
+                                     "authoritative_termination", True))
+        info = {"termination_requested": False,
+                "termination_confirmed": False,
+                "termination_authority": (
+                    "provider" if authoritative
+                    else "IN_POD_STUB_NOT_AUTHORITATIVE: the off-pod driver "
+                         "terminates this pod; nothing here can confirm it")}
         ref = self.context.get("instance_ref")
         try:
             if ref is not None:
                 self.provider.terminate_instance(ref)
                 info["termination_requested"] = True
                 info["termination_confirmed"] = bool(
-                    self.provider.confirm_terminated(ref))
+                    self.provider.confirm_terminated(ref)) and authoritative
             else:
                 info["termination_requested"] = True
-                info["termination_confirmed"] = True  # nothing to terminate
+                info["termination_confirmed"] = authoritative
         except Exception as exc:  # noqa: BLE001 - report, never raise past
             info["termination_error"] = repr(exc)
         return info

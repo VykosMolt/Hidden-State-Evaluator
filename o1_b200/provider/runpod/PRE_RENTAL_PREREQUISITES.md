@@ -134,7 +134,7 @@ pod's commitment is never overwritten.
 
 Follow `REGISTRY_PUSH_PROCEDURE.md` (3 commands + one visibility click).
 The B300 image is already built locally as `o1-b300-runner:v0.3.11`, local
-image id `sha256:6591e5a5d4554c4f031e548aa73702a80310a76da9229d39e20c15dab016ee11`
+image id `sha256:72f4dc121707ca04bc72b6785e59e41d4797066d5b93b33780856c8493cefa4e`
 (rebuilt after the adversarial-review fixes);
 the registry digest is UNRESOLVED until the operator pushes. After pushing,
 use the printed REMOTE manifest digest — the immutable reference

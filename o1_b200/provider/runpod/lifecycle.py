@@ -176,11 +176,27 @@ class PodLifecycleController:
         """Returns "RUNNING", or "EVICTED" when interruptible capacity was
         reclaimed before the container came up (normal spot behavior: the
         remnant is terminated and the session may reacquire)."""
+        # Checkpoint the durable spend THROUGH the startup wait.  Only
+        # monitor() checkpointed, so a driver crash during the up-to-900 s
+        # startup window forgot that pod's billing entirely and a restart
+        # was handed the allowance back.  The pod bills from provisioning,
+        # so this window is never free.
+        def _checkpointing_sleep(seconds):
+            try:
+                self.adapter.checkpoint_spend()
+            except Exception:  # noqa: BLE001 - never block startup on the ledger
+                pass
+            return self.sleep(seconds)
+
         try:
             pod = self.adapter.wait_for_state(
                 pod_id, "RUNNING", timeout_seconds=self.startup_timeout,
-                sleep=self.sleep)
+                sleep=_checkpointing_sleep)
         except RunpodAdapterError as exc:
+            try:
+                self.adapter.checkpoint_spend()
+            except Exception:  # noqa: BLE001
+                pass
             if "EVICTION_SUSPECTED" in str(exc):
                 self._event("EVICTED_BEFORE_RUNNING", pod_id=pod_id)
                 self.collect_logs(pod_id)

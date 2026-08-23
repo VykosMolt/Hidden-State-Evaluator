@@ -994,47 +994,54 @@ def run_extra(r: Runner) -> Runner:
         imported.  A function-local import binds nothing in a sibling
         closure, so every real pod raised NameError after paying for the
         pod, the image pull and the checkpoint fetch.  No test executes
-        those handlers (they need a GPU and a live store), so only a
-        static check sees it: for every function, a name read as a global
-        must actually exist at module scope or in builtins."""
-        import builtins as _builtins
-        import symtable as _symtable
-        # module dunders are bound by the import machinery, not by any
-        # statement symtable can see
-        implicit = {"__file__", "__name__", "__doc__", "__package__",
-                    "__spec__", "__loader__", "__builtins__"}
-        offenders = []
-        for base, dirs, files in os.walk(os.path.join(_ROOT, "o1_b200")):
-            dirs[:] = [d for d in dirs
-                       if d not in ("__pycache__", "reports")]
-            for name in sorted(files):
-                if not name.endswith(".py"):
-                    continue
-                path = os.path.join(base, name)
-                with open(path, encoding="utf-8") as fh:
-                    top = _symtable.symtable(fh.read(), name, "exec")
-                bound = {sym.get_name() for sym in top.get_symbols()
-                         if sym.is_assigned() or sym.is_imported()
-                         or sym.is_namespace()} | implicit
-                stack = [top]
-                while stack:
-                    table = stack.pop()
-                    stack.extend(table.get_children())
-                    if table.get_type() != "function":
-                        continue
-                    for sym in table.get_symbols():
-                        if (sym.is_global() and not sym.is_assigned()
-                                and sym.get_name() not in bound
-                                and not hasattr(_builtins, sym.get_name())):
-                            offenders.append(
-                                f"{os.path.relpath(path, _ROOT)}:"
-                                f"{table.get_lineno()} "
-                                f"{table.get_name()}() -> {sym.get_name()}")
+        those handlers (they need a GPU and a live store), so only a static
+        check sees it.
+
+        Two additions after the cloud review: the FL package is scanned by
+        its own suite (it is baked into the SAME image), and
+        UnboundLocalError -- invisible to is_global(), because that is false
+        for any name assigned anywhere in the function -- gets its own pass.
+        """
+        import _namecheck
+
+        # the checker is only worth trusting if it still catches what it
+        # claims and still passes what it must not flag
+        import tempfile
+        fixtures = (
+            ("def f():\n    return missing_name\n", 1, 0),
+            ("def f():\n    print(x)\n    x = 1\n", 0, 1),
+            ("def f(x):\n    print(x)\n    x = 2\n", 0, 0),
+            ("def m():\n    d = {}\n    def rec(name, ok):\n"
+             "        d[name] = ok\n    rec('a', 1)\n", 0, 0),
+            ("def m(t):\n    if t:\n        def g():\n            return 1\n"
+             "        return g\n    def g():\n        return 2\n"
+             "    return g\n", 0, 0),
+            ("def f():\n    for _ in range(3):\n        try:\n"
+             "            print(t)\n        except NameError:\n"
+             "            pass\n        t = 1\n", 0, 0),
+        )
+        for src, want_g, want_l in fixtures:
+            with tempfile.NamedTemporaryFile("w", suffix=".py",
+                                             delete=False) as fh:
+                fh.write(src)
+                probe = fh.name
+            try:
+                got_g = len(_namecheck.unbound_globals(probe))
+                got_l = len(_namecheck.unbound_locals(probe))
+            finally:
+                os.unlink(probe)
+            assert (got_g, got_l) == (want_g, want_l), (
+                f"the name checker itself is wrong on {src!r}: "
+                f"got {(got_g, got_l)}, want {(want_g, want_l)}")
+
+        offenders = _namecheck.scan_tree(os.path.join(_ROOT, "o1_b200"))
         assert not offenders, (
-            "these names are bound in no enclosing scope and raise "
-            "NameError when the line runs: " + "; ".join(sorted(offenders)))
-    r.check("every name a function reads as a global is actually bound "
-            "(a sibling handler's local import is not a binding)",
+            "these names resolve in no scope at runtime: "
+            + "; ".join(o.replace(_ROOT + os.sep, "") for o in offenders))
+
+    r.check("every name a function reads is actually bound, as a global or "
+            "as a local (NameError and UnboundLocalError), checker "
+            "self-validated against known positives and negatives",
             u1_no_handler_reaches_for_an_unbound_name)
 
     return r

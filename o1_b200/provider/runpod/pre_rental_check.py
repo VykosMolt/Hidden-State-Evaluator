@@ -17,6 +17,40 @@ import sys
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 PY = sys.executable
 
+#: Files whose content legitimately changes AFTER the image is built (they
+#: record or quote the build's own outputs), so they cannot be part of the
+#: identity the build records -- a digest covering its own record could never
+#: be re-synced without changing itself.
+_SOURCE_HASH_SUFFIXES = (".py", ".sh")
+_SOURCE_HASH_SKIP_DIRS = ("__pycache__", "reports", "preserved_attempts")
+
+
+def _o1_source_tree_sha256(root: str | None = None) -> str:
+    """Identity of the EXECUTABLE o1_b200 source baked into the image.
+
+    Only .py and .sh: those decide what the pod actually does.  JSON records
+    and markdown are excluded because the build and the push rewrite several
+    of them afterwards.  Sorted with an explicit C collation so the same tree
+    digests identically on a differently-configured machine.
+    """
+    import hashlib
+    base = os.path.join(root or _ROOT, "o1_b200")
+    entries = []
+    for dirpath, dirnames, filenames in os.walk(base):
+        dirnames[:] = sorted(d for d in dirnames
+                             if d not in _SOURCE_HASH_SKIP_DIRS)
+        for name in filenames:
+            if not name.endswith(_SOURCE_HASH_SUFFIXES):
+                continue
+            full = os.path.join(dirpath, name)
+            entries.append((os.path.relpath(full, base), full))
+    outer = hashlib.sha256()
+    for rel, full in sorted(entries, key=lambda e: e[0].encode()):
+        with open(full, "rb") as fh:
+            digest = hashlib.sha256(fh.read()).hexdigest()
+        outer.update(f"{digest}  {rel}\n".encode())
+    return outer.hexdigest()
+
 
 def _run(cmd, cwd=None, timeout=3600, live_credentials=False):
     env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "PYTHONPATH": _ROOT}
@@ -114,6 +148,45 @@ def main() -> int:
                f"torch={env['torch']} arch={env['arch_list']} no_ptx={no_ptx}")
     except Exception as exc:  # noqa: BLE001
         record("container_image_built_and_asserted", False, exc)
+
+    # 5b. THE image actually bound is THE image that was built and reviewed.
+    # registry_digest_ref had two writers and no readers: nothing compared it
+    # to the session config's image_digest_ref, so a source fix that was
+    # never rebuilt/re-pushed left a stale digest bound and every gate still
+    # reported PASS.  That is how a NameError fixed in git reached a paid pod.
+    try:
+        with open(img_record_path, encoding="utf-8") as fh:
+            img = json.load(fh)
+        cfg_path = os.path.join(_ROOT, "o1_b200", "provider", "runpod",
+                                "RUNPOD_SESSION_CONFIG.json")
+        with open(cfg_path, encoding="utf-8") as fh:
+            cfg = json.load(fh)
+        built = str(img.get("registry_digest_ref", ""))
+        bound = str(cfg.get("image_digest_ref", ""))
+        ok = (bool(built) and bool(bound)
+              and not built.startswith("UNRESOLVED")
+              and not bound.startswith("UNRESOLVED")
+              and built == bound)
+        detail = ("bound digest matches the built image record"
+                  if ok else f"built={built[:60]!r} bound={bound[:60]!r}")
+        record("bound_image_is_the_built_image", ok, detail)
+    except Exception as exc:  # noqa: BLE001
+        record("bound_image_is_the_built_image", False, exc)
+
+    # 5c. the built image was built from THIS source tree.  The build script
+    # recorded a FL source hash but nothing for o1_b200 itself, so a driver
+    # edit after the build was invisible to every check.
+    try:
+        with open(img_record_path, encoding="utf-8") as fh:
+            img = json.load(fh)
+        recorded = str(img.get("o1_b200_source_sha256", ""))
+        live = _o1_source_tree_sha256()
+        ok = bool(recorded) and recorded == live
+        record("built_image_matches_o1_source", ok,
+               "source tree matches the image record" if ok
+               else f"recorded={recorded[:16]!r} live={live[:16]!r}")
+    except Exception as exc:  # noqa: BLE001
+        record("built_image_matches_o1_source", False, exc)
 
     # 6. artifact transfer manifest
     try:

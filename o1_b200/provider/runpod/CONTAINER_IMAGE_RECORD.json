@@ -1,6 +1,6 @@
 {
   "base_image_digest": "python@sha256:23c59390fc717bf09f9336908199a0ae75d9c4264bf296123f94ad772fea3b52",
-  "build_timestamp_utc": "2026-08-22T13:28:57Z",
+  "build_timestamp_utc": "2026-08-23T20:51:01Z",
   "dependency_lock_sha256": "53c15b49312dbe6b1ca1e399ae9cf6045c1bdbc53ab1f825a5d3cfbf0870335b",
   "dockerfile_sha256": "3f000a4f2a96f64afd247eeb96d6505f7b0192ee18f9695e3fabcacc1cac73d6",
   "environment": {
@@ -23,12 +23,13 @@
     "transformers": "4.54.1"
   },
   "foundation_learner_layout": "/opt/foundation_learner/foundation_learner (import root /opt/foundation_learner); pregen episode corpus NOT baked \u2014 campaign/fetch_pregen.py materialises and hash-verifies it on the pod",
-  "foundation_learner_source_sha256": "f5429b003fc190a81d6ee783ba389a2877dd57f0574317d5902670c0c87a4add",
-  "image_id_local": "sha256:6591e5a5d4554c4f031e548aa73702a80310a76da9229d39e20c15dab016ee11",
-  "image_name": "o1-b300-runner:v0.3.11",
+  "foundation_learner_source_sha256": "5724be2fd35bc29c25f944bbb2eaec3749a0da85e2097a67584142729976ad5c",
+  "image_id_local": "sha256:72f4dc121707ca04bc72b6785e59e41d4797066d5b93b33780856c8493cefa4e",
+  "image_name": "o1-b300-runner:v0.3.12",
   "notes": "no FP8/FP4/quantization/speculative/vLLM/TensorRT-LLM/SGLang; no startup installation/compilation/clone/resolution; checkpoint never baked; no credentials",
+  "o1_b200_source_sha256": "358d7f8b9e99710b7d547451cde6c2ee995591bbe07b9b5d0675fbc34a9d21f2",
   "platform": "linux/amd64",
-  "registry_digest_ref": "ghcr.io/vykosmolt/o1-b300-runner@sha256:6591e5a5d4554c4f031e548aa73702a80310a76da9229d39e20c15dab016ee11",
+  "registry_digest_ref": "UNRESOLVED_UNTIL_PUSH (docker push prints repo@sha256:...)",
   "schema": "o1b300.container_image_record.v2",
   "supported_driver_range": ">= r580 (CUDA 13.0 requirement; RunPod B300/B200 hosts report CUDA 13.0/13.2)",
   "system_packages": "base python:3.14-slim-bookworm only; no extra apt packages installed",
@@ -38,6 +39,5 @@
   },
   "torch_wheel_sha256": "c84c5988b3e416669ed3790d772479af5934d1788119288d8bddd9c4cb207285",
   "triton_wheel_sha256": "c56cb810349d3699020b5b7695429b9b997574dab1b9f46b2b63fa23d7954894",
-  "wheelset_manifest_sha256": "a2577028a5a82fc301e38bef6a33bc40940aa12f9bff11683176ad66290910d9",
-  "registry_pushed_utc": "2026-08-22"
+  "wheelset_manifest_sha256": "a2577028a5a82fc301e38bef6a33bc40940aa12f9bff11683176ad66290910d9"
 }

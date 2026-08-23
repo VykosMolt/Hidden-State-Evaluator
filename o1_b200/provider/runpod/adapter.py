@@ -475,10 +475,15 @@ class RunpodV2Adapter:
         refused to run."""
         in_memory = (self.spend.effective_spend()
                      if self.spend is not None else as_money("0"))
-        try:
-            persisted = self._persisted_carryover()
-        except Exception:  # noqa: BLE001 - an unreadable ledger is fail-closed elsewhere
-            persisted = as_money("0")
+        # An unreadable ledger PROPAGATES.  Swallowing it here defeated the
+        # fail-closed guard in _persisted_carryover at the one place it
+        # mattered: the pre-create budget gate passed with spend 0, the pod
+        # was created, and _arm_spend -- which reads the ledger directly --
+        # then raised AFTER a live pod existed.  Every caller is safe:
+        # the two pre-create sites refuse without creating anything, and the
+        # two in lifecycle._arm_and_return are wrapped by provision(), which
+        # terminates the pod for anything raised inside it.
+        persisted = self._persisted_carryover()
         return max(as_money(in_memory), persisted)
 
     def checkpoint_spend(self) -> None:

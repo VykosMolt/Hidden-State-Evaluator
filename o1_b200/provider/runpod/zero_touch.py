@@ -44,10 +44,34 @@ from .authorization import (
 from .billing import BudgetViolation, remaining_compute_seconds
 from .identityutil import utcnow_iso
 from .lifecycle import LifecycleError, PodLifecycleController
-from .pod_request import build_pod_request, render_canonical_deployment
+from .pod_request import (POD_NAME, build_pod_request,
+                          render_canonical_deployment)
 from .policy import MIN_REACQUISITION_SECONDS, MAX_POD_ACQUISITIONS, PROFILE_PREFERENCE, PROFILES_BY_KEY
 from .preflight import run_preflight
 from .redaction import redact, register_env_secrets
+
+
+#: Abort states whose outcome depends on THIS pod's remaining allowance or
+#: THIS pod's measured throughput, not on the deployment.  They stop the
+#: session (reacquiring blindly would just pay again), but they must NOT be
+#: recorded as a permanent, deployment-wide refusal: a replacement pod
+#: restores the pre-calibration phase from the durable store and so has more
+#: calibration time, and an operator who raises the budget or retimes the
+#: session has changed the very input the refusal was a function of.
+#: Recording them durably meant an unattended driver needed a human to delete
+#: a file before it would ever run again.
+BUDGET_DEPENDENT_ABORT_STATES = frozenset({
+    "AFFORDABILITY", "AFFORDABILITY_GATE", "BUDGET", "BUDGET_EXHAUSTED",
+    "COMPUTE_REMAINING_AUTHORIZED_TIME", "RUN_FL_LADDER",
+})
+
+
+def _is_budget_dependent(verdict: str) -> bool:
+    name = str(verdict or "").upper()
+    if name in BUDGET_DEPENDENT_ABORT_STATES:
+        return True
+    return any(tok in name for tok in
+               ("AFFORD", "BUDGET", "ALLOWANCE", "UNAFFORDABLE"))
 
 
 class DeterministicPodFailure(RuntimeError):
@@ -309,6 +333,83 @@ def run_session(*, authorization_path: str, out_dir: str,
             fh.write("\n")
         return status
 
+    def sweep_leftovers(exc, adapter, controller, auth, outcome, *,
+                        nonce_implies_create=True):
+        """Terminate anything still billing when no pod id was recorded.
+
+        pod_id being None does NOT prove nothing is billing: an ambiguous
+        create, a refused duplicate or a lost read-back all land here with a
+        pod potentially alive.  Originally only the generic handler swept;
+        BudgetViolation and AuthorizationError asserted
+        termination_confirmed=True and swept nothing, so a pod created just
+        before either was raised billed on with nobody watching.
+        """
+        def is_ours(pod):
+            # Only OUR pods may be terminated.  This swept every non-
+            # TERMINATED pod on the account, so an unrelated pod the operator
+            # started during a multi-hour session was destroyed by a driver
+            # exception that had nothing to do with it.  Canonical name is
+            # the primary witness; a launch nonce, when the surface exposes
+            # env, is decisive in both directions.
+            if getattr(pod, "name", None) != POD_NAME:
+                return False
+            env = getattr(pod, "extra", {}).get("env")
+            want = getattr(auth, "launch_nonce", None)
+            if isinstance(env, dict) and env.get("O1_LAUNCH_NONCE") and want:
+                return env["O1_LAUNCH_NONCE"] == want
+            return True     # our name, nonce unverifiable -> treat as ours
+
+        leftovers: list = []
+        foreign: list = []
+        listing_failed = False
+        for _probe in range(6):
+            try:
+                owned = [p for p in adapter.list_owned_instances()
+                         if p.status not in ("TERMINATED",)]
+                leftovers = [p.id for p in owned if is_ours(p)]
+                foreign = [p.id for p in owned if not is_ours(p)]
+                listing_failed = False
+            except Exception:  # noqa: BLE001 - best effort, never masks exc
+                listing_failed = True
+            if leftovers:
+                break
+            sleep(20.0)
+        create_attempted = bool(
+            getattr(auth, "nonce_slots_consumed", lambda: 0)())
+        if leftovers:
+            step("UNTERMINATED_PODS_PRESENT", ",".join(map(str, leftovers)))
+            confirmed_all = True
+            for lid in leftovers:
+                try:
+                    ok = controller.terminate_and_confirm(lid)
+                except Exception:  # noqa: BLE001
+                    ok = False
+                step("LEFTOVER_TERMINATION",
+                     f"{lid}: {'confirmed' if ok else 'UNCONFIRMED'}")
+                confirmed_all = confirmed_all and ok
+            return finish(
+                "ABORTED_NO_POD_RECORDED_BUT_PODS_PRESENT",
+                error=redact(str(exc)),
+                termination_confirmed=confirmed_all,
+                foreign_pods_left_running=foreign,
+                unterminated_pods=[] if confirmed_all else leftovers)
+        # A consumed nonce slot means "a create may have been in flight" only
+        # where the caller cannot tell.  For authorization-slot EXHAUSTION the
+        # ledger is full BY DEFINITION -- those slots belong to earlier,
+        # already-terminated pods -- so treating it as an in-flight create
+        # renamed a precise verdict into ABORTED_CREATE_OUTCOME_UNKNOWN.
+        if listing_failed or (create_attempted and nonce_implies_create):
+            return finish(
+                "ABORTED_CREATE_OUTCOME_UNKNOWN",
+                error=redact(str(exc)),
+                termination_confirmed=False,
+                note=("a create may have been attempted (nonce slot "
+                      "consumed) or the owned-pod listing failed; an "
+                      "operator must check the provider console before "
+                      "any further acquisition"))
+        return finish(outcome, error=redact(str(exc)),
+                      termination_confirmed=True)
+
     config = config or load_session_config(root)
     # A9: a previous invocation recorded that THIS deployment fails
     # deterministically on the pod; refuse before any money moves
@@ -442,9 +543,12 @@ def run_session(*, authorization_path: str, out_dir: str,
                     # Reacquiring cannot help — a fresh pod runs the same
                     # gates against the same artifacts and fails identically
                     # — so this must never be mistaken for an eviction.
-                    raise DeterministicPodFailure(
+                    exc = DeterministicPodFailure(
                         f"the pod aborted deterministically at {verdict}; "
                         f"reacquisition would repeat it")
+                    exc.verdict = verdict
+                    exc.budget_dependent = _is_budget_dependent(verdict)
+                    raise exc
                 # No verdict in the log is NOT completion — not even when
                 # the durable O1 archive exists: in a combined session that
                 # archive is published at the END OF THE O1 PHASE, hours
@@ -675,8 +779,16 @@ def run_session(*, authorization_path: str, out_dir: str,
             controller.collect_logs(pod_id)
             confirmed = controller.terminate_and_confirm(pod_id)
             # A9: durable, keyed to THIS deployment + image: a rerun must
-            # not pay to repeat a failure that repeats by construction
-            _record_deterministic_refusal(authorization_path, config, str(exc))
+            # not pay to repeat a failure that repeats by construction.
+            # Budget/time-dependent aborts are NOT that: they are a function
+            # of this pod's allowance and measured throughput, so they stop
+            # the session without permanently condemning the deployment.
+            if getattr(exc, "budget_dependent", False):
+                step("REFUSAL_NOT_RECORDED_BUDGET_DEPENDENT",
+                     getattr(exc, "verdict", ""))
+            else:
+                _record_deterministic_refusal(
+                    authorization_path, config, str(exc))
             return finish("ABORTED_DETERMINISTIC_POD_FAILURE",
                           termination_confirmed=confirmed,
                           acquisitions_used=attempt, error=redact(str(exc)))
@@ -692,22 +804,27 @@ def run_session(*, authorization_path: str, out_dir: str,
                           acquisitions_used=attempt, error=redact(str(exc)))
         except BudgetViolation as exc:
             step("BUDGET_STOP", exc)
-            confirmed = True
             if pod_id is not None:
                 confirmed = controller.terminate_and_confirm(pod_id)
-            return finish("ABORTED_BUDGET", error=redact(str(exc)),
-                          termination_confirmed=confirmed,
-                          acquisitions_used=attempt)
+                return finish("ABORTED_BUDGET", error=redact(str(exc)),
+                              termination_confirmed=confirmed,
+                              acquisitions_used=attempt)
+            # no pod id recorded -- sweep before claiming nothing bills
+            return sweep_leftovers(exc, adapter, controller, auth,
+                                   "ABORTED_BUDGET",
+                                   nonce_implies_create=False)
         except AuthorizationError as exc:
             # creation-slot exhaustion or expiry mid-session
             step("AUTHORIZATION_STOP", exc)
-            confirmed = True
             if pod_id is not None:
                 confirmed = controller.terminate_and_confirm(pod_id)
-            return finish("ABORTED_AUTHORIZATION_EXHAUSTED",
-                          error=redact(str(exc)),
-                          termination_confirmed=confirmed,
-                          acquisitions_used=attempt)
+                return finish("ABORTED_AUTHORIZATION_EXHAUSTED",
+                              error=redact(str(exc)),
+                              termination_confirmed=confirmed,
+                              acquisitions_used=attempt)
+            return sweep_leftovers(exc, adapter, controller, auth,
+                                   "ABORTED_AUTHORIZATION_EXHAUSTED",
+                                   nonce_implies_create=False)
         except (LifecycleError, Exception) as exc:  # noqa: BLE001
             step("SESSION_FAILURE", exc)
             if pod_id is not None:
@@ -725,46 +842,8 @@ def run_session(*, authorization_path: str, out_dir: str,
             # whatever is found (the authorization's terminate stays valid
             # past expiry).  A consumed nonce slot proves a create was
             # attempted, so "termination_confirmed" is never claimed then.
-            leftovers: list = []
-            listing_failed = False
-            for _probe in range(6):
-                try:
-                    leftovers = [p.id for p in adapter.list_owned_instances()
-                                 if p.status not in ("TERMINATED",)]
-                    listing_failed = False
-                except Exception:  # noqa: BLE001 - best effort, never masks exc
-                    listing_failed = True
-                if leftovers:
-                    break
-                sleep(20.0)
-            create_attempted = bool(
-                getattr(auth, "nonce_slots_consumed", lambda: 0)())
-            if leftovers:
-                step("UNTERMINATED_PODS_PRESENT", ",".join(map(str, leftovers)))
-                confirmed_all = True
-                for lid in leftovers:
-                    try:
-                        ok = controller.terminate_and_confirm(lid)
-                    except Exception:  # noqa: BLE001
-                        ok = False
-                    step("LEFTOVER_TERMINATION", f"{lid}: {'confirmed' if ok else 'UNCONFIRMED'}")
-                    confirmed_all = confirmed_all and ok
-                return finish(
-                    "ABORTED_NO_POD_RECORDED_BUT_PODS_PRESENT",
-                    error=redact(str(exc)),
-                    termination_confirmed=confirmed_all,
-                    unterminated_pods=[] if confirmed_all else leftovers)
-            if listing_failed or create_attempted:
-                return finish(
-                    "ABORTED_CREATE_OUTCOME_UNKNOWN",
-                    error=redact(str(exc)),
-                    termination_confirmed=False,
-                    note=("a create may have been attempted (nonce slot "
-                          "consumed) or the owned-pod listing failed; an "
-                          "operator must check the provider console before "
-                          "any further acquisition"))
-            return finish("ABORTED_BEFORE_CREATE", error=redact(str(exc)),
-                          termination_confirmed=True)
+            return sweep_leftovers(exc, adapter, controller, auth,
+                                   "ABORTED_BEFORE_CREATE")
         # 8. terminate + confirm (always; stop is never final)
         confirmed = controller.terminate_and_confirm(pod_id)
         if not confirmed:

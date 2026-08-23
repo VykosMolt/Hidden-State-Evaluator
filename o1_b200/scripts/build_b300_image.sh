@@ -6,7 +6,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WHEELS_SRC="${O1_B300_WHEELS:-/home/moloch/b200_build_cache/wheels_b300}"
 IMAGE_NAME="${1:-o1-b300-runner}"
-VERSION_TAG="${2:-v0.3.11}"
+# Default from o1_b200/VERSION, never a frozen literal: a hardcoded
+# default silently rebuilt and re-tagged an ALREADY PUSHED version and
+# overwrote its image record with a different local id.
+VERSION_TAG="${2:-v$(cat "$(dirname "${BASH_SOURCE[0]}")/../VERSION" | tr -d "[:space:]")}"
 OUT="$ROOT/o1_b200/provider/runpod/CONTAINER_IMAGE_RECORD.json"
 
 cd "$ROOT"
@@ -45,12 +48,18 @@ else
   # deploy/environment_lock.json RECORDS this digest (and INTEGRATION.md
   # quotes the image id), so they cannot be part of what is digested: a
   # digest that covered its own record could never be re-synced without
-  # changing itself.  Both files still ship in the image; they are only
+  # changing itself.  SHA256SUMS is excluded for the SAME reason, one step
+  # removed: it covers environment_lock.json, so a lock sync changes the
+  # sums, which would change this digest, which changes the image id the
+  # lock records -- a cycle that never converges.  Excluding it loses no
+  # coverage, because SHA256SUMS is derived: every file it lists is already
+  # hashed individually into this digest.  Both files still ship in the image; they are only
   # excluded from the identity computation.
   FL_TREE_SHA=$(cd build_ctx/foundation_learner \
     && find . \( -type f -o -type l \) \
          ! -path ./deploy/environment_lock.json \
-         ! -path ./deploy/INTEGRATION.md -print0 \
+         ! -path ./deploy/INTEGRATION.md \
+         ! -path ./SHA256SUMS -print0 \
     | LC_ALL=C sort -z | xargs -0 sha256sum | LC_ALL=C sha256sum \
     | cut -d' ' -f1)
 fi
@@ -65,6 +74,13 @@ TRITON_WHEEL_SHA=$(grep -E " triton-" "$WHEELS_SRC/WHEELS_B300.sha256" | cut -d'
 # resolve the base image to an immutable digest BEFORE building
 docker pull --platform linux/amd64 python:3.14-slim-bookworm >/dev/null
 BASE_DIGEST=$(docker inspect --format '{{index .RepoDigests 0}}' python:3.14-slim-bookworm)
+
+# Identity of the executable o1_b200 source going into the image.  Computed by
+# the SAME function pre_rental_check uses to verify it, so the two cannot
+# drift.  Without this the build recorded a FL source hash and nothing at all
+# for the driver code that spends the money.
+O1_SRC_SHA=$(PYTHONPATH="$ROOT" python3 -c "from o1_b200.provider.runpod.pre_rental_check import _o1_source_tree_sha256 as h; print(h('$ROOT'))")
+echo "o1_b200 source sha256: $O1_SRC_SHA"
 
 docker build --platform linux/amd64 \
   --build-arg BASE_IMAGE="$BASE_DIGEST" \
@@ -115,6 +131,7 @@ record = {
   "dockerfile_sha256": "$DOCKERFILE_SHA",
   "dependency_lock_sha256": "$LOCK_SHA",
   "wheelset_manifest_sha256": "$WHEELSET_SHA",
+  "o1_b200_source_sha256": "$O1_SRC_SHA",
   "foundation_learner_source_sha256": "$FL_TREE_SHA",
   "foundation_learner_layout": "/opt/foundation_learner/foundation_learner (import root /opt/foundation_learner); pregen episode corpus NOT baked — campaign/fetch_pregen.py materialises and hash-verifies it on the pod",
   "torch_wheel_sha256": "$TORCH_WHEEL_SHA",

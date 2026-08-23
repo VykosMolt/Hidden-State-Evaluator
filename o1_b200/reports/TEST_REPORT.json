@@ -16,31 +16,13 @@
       "passed": 7
     },
     {
-      "checks": [
-        "schema: every record carries the full canonical field set",
-        "a genuine record passes full recomputation",
-        "HOSTILE forged well_formed is caught",
-        "HOSTILE forged verifier_correct is caught",
-        "HOSTILE forged R is caught",
-        "HOSTILE changed text with stale hash is caught",
-        "HOSTILE changed tokens with stale hash is caught",
-        "HOSTILE record edited without rehash is caught",
-        "HOSTILE changed alpha is caught",
-        "HOSTILE changed sign is caught",
-        "HOSTILE changed direction/axis is caught",
-        "HOSTILE changed stream is caught",
-        "HOSTILE changed seed is caught",
-        "HOSTILE changed task-content hash is caught",
-        "HOSTILE changed package identity is caught",
-        "HOSTILE changed precommit/binding identity is caught",
-        "HOSTILE forged repetition flag is caught",
-        "HOSTILE baseline transport must be null",
-        "stored booleans can never override recomputed values"
+      "checks": [],
+      "failed": 1,
+      "failures": [
+        "test_records: module process died (rc=1)"
       ],
-      "failed": 0,
-      "failures": [],
       "module": "test_records",
-      "passed": 19
+      "passed": 0
     },
     {
       "checks": [
@@ -138,10 +120,12 @@
         "benchmark harness dress rehearsal (serial + replica w2/w4) collects metrics on the corpus",
         "throughput stability is a time-windowed token rate, burst-safe and blind to corpus ordering"
       ],
-      "failed": 0,
-      "failures": [],
+      "failed": 1,
+      "failures": [
+        "benchmark harness dress rehearsal (serial + replica w2/w4) collects metrics on the corpus"
+      ],
       "module": "test_corpus_and_policies",
-      "passed": 11
+      "passed": 10
     },
     {
       "checks": [
@@ -170,10 +154,16 @@
         "HOSTILE attempted confirmation launch despite authorization=false is refused",
         "HOSTILE real O1 calibration binding is refused by the local machine unconditionally"
       ],
-      "failed": 0,
-      "failures": [],
+      "failed": 5,
+      "failures": [
+        "full mocked end-to-end dress rehearsal reaches COMPLETE with confirmed termination, machine-readable status and REAL gate derivation over the local benchmark",
+        "failure injected at EVERY state: later states never begin, termination is requested, status is machine-readable",
+        "valid completed synthetic records survive a downstream failure",
+        "HOSTILE attempted confirmation launch despite authorization=false is refused",
+        "HOSTILE real O1 calibration binding is refused by the local machine unconditionally"
+      ],
       "module": "test_state_machine",
-      "passed": 7
+      "passed": 2
     },
     {
       "checks": [
@@ -347,10 +337,14 @@
         "a session prefix in the durable destination scopes every key, so a fresh run cannot silently resume an old one",
         "an expired authorization still permits TERMINATION while refusing acquisition"
       ],
-      "failed": 0,
-      "failures": [],
+      "failed": 3,
+      "failures": [
+        "ARTIFACT_VERIFY consumes an hf:// artifact source by cross-checking the fetch report, never as a manifest path",
+        "the transfer manifests describe the committed tree (pod ARTIFACT_VERIFY would pass)",
+        "the image record's FL digest describes the FL tree the build would actually stage"
+      ],
       "module": "test_launch_path",
-      "passed": 33
+      "passed": 30
     },
     {
       "checks": [
@@ -412,7 +406,7 @@
         "NEW#6. a failure between pod creation and watchdog arming terminates the pod instead of orphaning it",
         "NEW#7. monitor is bounded: a pod that never completes is terminated rather than paid for to the budget",
         "NEW#11. a duplicated profile preference is refused",
-        "every name a function reads as a global is actually bound (a sibling handler's local import is not a binding)"
+        "every name a function reads is actually bound, as a global or as a local (NameError and UnboundLocalError), checker self-validated against known positives and negatives"
       ],
       "failed": 0,
       "failures": [],
@@ -450,8 +444,8 @@
   ],
   "schema": "o1b200.test_report.v1",
   "scope_note": "Hardware-independent local validation only: synthetic runtime + non-O1 corpus + mocked provider/clock. No B200 hardware claim is made or implied.",
-  "total_failed": 0,
-  "total_passed": 287,
-  "utc": "2026-08-23T17:52:14Z",
-  "verdict": "ALL O1 B200 RUNNER TESTS PASSED"
+  "total_failed": 10,
+  "total_passed": 259,
+  "utc": "2026-08-23T20:40:27Z",
+  "verdict": "10 FAILURES"
 }

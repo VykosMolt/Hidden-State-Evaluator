@@ -541,8 +541,14 @@ def run() -> Runner:
             return                      # FL worktree not present in this checkout
         # same rule as scripts/build_b300_image.sh: files + symlinks, C sort,
         # minus the two files that RECORD the digest / image id
+        # SHA256SUMS is excluded for the same reason one step removed: it
+        # COVERS environment_lock.json, so a lock sync changes the sums,
+        # which would change this digest, which changes the image id the
+        # lock records -- a cycle with no fixed point.  No coverage is lost:
+        # every file SHA256SUMS lists is hashed individually below.
         self_referential = {"deploy/environment_lock.json",
-                            "deploy/INTEGRATION.md"}
+                            "deploy/INTEGRATION.md",
+                            "SHA256SUMS"}
         names = []
         for base, dirs, files in os.walk(src):
             dirs[:] = [x for x in dirs
