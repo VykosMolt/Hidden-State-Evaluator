@@ -75,7 +75,7 @@
     "runner_source": {
       "kind": "tree",
       "path": "/home/moloch/ouro_worktrees/o1-v2-b200-runner/o1_b200/runner",
-      "sha256": "6ddb23a09399ab3a5189bb56a6762e4ca97389ff0c3deea81cee431fca62068e",
+      "sha256": "a8121e36b1bf8c668cc306b2bb06bf8c524d8d1c645898bfd736e711a7504766",
       "transfer_out_of_band": false
     },
     "tokenizer_binding": {

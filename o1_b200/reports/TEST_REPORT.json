@@ -411,12 +411,13 @@
         "NEW#5. a result store that cannot be consulted downgrades the verdict instead of claiming a verified COMPLETE",
         "NEW#6. a failure between pod creation and watchdog arming terminates the pod instead of orphaning it",
         "NEW#7. monitor is bounded: a pod that never completes is terminated rather than paid for to the budget",
-        "NEW#11. a duplicated profile preference is refused"
+        "NEW#11. a duplicated profile preference is refused",
+        "every name a function reads as a global is actually bound (a sibling handler's local import is not a binding)"
       ],
       "failed": 0,
       "failures": [],
       "module": "test_review_repairs",
-      "passed": 30
+      "passed": 31
     },
     {
       "checks": [
@@ -450,7 +451,7 @@
   "schema": "o1b200.test_report.v1",
   "scope_note": "Hardware-independent local validation only: synthetic runtime + non-O1 corpus + mocked provider/clock. No B200 hardware claim is made or implied.",
   "total_failed": 0,
-  "total_passed": 286,
-  "utc": "2026-08-23T16:33:41Z",
+  "total_passed": 287,
+  "utc": "2026-08-23T17:52:14Z",
   "verdict": "ALL O1 B200 RUNNER TESTS PASSED"
 }

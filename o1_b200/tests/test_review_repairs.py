@@ -11,7 +11,7 @@ import os
 import subprocess
 import sys
 
-from _h import Runner, fresh_dir, hermetic_mock_credentials
+from _h import _ROOT, Runner, fresh_dir, hermetic_mock_credentials
 
 MOCK_KEY = hermetic_mock_credentials()
 
@@ -986,6 +986,56 @@ def run_extra(r: Runner) -> Runner:
         raise AssertionError("a duplicated profile preference was accepted")
     r.check("NEW#11. a duplicated profile preference is refused",
             n11_preference_rejects_duplicates)
+
+    # ---------- cloud review: names that resolve in no scope -------------
+
+    def u1_no_handler_reaches_for_an_unbound_name():
+        """CALIBRATION called sha256_file, a name only SIBLING handlers had
+        imported.  A function-local import binds nothing in a sibling
+        closure, so every real pod raised NameError after paying for the
+        pod, the image pull and the checkpoint fetch.  No test executes
+        those handlers (they need a GPU and a live store), so only a
+        static check sees it: for every function, a name read as a global
+        must actually exist at module scope or in builtins."""
+        import builtins as _builtins
+        import symtable as _symtable
+        # module dunders are bound by the import machinery, not by any
+        # statement symtable can see
+        implicit = {"__file__", "__name__", "__doc__", "__package__",
+                    "__spec__", "__loader__", "__builtins__"}
+        offenders = []
+        for base, dirs, files in os.walk(os.path.join(_ROOT, "o1_b200")):
+            dirs[:] = [d for d in dirs
+                       if d not in ("__pycache__", "reports")]
+            for name in sorted(files):
+                if not name.endswith(".py"):
+                    continue
+                path = os.path.join(base, name)
+                with open(path, encoding="utf-8") as fh:
+                    top = _symtable.symtable(fh.read(), name, "exec")
+                bound = {sym.get_name() for sym in top.get_symbols()
+                         if sym.is_assigned() or sym.is_imported()
+                         or sym.is_namespace()} | implicit
+                stack = [top]
+                while stack:
+                    table = stack.pop()
+                    stack.extend(table.get_children())
+                    if table.get_type() != "function":
+                        continue
+                    for sym in table.get_symbols():
+                        if (sym.is_global() and not sym.is_assigned()
+                                and sym.get_name() not in bound
+                                and not hasattr(_builtins, sym.get_name())):
+                            offenders.append(
+                                f"{os.path.relpath(path, _ROOT)}:"
+                                f"{table.get_lineno()} "
+                                f"{table.get_name()}() -> {sym.get_name()}")
+        assert not offenders, (
+            "these names are bound in no enclosing scope and raise "
+            "NameError when the line runs: " + "; ".join(sorted(offenders)))
+    r.check("every name a function reads as a global is actually bound "
+            "(a sibling handler's local import is not a binding)",
+            u1_no_handler_reaches_for_an_unbound_name)
 
     return r
 

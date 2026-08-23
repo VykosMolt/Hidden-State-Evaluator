@@ -43,7 +43,7 @@ from .precommit_template import finalize, load_template, resolve
 from .provider_adapter import LocalProviderAdapter
 from .runbuild import O1_MANIFEST_PATHS
 from .benchmark_o1_b200 import _oom_types, load_benchmark_order
-from .identity import domain_sha256
+from .identity import domain_sha256, sha256_file
 from .selection import benchmark_candidates, derive_gates, select_backend
 
 from .state_machine import ZeroTouchStateMachine
