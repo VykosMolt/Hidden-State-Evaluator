@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
 from . import o1_isolation, stage_definitions
+from ..eviction import EvictedBySignal
 from .affordability import (AffordabilityRefusal, BenchMeasurement, CorePlan,
                             admission_check, load_policy, plan_core_comparison,
                             policy_sha256)
@@ -484,6 +485,13 @@ class Scheduler:
                 "fallback": list(stage.fallback_work)})
             self.outcomes.append(outcome)
             return outcome
+        except EvictedBySignal:
+            # An eviction is not a stage failure.  STAGE_FAILED is a TERMINAL
+            # journal event, so recording one here made the replacement pod
+            # SKIP this stage permanently -- a paid-for ladder stage silently
+            # missing from the results.  Leaving STAGE_STARTED with no
+            # terminal event is exactly what marks it for re-run.
+            raise
         except BaseException as exc:  # noqa: BLE001 - recorded, never swallowed
             seconds = self.clock.monotonic() - started
             outcome = StageOutcome(stage.stage_id, STATE_FAILED, seconds=seconds,

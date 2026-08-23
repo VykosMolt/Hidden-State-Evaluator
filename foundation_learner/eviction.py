@@ -59,8 +59,19 @@ def install_eviction_handler(grace_seconds: float = 5.0) -> None:
                 os.kill(kid, signal.SIGTERM)
             except OSError:
                 pass
+        # Reap as we wait.  A SIGTERM'd child becomes a ZOMBIE with its
+        # ppid intact -- nothing reaps it, because the parent is sitting in
+        # this handler -- so polling direct_children() alone always burned
+        # the full grace period out of a possibly-30-s eviction window.
         deadline = time.time() + grace_seconds
-        while time.time() < deadline and direct_children(os.getpid()):
+        while time.time() < deadline:
+            try:
+                while os.waitpid(-1, os.WNOHANG)[0]:
+                    pass
+            except (ChildProcessError, OSError):
+                pass
+            if not direct_children(os.getpid()):
+                break
             time.sleep(0.2)
         raise EvictedBySignal(
             f"SIGTERM (signal {signum}): the pod is being evicted")

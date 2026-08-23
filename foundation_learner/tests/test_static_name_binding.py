@@ -23,8 +23,21 @@ _FL_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 #: (source, expected unbound globals, expected may-be-unbound locals)
 _SELF_TEST_FIXTURES = (
+    # --- true positives: these really do raise at runtime ---
     ("def f():\n    return missing_name\n", 1, 0),
     ("def f():\n    print(x)\n    x = 1\n", 0, 1),
+    # branch-only binding: the most common UnboundLocalError shape
+    ("def f(c):\n    if c:\n        x = 1\n    return x\n", 0, 1),
+    ("def f(g):\n    try:\n        d = g()\n    except ValueError:\n"
+     "        pass\n    return d\n", 0, 1),
+    ("def f(xs, g):\n    for _ in xs:\n        s = g()\n    return s\n", 0, 1),
+    # bound ONLY under TYPE_CHECKING / a swallowed import: absent at runtime,
+    # the same shape as the sha256_file bug this guard exists for
+    ("from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    import foo\n"
+     "def f():\n    return foo.bar()\n", 1, 0),
+    ("try:\n    import foo\nexcept ImportError:\n    pass\n"
+     "def f():\n    return foo.bar()\n", 1, 0),
+    # --- true negatives: flagging any of these would make the guard a liar ---
     ("def f(x):\n    print(x)\n    x = 2\n", 0, 0),
     ("g = 1\ndef f():\n    global g\n    print(g)\n    g = 2\n", 0, 0),
     ("def o():\n    v = 1\n    def i():\n        return v\n    return i\n", 0, 0),
@@ -32,8 +45,19 @@ _SELF_TEST_FIXTURES = (
      "    rec('a', 1)\n", 0, 0),
     ("def m(t):\n    if t:\n        def g():\n            return 1\n"
      "        return g\n    def g():\n        return 2\n    return g\n", 0, 0),
+    ("def f(c):\n    if c:\n        x = 1\n    else:\n        x = 2\n"
+     "    return x\n", 0, 0),
+    ("def f(g):\n    try:\n        d = g()\n    except ValueError:\n"
+     "        raise RuntimeError('x')\n    return d\n", 0, 0),
+    ("def f(g):\n    try:\n        out = g()\n    finally:\n        pass\n"
+     "    return out\n", 0, 0),
+    ("def f(g):\n    for _ in range(64):\n        s = g()\n        break\n"
+     "    return s\n", 0, 0),
     ("def f():\n    for _ in range(3):\n        try:\n            print(t)\n"
      "        except NameError:\n            pass\n        t = 1\n", 0, 0),
+    ("try:\n    import foo\nexcept ImportError:\n    foo = None\n"
+     "def f():\n    return foo\n", 0, 0),
+    ("import os\ndef f():\n    return os.sep\n", 0, 0),
     ("def f(xs):\n    return [y for y in xs]\n", 0, 0),
     ("def f():\n    return len([1])\n", 0, 0),
 )

@@ -69,6 +69,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 from ..ecology.base import sha256_file, sha256_tree
 from . import o1_isolation, result_verifier
+from ..eviction import EvictedBySignal
 from .redaction import redact
 from .scheduler import MonotonicClock, Scheduler
 from .stage_definitions import StageContext
@@ -125,6 +126,11 @@ TRANSFER_TIMEOUT_SECONDS = 900.0
 #: stamp O1_POD_ENTRY_EPOCH so the measured container uptime is used when
 #: larger.
 PROVISIONING_ALLOWANCE_SECONDS = 1200.0
+
+#: Below this the O1 phase cannot reach even its own affordability
+#: gate, so spawning it only converts budget exhaustion into a
+#: timeout that reads as a deterministic defect.
+MIN_O1_PHASE_SECONDS = 300.0
 #: Least FL time a real combined session must leave after the O1 timeout:
 #: the frozen final-transfer reserve (1200 s) plus one minimal stage.
 FL_MINIMUM_SECONDS_DEFAULT = 1200.0 + 1800.0
@@ -142,6 +148,17 @@ CLOSE_O1_TIMEOUT_SECONDS = 900.0
 
 class SupervisorError(RuntimeError):
     """A supervisor invariant refused."""
+
+
+class BudgetDependentAbort(SupervisorError):
+    """An abort whose outcome depends on THIS pod's allowance or throughput.
+
+    Reported with a marker suffix the off-pod driver recognises, so it stops
+    the session WITHOUT condemning the deployment: a replacement pod restores
+    the pre-calibration phase from the durable store and therefore has more
+    time, and an operator who raises the budget has changed the very input
+    the refusal was a function of.
+    """
 
 
 class TransientO1Failure(SupervisorError):
@@ -678,17 +695,35 @@ class SessionSupervisor:
                 restored[state] = record["result"]
                 stamps[state] = record.get("utc")
         self.state_results.update(restored)
-        # Reuse the provisioning charge frozen by the ORIGINAL START_SESSION.
-        # Re-measuring here would read the container uptime, which on a
-        # resume already contains the O1 phase -- the same double charge
-        # that starved the ladder before.
+        # Reuse the frozen provisioning charge ONLY on the SAME pod.  On the
+        # same pod, re-measuring would read a container uptime that already
+        # contains the O1 phase -- the double charge that starved the ladder.
+        # On a REPLACEMENT pod the journalled figure describes a DIFFERENT
+        # container: the new pod paid its own cold image pull, 5 GB
+        # checkpoint fetch and pregen fetch, and inheriting the old (smaller)
+        # charge over-grants the ladder time that does not exist.  A fresh
+        # O1_POD_ENTRY_EPOCH is stamped per container, so re-measuring is
+        # both correct and cheap there.
         start = restored.get("START_SESSION")
-        if isinstance(start, Mapping) and self._provisioning_seconds is None:
+        started_pod = None
+        compute_prior = restored.get("COMPUTE_REMAINING_AUTHORIZED_TIME")
+        if isinstance(compute_prior, Mapping):
+            started_pod = compute_prior.get("pod_id")
+        this_pod_id = os.environ.get(POD_ID_ENV) or None
+        same_pod_now = bool(started_pod) and started_pod == this_pod_id
+        if (isinstance(start, Mapping) and self._provisioning_seconds is None
+                and same_pod_now):
             try:
-                self._provisioning_seconds = float(
-                    start["provisioning_seconds"])
+                value = float(start["provisioning_seconds"])
             except (KeyError, TypeError, ValueError):
-                pass
+                value = None
+            if value is not None:
+                # Clamp: the journal is restored from the durable mirror, so
+                # a corrupt or absurd value must not drive the O1 bound
+                # negative (instant kill) or the FL allowance to zero.
+                pod_limit = self._raw_pod_limit_seconds()
+                ceiling = pod_limit if pod_limit else value
+                self._provisioning_seconds = max(0.0, min(value, ceiling))
         report = {"restored_states": sorted(restored),
                   "available_foundation_learner_seconds": None}
         compute = restored.get("COMPUTE_REMAINING_AUTHORIZED_TIME")
@@ -818,7 +853,26 @@ class SessionSupervisor:
             reserve = float(self.payload.get("fl_minimum_seconds")
                             or FL_MINIMUM_SECONDS_DEFAULT)
             usable = pod_limit - self._provisioning_charge() - reserve
+            budget_bound = max(0.0, usable - self._elapsed())
             bound = max(0.0, min(usable, float(timeout)) - self._elapsed())
+            # Refuse BEFORE spawning when the BUDGET is what ran out.  A ~0
+            # bound became subprocess timeout=0, which raises TimeoutExpired
+            # after ~1 ms -- an instant kill reported as
+            # ABORTED_AT_RUN_O1_CALIBRATION.  Budget exhaustion must refuse
+            # cheaply and leave the deployment usable.
+            #
+            # Only the BUDGET-derived bound is tested, and only when this pod
+            # actually declared an allowance.  A deliberately short
+            # o1_timeout_seconds (rehearsals, tests, a quick smoke run) is an
+            # operator choice, not exhaustion, and refusing it would break
+            # every configuration that legitimately bounds O1 below the floor.
+            if inherited and budget_bound < MIN_O1_PHASE_SECONDS \
+                    and not self.rehearsal:
+                raise BudgetDependentAbort(
+                    f"{state}: only {budget_bound:.0f}s of the pod allowance "
+                    f"remain after provisioning and the FL reserve, below the "
+                    f"{MIN_O1_PHASE_SECONDS:.0f}s the O1 phase needs to do "
+                    f"anything; refusing to spend on a phase that cannot run")
             env[POD_AUTHORIZED_SECONDS_ENV] = str(int(bound))
             env["O1_PHASE_BOUND_BY_FL"] = "1"
             # kill the child at the same bound: leaving the raw o1_timeout
@@ -833,9 +887,20 @@ class SessionSupervisor:
         # streamed: O1's completion markers must be namespaced before they
         # reach the container log, or the off-pod driver terminates the pod
         # the moment the O1 phase ends.)
-        proc = self.runner(command, shell=shell, capture_output=True,
-                           timeout=timeout, env=env,
-                           cwd=self.payload.get("o1_workdir") or None)
+        try:
+            proc = self.runner(command, shell=shell, capture_output=True,
+                               timeout=timeout, env=env,
+                               cwd=self.payload.get("o1_workdir") or None)
+        except subprocess.TimeoutExpired as exc:
+            # Running out the clock is a function of THIS pod's allowance and
+            # measured throughput, not of the deployment.  Left as a plain
+            # TimeoutExpired it became ABORTED_AT_RUN_O1_CALIBRATION, which
+            # the driver records as a PERMANENT deterministic refusal -- the
+            # most likely instance of exactly the class that rule exists to
+            # exclude.
+            raise BudgetDependentAbort(
+                f"{state}: the O1 phase reached its bound "
+                f"({timeout:.0f}s) and was stopped") from exc
         seconds = self.clock.monotonic() - started
         # RE-EMIT the child's output on our own streams.  capture_output
         # swallowed it entirely, and O1's completion markers
@@ -1058,6 +1123,30 @@ class SessionSupervisor:
                                      else "rehearsal stand-in tree hash"),
                 "rehearsal": self.rehearsal}
 
+    def _raw_pod_limit_seconds(self) -> float:
+        """This pod's allowance from the env, unreduced.  0.0 when absent."""
+        raw = os.environ.get(POD_AUTHORIZED_SECONDS_ENV, "").strip()
+        try:
+            return max(0.0, float(raw)) if raw else 0.0
+        except ValueError:
+            return 0.0
+
+    def _wall_elapsed_since_start_session(self) -> float | None:
+        """Wall seconds since START_SESSION, from this pod's own clock.
+
+        Container uptime minus the provisioning charge.  Immune to a _t0
+        reset, so a restart cannot silently re-grant time already billed.
+        Returns None when the entry never stamped an epoch.
+        """
+        stamp = os.environ.get("O1_POD_ENTRY_EPOCH", "").strip()
+        if not stamp:
+            return None
+        try:
+            uptime = time.time() - float(stamp)
+        except ValueError:
+            return None
+        return max(0.0, uptime - self._provisioning_charge())
+
     def _measure_provisioning(self) -> float:
         """Pre-supervisor overhead: POD CREATION -> START_SESSION.
 
@@ -1128,7 +1217,17 @@ class SessionSupervisor:
 
     def state_COMPUTE_REMAINING_AUTHORIZED_TIME(self) -> dict:
         authorized, source = self._pod_authorized_seconds()
+        # _elapsed() is monotonic since _t0, and run() resets _t0 on every
+        # restart -- so a process that died anywhere between the O1 phase
+        # completing and this state completing came back with elapsed ~= 0
+        # and handed the ladder the WHOLE post-provisioning allowance,
+        # ignoring the hours O1 had already burned on this same pod.  The
+        # pod's own wall clock cannot be reset that way, so take whichever
+        # says MORE time is gone.
         elapsed = self._elapsed()
+        wall = self._wall_elapsed_since_start_session()
+        if wall is not None and wall > elapsed:
+            elapsed = wall
         available = max(0.0, authorized - elapsed)
         record = {
             "session_authorized_seconds": authorized,
@@ -1327,7 +1426,14 @@ class SessionSupervisor:
         elif failed_state == "RUN_FL_LADDER" and isinstance(
                 failure_exc, NoStageAdmitted):
             outcome = "NO_STAGE_ADMITTED"
-        elif isinstance(failure_exc, TransientO1Failure):
+        elif isinstance(failure_exc, (TransientO1Failure, EvictedBySignal)):
+            # An eviction is INFRASTRUCTURE, never a deterministic defect.
+            # Classifying it as ABORTED_AT_<state> made the off-pod driver
+            # raise DeterministicPodFailure, refuse to reacquire, and write
+            # the durable refusal marker -- so a normal spot eviction at hour
+            # 4 killed the session AND blocked every future run until a human
+            # deleted a file.  That is worse than the default SIGTERM
+            # disposition this handler replaced.
             outcome = f"ABORTED_TRANSIENT_AT_{failed_state}"
         else:
             outcome = f"ABORTED_AT_{failed_state}"
@@ -1337,7 +1443,12 @@ class SessionSupervisor:
             "label": self.label(),
             "rehearsal": self.rehearsal,
             "outcome": outcome,
-            "transient": isinstance(failure_exc, TransientO1Failure),
+            "transient": isinstance(
+                failure_exc, (TransientO1Failure, EvictedBySignal)),
+            # the DRIVER cannot see the exception type, only the marker line,
+            # so the classification has to travel in the marker itself
+            "budget_dependent": isinstance(
+                failure_exc, (BudgetDependentAbort, NoStageAdmitted)),
             "failed_state": failed_state,
             "failure": failure,
             "states_completed": list(self.completed),
@@ -1423,8 +1534,13 @@ def _session_marker(status: Mapping[str, Any]) -> str:
     """
     if status.get("outcome") == "COMPLETE":
         return "ZERO_TOUCH_COMPLETE"
-    return "ZERO_TOUCH_ABORTED_AT_" + str(
-        status.get("failed_state") or status.get("outcome") or "SUPERVISOR")
+    state = str(status.get("failed_state") or status.get("outcome")
+                or "SUPERVISOR")
+    if status.get("budget_dependent"):
+        # the driver keys on this suffix to stop the session without
+        # recording a permanent, deployment-wide refusal
+        state += "_BUDGET_DEPENDENT"
+    return "ZERO_TOUCH_ABORTED_AT_" + state
 
 
 def _ladder_admitted_a_stage(summary: Any) -> bool:
@@ -1482,7 +1598,7 @@ _TRANSIENT_ERRNOS = frozenset({
 
 
 def _transient_setup_error(exc: BaseException) -> bool:
-    if isinstance(exc, MemoryError):
+    if isinstance(exc, (MemoryError, EvictedBySignal)):
         return True
     return isinstance(exc, OSError) and exc.errno in _TRANSIENT_ERRNOS
 
