@@ -1008,14 +1008,31 @@ def run_extra(r: Runner) -> Runner:
         # claims and still passes what it must not flag
         import tempfile
         fixtures = (
+            # true positives -- each of these really raises at runtime
             ("def f():\n    return missing_name\n", 1, 0),
             ("def f():\n    print(x)\n    x = 1\n", 0, 1),
+            ("def f(c):\n    if c:\n        x = 1\n    return x\n", 0, 1),
+            ("def f(g):\n    try:\n        d = g()\n    except ValueError:\n"
+             "        pass\n    return d\n", 0, 1),
+            ("from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n"
+             "    import foo\ndef f():\n    return foo.bar()\n", 1, 0),
+            ("try:\n    import foo\nexcept ImportError:\n    pass\n"
+             "def f():\n    return foo.bar()\n", 1, 0),
+            # true negatives -- flagging any of these makes the guard a liar
             ("def f(x):\n    print(x)\n    x = 2\n", 0, 0),
             ("def m():\n    d = {}\n    def rec(name, ok):\n"
              "        d[name] = ok\n    rec('a', 1)\n", 0, 0),
             ("def m(t):\n    if t:\n        def g():\n            return 1\n"
              "        return g\n    def g():\n        return 2\n"
              "    return g\n", 0, 0),
+            ("def f(c):\n    if c:\n        x = 1\n    else:\n"
+             "        x = 2\n    return x\n", 0, 0),
+            ("def f(g):\n    try:\n        d = g()\n    except ValueError:\n"
+             "        raise RuntimeError('x')\n    return d\n", 0, 0),
+            ("def f(g):\n    try:\n        out = g()\n    finally:\n"
+             "        pass\n    return out\n", 0, 0),
+            ("def f(g):\n    for _ in range(64):\n        s = g()\n"
+             "        break\n    return s\n", 0, 0),
             ("def f():\n    for _ in range(3):\n        try:\n"
              "            print(t)\n        except NameError:\n"
              "            pass\n        t = 1\n", 0, 0),
@@ -1043,6 +1060,57 @@ def run_extra(r: Runner) -> Runner:
             "as a local (NameError and UnboundLocalError), checker "
             "self-validated against known positives and negatives",
             u1_no_handler_reaches_for_an_unbound_name)
+
+    # ---------- cloud review round 2: sweep scoping + abort classes -------
+
+    def u2_the_leftover_sweep_only_terminates_our_own_pods():
+        """The sweep took EVERY non-terminated pod on the account, so an
+        unrelated pod the operator started during a multi-hour session was
+        destroyed by a driver exception that had nothing to do with it."""
+        from o1_b200.provider.runpod.pod_request import POD_NAME
+        from o1_b200.provider.runpod.zero_touch import pod_is_ours
+
+        class _Pod:
+            def __init__(self, name, env=None):
+                self.name = name
+                self.extra = {"env": env} if env is not None else {}
+
+        nonce = "launch-nonce-aaaaaaaaaaaa"
+        assert pod_is_ours(_Pod(POD_NAME, {"O1_LAUNCH_NONCE": nonce}), nonce)
+        assert not pod_is_ours(
+            _Pod(POD_NAME, {"O1_LAUNCH_NONCE": "a-different-launch"}), nonce), \
+            "a pod proven to belong to another launch must not be terminated"
+        assert not pod_is_ours(_Pod("someone-elses-pod"), nonce), \
+            "a foreign pod must never be terminated by this driver"
+        # env is not always exposed by the REST surface; our own name then
+        # decides, because leaving one of OURS billing is the worse error
+        assert pod_is_ours(_Pod(POD_NAME), nonce)
+
+    r.check("the leftover sweep terminates only this session's pods and "
+            "never a foreign one", u2_the_leftover_sweep_only_terminates_our_own_pods)
+
+    def u3_only_the_pod_may_declare_an_abort_budget_dependent():
+        """Exempting RUN_FL_LADDER by NAME covered the state with the largest
+        deterministic-failure surface -- a real ladder bug, a corrupt
+        checkpoint, a missing shard -- so those would be paid for again on
+        every re-run.  Only the pod knows the exception type, so it says so
+        in the marker and the driver keys on that."""
+        from o1_b200.provider.runpod.zero_touch import _is_budget_dependent
+
+        # a plain ladder abort is a DEFECT: record it, never pay twice
+        assert not _is_budget_dependent("RUN_FL_LADDER")
+        assert not _is_budget_dependent("COMPUTE_REMAINING_AUTHORIZED_TIME")
+        assert not _is_budget_dependent("RUN_O1_CALIBRATION")
+        assert not _is_budget_dependent("HARDWARE_GATE")
+        # ...but the same state, declared budget-dependent BY THE POD, is a
+        # function of this pod's allowance and must not condemn the deployment
+        assert _is_budget_dependent("RUN_FL_LADDER_BUDGET_DEPENDENT")
+        assert _is_budget_dependent("RUN_O1_CALIBRATION_BUDGET_DEPENDENT")
+        assert _is_budget_dependent("CALIBRATION_AFFORDABILITY_CHECK")
+
+    r.check("a permanent refusal is recorded for defects but never for "
+            "budget-dependent aborts the pod declares",
+            u3_only_the_pod_may_declare_an_abort_budget_dependent)
 
     return r
 

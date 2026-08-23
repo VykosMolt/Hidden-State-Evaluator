@@ -16,13 +16,31 @@
       "passed": 7
     },
     {
-      "checks": [],
-      "failed": 1,
-      "failures": [
-        "test_records: module process died (rc=1)"
+      "checks": [
+        "schema: every record carries the full canonical field set",
+        "a genuine record passes full recomputation",
+        "HOSTILE forged well_formed is caught",
+        "HOSTILE forged verifier_correct is caught",
+        "HOSTILE forged R is caught",
+        "HOSTILE changed text with stale hash is caught",
+        "HOSTILE changed tokens with stale hash is caught",
+        "HOSTILE record edited without rehash is caught",
+        "HOSTILE changed alpha is caught",
+        "HOSTILE changed sign is caught",
+        "HOSTILE changed direction/axis is caught",
+        "HOSTILE changed stream is caught",
+        "HOSTILE changed seed is caught",
+        "HOSTILE changed task-content hash is caught",
+        "HOSTILE changed package identity is caught",
+        "HOSTILE changed precommit/binding identity is caught",
+        "HOSTILE forged repetition flag is caught",
+        "HOSTILE baseline transport must be null",
+        "stored booleans can never override recomputed values"
       ],
+      "failed": 0,
+      "failures": [],
       "module": "test_records",
-      "passed": 0
+      "passed": 19
     },
     {
       "checks": [
@@ -120,12 +138,10 @@
         "benchmark harness dress rehearsal (serial + replica w2/w4) collects metrics on the corpus",
         "throughput stability is a time-windowed token rate, burst-safe and blind to corpus ordering"
       ],
-      "failed": 1,
-      "failures": [
-        "benchmark harness dress rehearsal (serial + replica w2/w4) collects metrics on the corpus"
-      ],
+      "failed": 0,
+      "failures": [],
       "module": "test_corpus_and_policies",
-      "passed": 10
+      "passed": 11
     },
     {
       "checks": [
@@ -154,16 +170,10 @@
         "HOSTILE attempted confirmation launch despite authorization=false is refused",
         "HOSTILE real O1 calibration binding is refused by the local machine unconditionally"
       ],
-      "failed": 5,
-      "failures": [
-        "full mocked end-to-end dress rehearsal reaches COMPLETE with confirmed termination, machine-readable status and REAL gate derivation over the local benchmark",
-        "failure injected at EVERY state: later states never begin, termination is requested, status is machine-readable",
-        "valid completed synthetic records survive a downstream failure",
-        "HOSTILE attempted confirmation launch despite authorization=false is refused",
-        "HOSTILE real O1 calibration binding is refused by the local machine unconditionally"
-      ],
+      "failed": 0,
+      "failures": [],
       "module": "test_state_machine",
-      "passed": 2
+      "passed": 7
     },
     {
       "checks": [
@@ -337,14 +347,13 @@
         "a session prefix in the durable destination scopes every key, so a fresh run cannot silently resume an old one",
         "an expired authorization still permits TERMINATION while refusing acquisition"
       ],
-      "failed": 3,
+      "failed": 2,
       "failures": [
         "ARTIFACT_VERIFY consumes an hf:// artifact source by cross-checking the fetch report, never as a manifest path",
-        "the transfer manifests describe the committed tree (pod ARTIFACT_VERIFY would pass)",
-        "the image record's FL digest describes the FL tree the build would actually stage"
+        "the transfer manifests describe the committed tree (pod ARTIFACT_VERIFY would pass)"
       ],
       "module": "test_launch_path",
-      "passed": 30
+      "passed": 31
     },
     {
       "checks": [
@@ -406,12 +415,14 @@
         "NEW#6. a failure between pod creation and watchdog arming terminates the pod instead of orphaning it",
         "NEW#7. monitor is bounded: a pod that never completes is terminated rather than paid for to the budget",
         "NEW#11. a duplicated profile preference is refused",
-        "every name a function reads is actually bound, as a global or as a local (NameError and UnboundLocalError), checker self-validated against known positives and negatives"
+        "every name a function reads is actually bound, as a global or as a local (NameError and UnboundLocalError), checker self-validated against known positives and negatives",
+        "the leftover sweep terminates only this session's pods and never a foreign one",
+        "a permanent refusal is recorded for defects but never for budget-dependent aborts the pod declares"
       ],
       "failed": 0,
       "failures": [],
       "module": "test_review_repairs",
-      "passed": 31
+      "passed": 33
     },
     {
       "checks": [
@@ -427,25 +438,19 @@
       "passed": 5
     },
     {
-      "checks": [
-        "the real FL supervisor emits exactly one driver marker, at the session's end",
-        "a pod evicted after the O1 phase (FL half unfinished, O1 archive already durable) is REACQUIRED, never reported COMPLETE",
-        "a combined session with the log endpoint down and the O1 archive durable is never reported COMPLETE",
-        "the pinned text/event-stream log shape yields the verdict",
-        "the full combined log yields COMPLETE with one acquisition and a terminated pod",
-        "a deterministic FL-half abort stops the session after ONE paid acquisition",
-        "the entrypoint's recursion guard is present before the FL dispatch (static)"
+      "checks": [],
+      "failed": 1,
+      "failures": [
+        "test_combined_session_seam: module process died (rc=1)"
       ],
-      "failed": 0,
-      "failures": [],
       "module": "test_combined_session_seam",
-      "passed": 7
+      "passed": 0
     }
   ],
   "schema": "o1b200.test_report.v1",
   "scope_note": "Hardware-independent local validation only: synthetic runtime + non-O1 corpus + mocked provider/clock. No B200 hardware claim is made or implied.",
-  "total_failed": 10,
-  "total_passed": 259,
-  "utc": "2026-08-23T20:40:27Z",
-  "verdict": "10 FAILURES"
+  "total_failed": 3,
+  "total_passed": 280,
+  "utc": "2026-08-23T21:51:12Z",
+  "verdict": "3 FAILURES"
 }

@@ -22,7 +22,23 @@ PY = sys.executable
 #: identity the build records -- a digest covering its own record could never
 #: be re-synced without changing itself.
 _SOURCE_HASH_SUFFIXES = (".py", ".sh")
-_SOURCE_HASH_SKIP_DIRS = ("__pycache__", "reports", "preserved_attempts")
+_SOURCE_HASH_SKIP_DIRS = ("__pycache__", "reports")
+
+#: Directories whose EVERY file is baked by `COPY o1_b200` and read at
+#: runtime on the pod, whatever the extension.  A .py/.sh-only identity left
+#: the frozen benchmark order, the frozen backend-selection policy and the
+#: validation corpus outside the hash, so the image could differ from the
+#: reviewed tree in exactly the content that decides the science.
+_SOURCE_HASH_DIRS = ("policies", "corpus")
+
+#: Excluded because they RECORD or are derived from this hash, or are
+#: rewritten after the push: including them would make the identity
+#: unreachable (a digest covering its own record has no fixed point).
+_SOURCE_HASH_SKIP_FILES = frozenset({
+    "provider/runpod/CONTAINER_IMAGE_RECORD.json",
+    "provider/runpod/RUNPOD_SESSION_CONFIG.json",
+    "SHA256SUMS",
+})
 
 
 def _o1_source_tree_sha256(root: str | None = None) -> str:
@@ -40,10 +56,15 @@ def _o1_source_tree_sha256(root: str | None = None) -> str:
         dirnames[:] = sorted(d for d in dirnames
                              if d not in _SOURCE_HASH_SKIP_DIRS)
         for name in filenames:
-            if not name.endswith(_SOURCE_HASH_SUFFIXES):
-                continue
             full = os.path.join(dirpath, name)
-            entries.append((os.path.relpath(full, base), full))
+            rel = os.path.relpath(full, base)
+            if rel.replace(os.sep, "/") in _SOURCE_HASH_SKIP_FILES:
+                continue
+            in_runtime_dir = rel.replace(os.sep, "/").split("/")[0] in \
+                _SOURCE_HASH_DIRS
+            if not (name.endswith(_SOURCE_HASH_SUFFIXES) or in_runtime_dir):
+                continue
+            entries.append((rel, full))
     outer = hashlib.sha256()
     for rel, full in sorted(entries, key=lambda e: e[0].encode()):
         with open(full, "rb") as fh:

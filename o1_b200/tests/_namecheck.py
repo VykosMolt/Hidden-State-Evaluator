@@ -73,6 +73,50 @@ def _nested_scope_bindings(fn):
     return binds
 
 
+def _module_binds(stmts):
+    """Names bound by a flat list of module-level statements."""
+    names = set()
+    for n in stmts:
+        for sub in ast.walk(n):
+            if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                ast.ClassDef)):
+                names.add(sub.name)
+            elif isinstance(sub, (ast.Import, ast.ImportFrom)):
+                for al in sub.names:
+                    names.add((al.asname or al.name).split(".")[0])
+            elif isinstance(sub, ast.Name) and isinstance(sub.ctx, ast.Store):
+                names.add(sub.id)
+    return names
+
+
+def _conditionally_bound_module_names(tree):
+    """Module names whose ONLY binding is conditional at runtime."""
+    unconditional, conditional = set(), set()
+    for node in tree.body:
+        if isinstance(node, ast.If):
+            test = ast.dump(node.test)
+            if "TYPE_CHECKING" in test:
+                conditional |= _module_binds(node.body)
+                unconditional |= _module_binds(node.orelse)
+            else:
+                unconditional |= _module_binds([node])
+        elif isinstance(node, ast.Try):
+            handled = any(
+                h.type is not None
+                and "ImportError" in ast.dump(h.type)
+                or "ModuleNotFoundError" in ast.dump(h.type or ast.Pass())
+                for h in node.handlers)
+            if handled:
+                conditional |= _module_binds(node.body)
+                for h in node.handlers:
+                    unconditional |= _module_binds(h.body)
+            else:
+                unconditional |= _module_binds([node])
+        else:
+            unconditional |= _module_binds([node])
+    return conditional - unconditional
+
+
 def unbound_globals(path):
     """Names a function reads as a global that exist in no scope."""
     with open(path, encoding="utf-8") as fh:
@@ -81,6 +125,12 @@ def unbound_globals(path):
     bound = {s.get_name() for s in top.get_symbols()
              if s.is_assigned() or s.is_imported() or s.is_namespace()}
     bound |= IMPLICIT_MODULE_NAMES
+    # symtable marks a name "assigned" even when the ONLY binding is inside
+    # `if TYPE_CHECKING:` (false at runtime) or a module-level
+    # `try: import x / except ImportError: pass`.  Both leave the name
+    # genuinely absent at runtime -- the same shape as the sha256_file bug
+    # this guard exists for -- so they do not count as bound.
+    bound -= _conditionally_bound_module_names(ast.parse(src))
     found, stack = [], [top]
     while stack:
         table = stack.pop()
@@ -93,6 +143,87 @@ def unbound_globals(path):
                     and not hasattr(builtins, sym.get_name())):
                 found.append(f"{table.get_name()}() -> {sym.get_name()}")
     return found
+
+
+def _definitely_bound(nodes, name):
+    """True when some construct binds ``name`` on EVERY path through it.
+
+    An if/else that binds in both branches, or a try/except where the body
+    and every handler bind, leaves the name defined however control flowed.
+    Without this the branch-only check reports definite assignments.
+    """
+    def binds(stmts):
+        return name in _module_binds(stmts or [])
+
+    def ok(stmts):
+        """This path either binds the name or never falls through."""
+        return binds(stmts) or _terminates(stmts)
+
+    for n in nodes:
+        if isinstance(n, ast.If) and n.orelse:
+            if binds(n.body) and ok(n.orelse):
+                return True
+            if binds(n.orelse) and ok(n.body):
+                return True
+        if isinstance(n, ast.Try):
+            # No handlers (try/finally only): an exception propagates, so
+            # reaching the code after the construct proves the body ran to
+            # completion and the binding happened.
+            if binds(n.body) and not n.handlers:
+                return True
+            if (binds(n.body) and n.handlers
+                    and all(ok(h.body) for h in n.handlers)):
+                return True
+        if isinstance(n, (ast.For, ast.AsyncFor)) and n.orelse:
+            if binds(n.body) and ok(n.orelse):
+                return True
+        if isinstance(n, ast.For) and binds(n.body) \
+                and _always_iterates(n.iter):
+            return True
+    return False
+
+
+def _always_iterates(node):
+    """True when this iterable is provably non-empty at parse time.
+
+    ``for _ in range(64): x = ...`` binds x -- the loop cannot be skipped.
+    Only literals count; anything computed is treated as possibly empty.
+    """
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        return len(node.elts) > 0
+    if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "range":
+        args = node.args
+        if len(args) == 1 and isinstance(args[0], ast.Constant):
+            return isinstance(args[0].value, int) and args[0].value > 0
+        if len(args) >= 2 and all(isinstance(a, ast.Constant) for a in args[:2]):
+            lo, hi = args[0].value, args[1].value
+            if isinstance(lo, int) and isinstance(hi, int):
+                return hi > lo
+    return False
+
+
+def _terminates(stmts):
+    """True when this block cannot fall through to the following statement.
+
+    A handler that re-raises, returns, breaks or continues never reaches the
+    code after the construct, so it does not need to bind the name for a
+    later read to be safe.  Without this, the overwhelmingly common
+    ``try: x = f() / except E: raise ...`` shape reads as a defect.
+    """
+    for n in reversed(stmts or []):
+        if isinstance(n, (ast.Raise, ast.Return, ast.Continue, ast.Break)):
+            return True
+        if isinstance(n, ast.If) and n.orelse:
+            if _terminates(n.body) and _terminates(n.orelse):
+                return True
+        if isinstance(n, ast.Expr) and isinstance(n.value, ast.Call):
+            fn = n.value.func
+            nm = getattr(fn, "id", None) or getattr(fn, "attr", None)
+            if nm in ("exit", "_exit"):
+                return True
+        if not isinstance(n, ast.Pass):
+            break
+    return False
 
 
 def unbound_locals(path):
@@ -143,6 +274,32 @@ def unbound_locals(path):
                 continue
             found.append(f"{fn.name}() -> {name} (read line {n.lineno}, "
                          f"first bound line {first})")
+        # Branch-only bindings: EVERY binding sits inside a conditional and
+        # the read does not.  Line order cannot see this -- it is the most
+        # common UnboundLocalError shape there is.
+        cond_spans = [(n.lineno, n.end_lineno) for n in nodes
+                      if isinstance(n, (ast.If, ast.Try, ast.While,
+                                        ast.For, ast.AsyncFor))]
+        for name, blines in binds.items():
+            if name in params or name in declared:
+                continue
+            if not blines or not cond_spans:
+                continue
+            if not all(any(lo <= b <= hi for lo, hi in cond_spans)
+                       for b in blines):
+                continue                     # some binding is unconditional
+            if _definitely_bound(nodes, name):
+                continue     # every path through some construct binds it
+            for n in nodes:
+                if not (isinstance(n, ast.Name)
+                        and isinstance(n.ctx, ast.Load) and n.id == name):
+                    continue
+                if any(lo <= n.lineno <= hi for lo, hi in cond_spans):
+                    continue                 # read is guarded too
+                found.append(
+                    f"{fn.name}() -> {name} (read line {n.lineno} is not "
+                    f"guarded, but every binding is conditional)")
+                break
     return found
 
 

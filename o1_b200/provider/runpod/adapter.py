@@ -479,10 +479,17 @@ class RunpodV2Adapter:
         # fail-closed guard in _persisted_carryover at the one place it
         # mattered: the pre-create budget gate passed with spend 0, the pod
         # was created, and _arm_spend -- which reads the ledger directly --
-        # then raised AFTER a live pod existed.  Every caller is safe:
-        # the two pre-create sites refuse without creating anything, and the
-        # two in lifecycle._arm_and_return are wrapped by provision(), which
-        # terminates the pod for anything raised inside it.
+        # then raised AFTER a live pod existed.
+        #
+        # Callers: two are pre-create and refuse without creating anything;
+        # two are in lifecycle._arm_and_return, which provision() wraps in a
+        # terminating try.  The FIFTH is _arm_spend below, reached from
+        # create_instance AFTER the pod exists and OUTSIDE that try -- so a
+        # raise there escapes provision() with pod_id still None.  That
+        # orphan path predates this change (the very next line already read
+        # the ledger directly and raised), but it is real: zero_touch's
+        # BudgetViolation handler therefore sweeps for leftovers and reports
+        # ABORTED_CREATE_OUTCOME_UNKNOWN rather than claiming nothing bills.
         persisted = self._persisted_carryover()
         return max(as_money(in_memory), persisted)
 

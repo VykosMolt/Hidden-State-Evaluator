@@ -60,9 +60,16 @@ from .redaction import redact, register_env_secrets
 #: session has changed the very input the refusal was a function of.
 #: Recording them durably meant an unattended driver needed a human to delete
 #: a file before it would ever run again.
+#: RUN_FL_LADDER and COMPUTE_REMAINING_AUTHORIZED_TIME are deliberately NOT
+#: listed.  Exempting them wholesale covered the two states with the LARGEST
+#: deterministic-failure surfaces -- a real ladder bug, a corrupt checkpoint,
+#: a missing pregen shard, an unset O1_SESSION_AUTHORIZED_SECONDS -- so those
+#: would have been paid for again on every re-run.  The POD knows which of
+#: its aborts are budget-dependent (it has the exception type) and says so by
+#: appending _BUDGET_DEPENDENT to its marker; the driver keys on that rather
+#: than guessing from a state name.
 BUDGET_DEPENDENT_ABORT_STATES = frozenset({
     "AFFORDABILITY", "AFFORDABILITY_GATE", "BUDGET", "BUDGET_EXHAUSTED",
-    "COMPUTE_REMAINING_AUTHORIZED_TIME", "RUN_FL_LADDER",
 })
 
 
@@ -71,7 +78,8 @@ def _is_budget_dependent(verdict: str) -> bool:
     if name in BUDGET_DEPENDENT_ABORT_STATES:
         return True
     return any(tok in name for tok in
-               ("AFFORD", "BUDGET", "ALLOWANCE", "UNAFFORDABLE"))
+               ("AFFORD", "BUDGET_DEPENDENT", "BUDGET", "ALLOWANCE",
+                "UNAFFORDABLE"))
 
 
 class DeterministicPodFailure(RuntimeError):
@@ -114,6 +122,29 @@ _WITNESS_RE = re.compile(
     r"^[ \t]*(?:[\[(][^\])\n]*[\])][ \t]*)?(?:\d[\dT:.\-Z+]*[ \t]+)?"
     r"ZERO_TOUCH_(COMPLETE|ABORTED_AT_([A-Z0-9_]+))[ \t\r]*$",
     re.MULTILINE)
+
+
+def pod_is_ours(pod, nonce: str | None) -> bool:
+    """Whether this pod belongs to THIS session.
+
+    Only our pods may be terminated by the leftover sweep.  The sweep used to
+    take every non-TERMINATED pod on the account, so an unrelated pod the
+    operator started during a multi-hour session was destroyed by a driver
+    exception that had nothing to do with it.
+
+    Canonical name is the primary witness; the launch nonce, when the REST
+    surface exposes env, is decisive in both directions.  When env is absent
+    the nonce cannot be checked, and a pod carrying OUR canonical name is
+    treated as ours -- leaving one of ours billing unnoticed is worse than
+    terminating a pod that took our name.
+    """
+    if getattr(pod, "name", None) != POD_NAME:
+        return False
+    env = getattr(pod, "extra", None)
+    env = env.get("env") if isinstance(env, dict) else None
+    if isinstance(env, dict) and env.get("O1_LAUNCH_NONCE") and nonce:
+        return env["O1_LAUNCH_NONCE"] == nonce
+    return True
 
 
 def completion_verdict(log_tail: str) -> str | None:
@@ -345,19 +376,7 @@ def run_session(*, authorization_path: str, out_dir: str,
         before either was raised billed on with nobody watching.
         """
         def is_ours(pod):
-            # Only OUR pods may be terminated.  This swept every non-
-            # TERMINATED pod on the account, so an unrelated pod the operator
-            # started during a multi-hour session was destroyed by a driver
-            # exception that had nothing to do with it.  Canonical name is
-            # the primary witness; a launch nonce, when the surface exposes
-            # env, is decisive in both directions.
-            if getattr(pod, "name", None) != POD_NAME:
-                return False
-            env = getattr(pod, "extra", {}).get("env")
-            want = getattr(auth, "launch_nonce", None)
-            if isinstance(env, dict) and env.get("O1_LAUNCH_NONCE") and want:
-                return env["O1_LAUNCH_NONCE"] == want
-            return True     # our name, nonce unverifiable -> treat as ours
+            return pod_is_ours(pod, getattr(auth, "launch_nonce", None))
 
         leftovers: list = []
         foreign: list = []
@@ -398,9 +417,14 @@ def run_session(*, authorization_path: str, out_dir: str,
         # ledger is full BY DEFINITION -- those slots belong to earlier,
         # already-terminated pods -- so treating it as an in-flight create
         # renamed a precise verdict into ABORTED_CREATE_OUTCOME_UNKNOWN.
+        if foreign:
+            # not ours, so never terminated -- but an operator reading this
+            # status must still be told what is running on the account
+            step("FOREIGN_PODS_PRESENT", ",".join(map(str, foreign)))
         if listing_failed or (create_attempted and nonce_implies_create):
             return finish(
                 "ABORTED_CREATE_OUTCOME_UNKNOWN",
+                foreign_pods_left_running=foreign,
                 error=redact(str(exc)),
                 termination_confirmed=False,
                 note=("a create may have been attempted (nonce slot "
@@ -408,6 +432,7 @@ def run_session(*, authorization_path: str, out_dir: str,
                       "operator must check the provider console before "
                       "any further acquisition"))
         return finish(outcome, error=redact(str(exc)),
+                      foreign_pods_left_running=foreign,
                       termination_confirmed=True)
 
     config = config or load_session_config(root)
@@ -809,10 +834,16 @@ def run_session(*, authorization_path: str, out_dir: str,
                 return finish("ABORTED_BUDGET", error=redact(str(exc)),
                               termination_confirmed=confirmed,
                               acquisitions_used=attempt)
-            # no pod id recorded -- sweep before claiming nothing bills
+            # No pod id recorded -- sweep before claiming nothing bills.
+            # nonce_implies_create stays TRUE here: unlike slot exhaustion, a
+            # BudgetViolation CAN be raised after a create (adapter._arm_spend
+            # runs inside create_instance, outside provision()'s terminating
+            # try).  RunPod's REST listing of a just-created spot pod is
+            # eventually consistent, so a clean sweep is not proof; reporting
+            # ABORTED_CREATE_OUTCOME_UNKNOWN tells the operator to check the
+            # console rather than asserting nothing bills.
             return sweep_leftovers(exc, adapter, controller, auth,
-                                   "ABORTED_BUDGET",
-                                   nonce_implies_create=False)
+                                   "ABORTED_BUDGET")
         except AuthorizationError as exc:
             # creation-slot exhaustion or expiry mid-session
             step("AUTHORIZATION_STOP", exc)
