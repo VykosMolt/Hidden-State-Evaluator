@@ -24,7 +24,7 @@
         },
         "records": []
       },
-      "retrieved_utc": "2026-08-23T15:58:37Z"
+      "retrieved_utc": "2026-08-23T16:27:10Z"
     },
     "compatible_datacenters": {
       "datacenters": [
@@ -122,9 +122,9 @@
     "surfaces_ok": true
   },
   "qualifying_offer_now": true,
-  "report_sha256": "1cfae3a04936167b031370eca91326cc369ac861eeb99fe01c7dac81939aad7a",
+  "report_sha256": "4211ac7a3cdfee1703fef8d7a194c3aae79026c9a459ed9370ec83fc542f7e77",
   "schema": "o1b200.runpod_readonly_preflight.v1",
   "selected_profile": "B300",
-  "utc": "2026-08-23T15:58:30Z",
+  "utc": "2026-08-23T16:27:03Z",
   "verdict": "PASS"
 }
