@@ -140,10 +140,25 @@ def pod_is_ours(pod, nonce: str | None) -> bool:
     """
     if getattr(pod, "name", None) != POD_NAME:
         return False
-    env = getattr(pod, "extra", None)
-    env = env.get("env") if isinstance(env, dict) else None
-    if isinstance(env, dict) and env.get("O1_LAUNCH_NONCE") and nonce:
-        return env["O1_LAUNCH_NONCE"] == nonce
+    extra = getattr(pod, "extra", None)
+    raw = extra.get("env") if isinstance(extra, dict) else None
+    # REST renders env as a mapping; the GraphQL surface used for SPOT pods
+    # renders it as a list of {key, value}.  Only handling the mapping meant
+    # the nonce was never checked on the surface that actually matters, and
+    # the docstring's "decisive in both directions" was unearned there.
+    found = None
+    if isinstance(raw, dict):
+        found = raw.get("O1_LAUNCH_NONCE")
+    elif isinstance(raw, (list, tuple)):
+        for item in raw:
+            if isinstance(item, dict) and item.get("key") == "O1_LAUNCH_NONCE":
+                found = item.get("value")
+                break
+            if isinstance(item, str) and item.startswith("O1_LAUNCH_NONCE="):
+                found = item.split("=", 1)[1]
+                break
+    if found and nonce:
+        return found == nonce
     return True
 
 
@@ -155,6 +170,30 @@ def completion_verdict(log_tail: str) -> str | None:
         verdict = "COMPLETE" if m.group(1) == "COMPLETE" else (
             m.group(2) or "UNSPECIFIED_STATE")
     return verdict
+
+
+def _stale_image_binding(root: str, config: dict) -> str | None:
+    """Why the bound image is not the built one, or None when they agree."""
+    record_path = os.path.join(root, "o1_b200", "provider", "runpod",
+                               "CONTAINER_IMAGE_RECORD.json")
+    try:
+        with open(record_path, encoding="utf-8") as fh:
+            record = json.load(fh)
+    except (OSError, ValueError) as exc:
+        return f"container image record unreadable ({exc})"
+    built = str(record.get("registry_digest_ref", ""))
+    bound = str(config.get("image_digest_ref", ""))
+    if not built or built.startswith("UNRESOLVED"):
+        return (f"the built image {record.get('image_name')!r} has never been "
+                f"pushed (registry_digest_ref={built!r}), so the bound digest "
+                f"cannot be the image that was built")
+    if not bound or bound.startswith("UNRESOLVED"):
+        return f"image_digest_ref is unresolved ({bound!r})"
+    if built != bound:
+        return (f"image_digest_ref {bound[:72]!r} is not the built image "
+                f"{built[:72]!r}; the deployed pod would not contain the "
+                f"reviewed source")
+    return None
 
 
 def _refusal_marker_path(authorization_path: str, config: dict) -> str:
@@ -365,7 +404,7 @@ def run_session(*, authorization_path: str, out_dir: str,
         return status
 
     def sweep_leftovers(exc, adapter, controller, auth, outcome, *,
-                        nonce_implies_create=True):
+                        slots_before=0, nonce_implies_create=True):
         """Terminate anything still billing when no pod id was recorded.
 
         pod_id being None does NOT prove nothing is billing: an ambiguous
@@ -393,8 +432,8 @@ def run_session(*, authorization_path: str, out_dir: str,
             if leftovers:
                 break
             sleep(20.0)
-        create_attempted = bool(
-            getattr(auth, "nonce_slots_consumed", lambda: 0)())
+        create_attempted = int(
+            getattr(auth, "nonce_slots_consumed", lambda: 0)()) > slots_before
         if leftovers:
             step("UNTERMINATED_PODS_PRESENT", ",".join(map(str, leftovers)))
             confirmed_all = True
@@ -435,7 +474,26 @@ def run_session(*, authorization_path: str, out_dir: str,
                       foreign_pods_left_running=foreign,
                       termination_confirmed=True)
 
+    config_was_injected = config is not None
     config = config or load_session_config(root)
+    # The image the driver DEPLOYS must be the image that was built and
+    # reviewed.  Nothing on the money path checked this: the operator gate in
+    # pre_rental_check is a separate script a human has to remember, so a
+    # source fix that was never rebuilt/re-pushed left a stale digest bound
+    # and every automated gate still passed.  That is how a NameError fixed
+    # in git reached a paid pod.  Read-only, costs nothing, refuses before
+    # any provider call.
+    # Only for the PRODUCTION path, where the session config is loaded from
+    # disk beside the image record it must agree with.  A directly-supplied
+    # config (tests, rehearsals) describes an image this checkout never
+    # built, so comparing it against the real record would be meaningless.
+    stale = None if config_was_injected else _stale_image_binding(root, config)
+    if stale:
+        step("IMAGE_BINDING_STALE", stale)
+        return finish("REFUSED_STALE_IMAGE_BINDING", error=stale,
+                      note=("rebuild, push, and rebind image_digest_ref to "
+                            "the digest the push printed; see "
+                            "REGISTRY_PUSH_PROCEDURE.md"))
     # A9: a previous invocation recorded that THIS deployment fails
     # deterministically on the pod; refuse before any money moves
     prior = _prior_deterministic_refusal(authorization_path, config)
@@ -659,6 +717,15 @@ def run_session(*, authorization_path: str, out_dir: str,
         controller = PodLifecycleController(adapter, out_dir, sleep=sleep,
                                             attempt=attempt, **controller_kw)
         pod_id = None
+        # The nonce ledger is CUMULATIVE across attempts and across earlier
+        # invocations under the same authorization, so it cannot answer "did
+        # THIS attempt try to create".  Snapshot it, and compare after: an
+        # ordinary budget stop on attempt 2, with attempt 1's pod long since
+        # terminated, was otherwise reported as a possible orphan needing a
+        # human console check -- on a driver whose whole contract is that
+        # nobody has to watch it.
+        slots_before_attempt = int(
+            getattr(auth, "nonce_slots_consumed", lambda: 0)())
         try:
             # fresh quote every acquisition: live spot rate, profile
             # re-selected under the frozen preference order
@@ -843,7 +910,8 @@ def run_session(*, authorization_path: str, out_dir: str,
             # ABORTED_CREATE_OUTCOME_UNKNOWN tells the operator to check the
             # console rather than asserting nothing bills.
             return sweep_leftovers(exc, adapter, controller, auth,
-                                   "ABORTED_BUDGET")
+                                   "ABORTED_BUDGET",
+                                   slots_before=slots_before_attempt)
         except AuthorizationError as exc:
             # creation-slot exhaustion or expiry mid-session
             step("AUTHORIZATION_STOP", exc)
@@ -855,7 +923,7 @@ def run_session(*, authorization_path: str, out_dir: str,
                               acquisitions_used=attempt)
             return sweep_leftovers(exc, adapter, controller, auth,
                                    "ABORTED_AUTHORIZATION_EXHAUSTED",
-                                   nonce_implies_create=False)
+                                   slots_before=slots_before_attempt)
         except (LifecycleError, Exception) as exc:  # noqa: BLE001
             step("SESSION_FAILURE", exc)
             if pod_id is not None:
@@ -874,7 +942,8 @@ def run_session(*, authorization_path: str, out_dir: str,
             # past expiry).  A consumed nonce slot proves a create was
             # attempted, so "termination_confirmed" is never claimed then.
             return sweep_leftovers(exc, adapter, controller, auth,
-                                   "ABORTED_BEFORE_CREATE")
+                                   "ABORTED_BEFORE_CREATE",
+                                   slots_before=slots_before_attempt)
         # 8. terminate + confirm (always; stop is never final)
         confirmed = controller.terminate_and_confirm(pod_id)
         if not confirmed:

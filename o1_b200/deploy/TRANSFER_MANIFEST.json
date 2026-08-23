@@ -39,7 +39,7 @@
     "deploy_scripts": {
       "kind": "tree",
       "path": "/home/moloch/ouro_worktrees/o1-v2-b200-runner/o1_b200/deploy",
-      "sha256": "5234f1992fadc3402a6e0998118bdfc8c79cb11a94ffd54013f069c27891a539",
+      "sha256": "ece5dc6670b09454129dfb42b4f503743f71bb9978808889e418bf0a87d16ed0",
       "transfer_out_of_band": false
     },
     "freeze_manifest": {

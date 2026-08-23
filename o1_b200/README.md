@@ -66,7 +66,7 @@ readiness: PASS. Live GET-only preflight: PASS, with B300 and B200 both
 showing Low stock (B300 $7.89/h, B200 $6.79/h secure spot; Secure-filtered
 minimum bids equal to those figures). Container image
 `o1-b300-runner:v0.3.11`, local id
-`sha256:4bc4d67537d2d24efe120fc21e65b95689f944bc7497194245d27b5ef0c1f202`,
+`sha256:142025d00c1042f747232b017de0a3f685dc9ab7763b6b688553d9bbea71783c`,
 registry digest UNRESOLVED until the operator pushes.
 
 ## Base identity

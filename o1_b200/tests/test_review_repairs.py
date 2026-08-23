@@ -1012,13 +1012,19 @@ def run_extra(r: Runner) -> Runner:
             ("def f():\n    return missing_name\n", 1, 0),
             ("def f():\n    print(x)\n    x = 1\n", 0, 1),
             ("def f(c):\n    if c:\n        x = 1\n    return x\n", 0, 1),
+            # if/elif with NO else: the commonest UnboundLocalError shape,
+            # which an earlier version of this checker called definite
+            ("def f(c):\n    if c == 1:\n        x = 1\n    elif c == 2:\n"
+             "        x = 2\n    return x\n", 0, 1),
             ("def f(g):\n    try:\n        d = g()\n    except ValueError:\n"
              "        pass\n    return d\n", 0, 1),
             ("from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n"
              "    import foo\ndef f():\n    return foo.bar()\n", 1, 0),
-            ("try:\n    import foo\nexcept ImportError:\n    pass\n"
+            ("try:\n    import foo\nexcept Exception:\n    pass\n"
              "def f():\n    return foo.bar()\n", 1, 0),
-            # true negatives -- flagging any of these makes the guard a liar
+            ("try:\n    import foo\nexcept:\n    pass\n"
+             "def f():\n    return foo.bar()\n", 1, 0),
+            # true negatives -- flagging any of these blocks real code
             ("def f(x):\n    print(x)\n    x = 2\n", 0, 0),
             ("def m():\n    d = {}\n    def rec(name, ok):\n"
              "        d[name] = ok\n    rec('a', 1)\n", 0, 0),
@@ -1027,10 +1033,19 @@ def run_extra(r: Runner) -> Runner:
              "    return g\n", 0, 0),
             ("def f(c):\n    if c:\n        x = 1\n    else:\n"
              "        x = 2\n    return x\n", 0, 0),
+            ("def f(c):\n    if c == 1:\n        x = 1\n    elif c == 2:\n"
+             "        x = 2\n    else:\n        x = 3\n    return x\n", 0, 0),
             ("def f(g):\n    try:\n        d = g()\n    except ValueError:\n"
              "        raise RuntimeError('x')\n    return d\n", 0, 0),
+            ("def f(g):\n    try:\n        v = g()\n    except ValueError:\n"
+             "        return None\n    else:\n        w = v\n"
+             "    return w\n", 0, 0),
             ("def f(g):\n    try:\n        out = g()\n    finally:\n"
              "        pass\n    return out\n", 0, 0),
+            ("def f(g):\n    while True:\n        x = g()\n        break\n"
+             "    return x\n", 0, 0),
+            ("def f(g):\n    with g() as h:\n        v = h\n"
+             "    return v\n", 0, 0),
             ("def f(g):\n    for _ in range(64):\n        s = g()\n"
              "        break\n    return s\n", 0, 0),
             ("def f():\n    for _ in range(3):\n        try:\n"

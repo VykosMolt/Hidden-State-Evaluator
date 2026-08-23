@@ -41,6 +41,42 @@ _SOURCE_HASH_SKIP_FILES = frozenset({
 })
 
 
+#: The FL worktree is a sibling checkout; the image stages it in at build.
+_FL_SOURCE_SELF_REFERENTIAL = ("deploy/environment_lock.json",
+                               "deploy/INTEGRATION.md", "SHA256SUMS")
+
+
+def _fl_source_tree_sha256(src: str | None = None) -> str:
+    """The FL tree digest, by the same rule scripts/build_b300_image.sh uses.
+
+    Returns "" when the FL worktree is not present in this checkout.
+    """
+    import hashlib
+    src = src or os.path.join(os.path.dirname(_ROOT),
+                              "foundation-learner-b200-v0",
+                              "foundation_learner")
+    if not os.path.isdir(src):
+        return ""
+    names = []
+    for base, dirs, files in os.walk(src):
+        dirs[:] = [d for d in dirs if d not in ("reports", "__pycache__")]
+        for n in files:
+            if n.endswith(".pyc"):
+                continue
+            rel = os.path.relpath(os.path.join(base, n), src)
+            if rel.replace(os.sep, "/") in _FL_SOURCE_SELF_REFERENTIAL:
+                continue
+            names.append(rel)
+    digests = []
+    for rel in sorted(names):
+        h = hashlib.sha256()
+        with open(os.path.join(src, rel), "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)
+        digests.append(f"{h.hexdigest()}  ./{rel}\n")
+    return hashlib.sha256("".join(digests).encode()).hexdigest()
+
+
 def _o1_source_tree_sha256(root: str | None = None) -> str:
     """Identity of the EXECUTABLE o1_b200 source baked into the image.
 
@@ -208,6 +244,27 @@ def main() -> int:
                else f"recorded={recorded[:16]!r} live={live[:16]!r}")
     except Exception as exc:  # noqa: BLE001
         record("built_image_matches_o1_source", False, exc)
+
+    # 5d. the FL half of the SAME image.  Round 2 added this check for the
+    # o1 source and left the symmetric gap open on the FL side -- the half
+    # that was being actively edited.  Same exclusion rule as
+    # scripts/build_b300_image.sh: the two files that RECORD the digest, plus
+    # SHA256SUMS, which covers one of them.
+    try:
+        with open(img_record_path, encoding="utf-8") as fh:
+            img = json.load(fh)
+        recorded = str(img.get("foundation_learner_source_sha256", ""))
+        if recorded.startswith("ABSENT_BY_REQUEST"):
+            record("built_image_matches_fl_source", True,
+                   "O1-only image by request")
+        else:
+            live = _fl_source_tree_sha256()
+            ok = bool(recorded) and bool(live) and recorded == live
+            record("built_image_matches_fl_source", ok,
+                   "FL source tree matches the image record" if ok
+                   else f"recorded={recorded[:16]!r} live={live[:16]!r}")
+    except Exception as exc:  # noqa: BLE001
+        record("built_image_matches_fl_source", False, exc)
 
     # 6. artifact transfer manifest
     try:
