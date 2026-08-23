@@ -721,8 +721,13 @@ class SessionSupervisor:
                 # Clamp: the journal is restored from the durable mirror, so
                 # a corrupt or absurd value must not drive the O1 bound
                 # negative (instant kill) or the FL allowance to zero.
+                # Ceiling is the allowance NET of the FL reserve: clamping
+                # to the raw allowance still admitted a corrupt value that
+                # drives usable to -reserve.
+                reserve = float(self.payload.get("fl_minimum_seconds")
+                                or FL_MINIMUM_SECONDS_DEFAULT)
                 pod_limit = self._raw_pod_limit_seconds()
-                ceiling = pod_limit if pod_limit else value
+                ceiling = max(0.0, pod_limit - reserve) if pod_limit else value
                 self._provisioning_seconds = max(0.0, min(value, ceiling))
         report = {"restored_states": sorted(restored),
                   "available_foundation_learner_seconds": None}
@@ -1010,6 +1015,15 @@ class SessionSupervisor:
         # checkpoint fetch always took the `missing` branch below and was
         # recorded as a PERMANENT deterministic refusal, blocking the whole
         # deployment until a human deleted a marker file.
+        budget_verdict = o1_abort_is_budget_dependent(tails)
+        if budget_verdict:
+            # O1 refused because THIS pod ran short of time, not because the
+            # deployment is broken.  Re-declare it so the driver stops the
+            # session without condemning every future run.
+            raise BudgetDependentAbort(
+                f"the O1 phase aborted at {budget_verdict}, which depends on "
+                f"this pod's allowance and measured throughput, not on the "
+                f"deployment")
         if "REFUSED (transient)" in tails:
             print("REFUSED (transient): the O1 phase failed transiently; "
                   "a replacement pod may succeed", file=sys.stderr, flush=True)
@@ -1337,6 +1351,21 @@ class SessionSupervisor:
         if failed_state is None and "TERMINATE_ACCELERATOR" in self.completed:
             record["note"] = "the session closed normally; nothing to force"
             return record
+        # FLUSH THE DURABLE MIRROR FIRST.  state_TRANSFER_FL_ARTIFACTS builds
+        # an untimed deterministic zip of the whole ladder tree before it
+        # uploads anything, and a preemptible eviction gives ~30 s before
+        # SIGKILL.  Starting with the archive meant that on the eviction that
+        # actually matters -- mid-ladder, hours in -- the container died
+        # during the zip: nothing was mirrored, SESSION_FINAL_STATUS.json was
+        # never written, and the transient marker was never printed.  The
+        # mirror is incremental and cheap, so it is what a short window can
+        # actually complete.
+        if self.durability is not None:
+            try:
+                self.durability.flush()
+                record["durable_flush"] = "COMPLETED"
+            except BaseException as exc:  # noqa: BLE001 - never block close-out
+                record["durable_flush"] = f"FAILED: {exc!r}"[:300]
         for state, key in (("TRANSFER_FL_ARTIFACTS", "transfer"),
                            ("TERMINATE_ACCELERATOR", "terminate")):
             if state in self.completed:
@@ -1509,6 +1538,37 @@ def _as_text(raw) -> str:
     if isinstance(raw, bytes):
         return raw.decode("utf-8", errors="replace")
     return str(raw)
+
+
+#: Tokens that mark an O1 abort as a function of THIS pod's allowance or
+#: measured throughput rather than of the deployment.  Deliberately a LOCAL
+#: copy of the driver's rule: the campaign package must not import from the
+#: O1 package (contract 13 isolation), and duplicating four tokens is a much
+#: smaller risk than the coupling.
+_O1_BUDGET_DEPENDENT_TOKENS = ("AFFORD", "BUDGET", "ALLOWANCE", "UNAFFORDABLE")
+
+_O1_ABORT_RE = re.compile(r"^[ \t]*O1_PHASE_ABORTED_AT_([A-Z0-9_]+)[ \t\r]*$",
+                          re.MULTILINE)
+
+
+def o1_abort_is_budget_dependent(tails: str) -> str | None:
+    """The O1 child's abort state when that abort was budget-dependent.
+
+    The O1 child KNOWS its affordability gate refused -- it prints
+    ZERO_TOUCH_ABORTED_AT_CALIBRATION_AFFORDABILITY_CHECK -- but this
+    supervisor namespaces that marker away and then reports its own
+    ABORTED_AT_O1_HALT_OR_COMPLETE, which carries no budget token.  The
+    driver therefore recorded a PERMANENT, deployment-wide refusal for a
+    plain "not enough time left on this pod" outcome, and the operator had
+    to delete a file before any future run.  The classification has to
+    cross the O1 -> FL hop explicitly; nothing else carries it.
+    """
+    verdict = None
+    for m in _O1_ABORT_RE.finditer(tails or ""):
+        verdict = m.group(1)            # last marker line wins
+    if verdict and any(tok in verdict for tok in _O1_BUDGET_DEPENDENT_TOKENS):
+        return verdict
+    return None
 
 
 def _namespace_o1_markers(text: str) -> str:

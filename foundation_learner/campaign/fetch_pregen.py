@@ -31,6 +31,7 @@ import sys
 from .hf_transfer import child_env
 from .o1_isolation import MODE_READ, MODE_WRITE, guard_path
 from .redaction import redact
+from .transient import TransientStepError
 
 DEFAULT_PREGEN_ROOT = "/workspace/foundation_learner/artifacts_fl/pregen"
 DEFAULT_REMOTE_PREFIX = "artifacts_fl/pregen"
@@ -172,15 +173,13 @@ def _helper_error(text: str, limit: int = 400) -> str:
 
 
 def _run_helper(args: list[str], timeout: float) -> dict:
-    proc = subprocess.run(
-        [sys.executable, "-m", "foundation_learner.campaign.hf_transfer",
-         *args],
-        capture_output=True, text=True, timeout=timeout,
-        env=child_env(os.environ.get("HF_TOKEN")))
-    if proc.returncode != 0:
-        raise PregenFetchError(redact(
-            f"pregen fetch failed: "
-            f"{_helper_error(proc.stdout + proc.stderr)}"))
+    from .transient import run_helper_with_retry
+
+    proc = run_helper_with_retry(
+        args, timeout, deterministic_error=PregenFetchError,
+        label="pregen fetch failed", redact=redact,
+        helper_error=_helper_error,
+        child_env=child_env(os.environ.get("HF_TOKEN")))
     try:
         return json.loads(proc.stdout.strip().splitlines()[-1])
     except (json.JSONDecodeError, IndexError):
@@ -252,6 +251,12 @@ def main() -> int:
         return 2
     try:
         report = fetch(source, pregen_root)
+    except TransientStepError as exc:
+        # A hub/network condition, not a deployment defect.  This exact token
+        # is what the pod entry and the driver read as "reacquire"; without
+        # it one HF hiccup during a 480 MB download bricked the deployment.
+        print(f"REFUSED (transient): {exc}", file=sys.stderr)
+        return 3
     except PregenFetchError as exc:
         print(f"REFUSED: {exc}", file=sys.stderr)
         return 2

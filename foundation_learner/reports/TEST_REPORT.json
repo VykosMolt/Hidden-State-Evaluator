@@ -2,46 +2,24 @@
   "fast_mode": false,
   "schema": "flb200.test_report.v1",
   "scope_note": "Hardware-independent local validation only: the tiny NONSCIENTIFIC Ouro model, tiny pools, a stub O1 command, a mocked clock and CPU execution. No B200 hardware claim, no throughput claim, and no scientific claim is made or implied. The real checkpoint is touched only by scripts/local_smoke_test.py, which is reported separately and is also nonscientific.",
-  "seconds": 662.65,
+  "seconds": 1606.38,
   "suites": [
     {
       "command": "-m pytest /home/moloch/ouro_worktrees/foundation-learner-b200-v0/foundation_learner/tests -q --no-header -p no:cacheprovider",
       "counts": {
         "deselected": 0,
         "errors": 0,
-        "failed": 21,
-        "passed": 1734,
+        "failed": 0,
+        "passed": 1755,
         "skipped": 8
       },
-      "failures": [
-        "FAILED foundation_learner/tests/hostile/test_hostile_session_never_leaves_the_pod_running.py::test_every_failure_path_still_terminates_the_accelerator[o1_halt-O1_HALT_OR_COMPLETE]",
-        "FAILED foundation_learner/tests/hostile/test_hostile_session_never_leaves_the_pod_running.py::test_every_failure_path_still_terminates_the_accelerator[bad_checkpoint-RELOAD_PRISTINE_OURO]",
-        "FAILED foundation_learner/tests/hostile/test_hostile_session_never_leaves_the_pod_running.py::test_every_failure_path_still_terminates_the_accelerator[ladder_explodes-RUN_FL_LADDER]",
-        "FAILED foundation_learner/tests/hostile/test_hostile_session_never_leaves_the_pod_running.py::test_an_interrupt_inside_a_state_still_terminates",
-        "FAILED foundation_learner/tests/hostile/test_hostile_session_never_leaves_the_pod_running.py::test_a_successful_session_terminates_exactly_once",
-        "FAILED foundation_learner/tests/hostile/test_hostile_session_never_leaves_the_pod_running.py::test_a_failed_transfer_does_not_prevent_termination",
-        "FAILED foundation_learner/tests/hostile/test_hostile_session_never_leaves_the_pod_running.py::test_a_mid_ladder_crash_resumes_and_completes_the_remaining_states",
-        "FAILED foundation_learner/tests/hostile/test_hostile_session_never_leaves_the_pod_running.py::test_the_resumed_allowance_comes_from_the_new_pods_authorization_not_dead_time",
-        "FAILED foundation_learner/tests/hostile/test_hostile_session_never_leaves_the_pod_running.py::test_a_replacement_pod_uses_its_own_remaining_allocation",
-        "FAILED foundation_learner/tests/hostile/test_hostile_session_never_leaves_the_pod_running.py::test_a_restart_on_the_same_pod_charges_the_gap",
-        "FAILED foundation_learner/tests/hostile/test_hostile_session_never_leaves_the_pod_running.py::test_a_torn_journal_tail_does_not_strand_the_pod",
-        "FAILED foundation_learner/tests/test_campaign_entry.py::test_main_runs_the_ladder_with_no_injected_factory",
-        "FAILED foundation_learner/tests/test_campaign_session_supervisor.py::test_a_full_session_walks_every_state",
-        "FAILED foundation_learner/tests/test_campaign_session_supervisor.py::test_journal_records_every_transition_and_supports_resume",
-        "FAILED foundation_learner/tests/test_campaign_session_supervisor.py::test_a_failed_o1_verification_aborts_before_fl",
-        "FAILED foundation_learner/tests/test_campaign_session_supervisor.py::test_checkpoint_tree_hash_mismatch_refuses",
-        "FAILED foundation_learner/tests/test_campaign_session_supervisor.py::test_a_halted_o1_phase_aborts_before_fl",
-        "FAILED foundation_learner/tests/test_campaign_session_supervisor.py::test_an_o1_abort_that_still_writes_its_markers_is_a_halt",
-        "FAILED foundation_learner/tests/test_campaign_session_supervisor.py::test_o1_receipts_are_mirrored_and_survive_eviction",
-        "FAILED foundation_learner/tests/test_campaign_session_supervisor.py::test_a_zeroed_ladder_does_not_report_complete",
-        "FAILED foundation_learner/tests/test_campaign_session_supervisor.py::test_transfer_timeout_does_not_block_termination"
-      ],
-      "returncode": 1,
-      "seconds": 492.68,
+      "failures": [],
+      "returncode": 0,
+      "seconds": 1265.8,
       "skipped_modules": [],
       "suite": "unit_and_hostile",
-      "tail": "visor(tmp_path, path, ladder_runner=exploding)\n        t0 = __import__(\"time\").monotonic()\n        status = sup.run(resume=False)\n        assert __import__(\"time\").monotonic() - t0 < 15\n>       assert status[\"close_out\"][\"transfer\"][\"status\"] == \"FAILED\"\nE       AssertionError: assert 'SKIPPED_NO_LADDER_OUTPUT' == 'FAILED'\nE         \nE         - FAILED\nE         + SKIPPED_NO_LADDER_OUTPUT\n\nfoundation_learner/tests/test_campaign_session_supervisor.py:418: AssertionError\n=============================== warnings summary ===============================\nfoundation_learner/tests/test_training_lora.py: 14 warnings\n  /home/moloch/ouro_project/venv/lib/python3.14/site-packages/torch/jit/_script.py:359: DeprecationWarning: `torch.jit.script_method` is not supported in Python 3.14+ and may break. Please switch to `torch.compile` or `torch.export`.\n    warnings.warn(\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n=========================== short test summary info ============================\nFAILED foundation_learner/tests/hostile/test_hostile_session_never_leaves_the_pod_running.py::test_every_failure_path_still_terminates_the_accelerator[o1_halt-O1_HALT_OR_COMPLETE]\nFAILED foundation_learner/tests/hostile/test_hostile_session_never_leaves_the_pod_running.py::test_every_failure_path_still_terminates_the_accelerator[bad_checkpoint-RELOAD_PRISTINE_OURO]\nFAILED foundation_learner/tests/hostile/test_hostile_session_never_leaves_the_pod_running.py::test_every_failure_path_still_terminates_the_accelerator[ladder_explodes-RUN_FL_LADDER]\nFAILED foundation_learner/tests/hostile/test_hostile_session_never_leaves_the_pod_running.py::test_an_interrupt_inside_a_state_still_terminates\nFAILED foundation_learner/tests/hostile/test_hostile_session_never_leaves_the_pod_running.py::test_a_successful_session_terminates_exactly_once\nFAILED foundation_learner/tests/hostile/test_hostile_session_never_leaves_the_pod_running.py::test_a_failed_transfer_does_not_prevent_termination\nFAILED foundation_learner/tests/hostile/test_hostile_session_never_leaves_the_pod_running.py::test_a_mid_ladder_crash_resumes_and_completes_the_remaining_states\nFAILED foundation_learner/tests/hostile/test_hostile_session_never_leaves_the_pod_running.py::test_the_resumed_allowance_comes_from_the_new_pods_authorization_not_dead_time\nFAILED foundation_learner/tests/hostile/test_hostile_session_never_leaves_the_pod_running.py::test_a_replacement_pod_uses_its_own_remaining_allocation\nFAILED foundation_learner/tests/hostile/test_hostile_session_never_leaves_the_pod_running.py::test_a_restart_on_the_same_pod_charges_the_gap\nFAILED foundation_learner/tests/hostile/test_hostile_session_never_leaves_the_pod_running.py::test_a_torn_journal_tail_does_not_strand_the_pod\nFAILED foundation_learner/tests/test_campaign_entry.py::test_main_runs_the_ladder_with_no_injected_factory\nFAILED foundation_learner/tests/test_campaign_session_supervisor.py::test_a_full_session_walks_every_state\nFAILED foundation_learner/tests/test_campaign_session_supervisor.py::test_journal_records_every_transition_and_supports_resume\nFAILED foundation_learner/tests/test_campaign_session_supervisor.py::test_a_failed_o1_verification_aborts_before_fl\nFAILED foundation_learner/tests/test_campaign_session_supervisor.py::test_checkpoint_tree_hash_mismatch_refuses\nFAILED foundation_learner/tests/test_campaign_session_supervisor.py::test_a_halted_o1_phase_aborts_before_fl\nFAILED foundation_learner/tests/test_campaign_session_supervisor.py::test_an_o1_abort_that_still_writes_its_markers_is_a_halt\nFAILED foundation_learner/tests/test_campaign_session_supervisor.py::test_o1_receipts_are_mirrored_and_survive_eviction\nFAILED foundation_learner/tests/test_campaign_session_supervisor.py::test_a_zeroed_ladder_does_not_report_complete\nFAILED foundation_learner/tests/test_campaign_session_supervisor.py::test_transfer_timeout_does_not_block_termination\n21 failed, 1734 passed, 8 skipped, 14 warnings in 490.09s (0:08:10)\n",
-      "verdict": "FAIL"
+      "tail": "........................................................................ [  4%]\n........................................................................ [  8%]\n........................................................................ [ 12%]\n........................................................................ [ 16%]\n........................................................................ [ 20%]\n........................................................................ [ 24%]\n........................................................................ [ 28%]\n........................................................................ [ 32%]\n........................................................................ [ 36%]\n........................................................................ [ 40%]\n........................................................................ [ 44%]\n.................................................................sssssss [ 49%]\n.s...................................................................... [ 53%]\n........................................................................ [ 57%]\n........................................................................ [ 61%]\n........................................................................ [ 65%]\n........................................................................ [ 69%]\n........................................................................ [ 73%]\n........................................................................ [ 77%]\n........................................................................ [ 81%]\n........................................................................ [ 85%]\n........................................................................ [ 89%]\n........................................................................ [ 93%]\n........................................................................ [ 98%]\n...................................                                      [100%]\n=============================== warnings summary ===============================\nfoundation_learner/tests/test_training_lora.py: 14 warnings\n  /home/moloch/ouro_project/venv/lib/python3.14/site-packages/torch/jit/_script.py:359: DeprecationWarning: `torch.jit.script_method` is not supported in Python 3.14+ and may break. Please switch to `torch.compile` or `torch.export`.\n    warnings.warn(\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n1755 passed, 8 skipped, 14 warnings in 1263.33s (0:21:03)\n",
+      "verdict": "PASS"
     },
     {
       "checks": {
@@ -83,7 +61,7 @@
         "SECOND_SEED": "COMPLETE"
       },
       "report_path": "/home/moloch/ouro_worktrees/foundation-learner-b200-v0/foundation_learner/reports/local_runs/dress_rehearsal/REHEARSAL_REPORT.json",
-      "seconds": 169.42,
+      "seconds": 340.0,
       "states_walked": [
         "START_SESSION",
         "RUN_O1_CALIBRATION",
@@ -103,11 +81,11 @@
     },
     {
       "coverage": {
-        "listed": 278,
+        "listed": 279,
         "mismatched": [],
         "missing": [],
         "ok": true,
-        "present": 278,
+        "present": 279,
         "unlisted": []
       },
       "include_pregen": true,
@@ -116,6 +94,6 @@
       "verdict": "PASS"
     }
   ],
-  "utc": "2026-08-23T22:02:15Z",
-  "verdict": "1 SUITE(S) FAILED"
+  "utc": "2026-08-23T23:24:49Z",
+  "verdict": "ALL FOUNDATION LEARNER LOCAL CHECKS PASSED"
 }

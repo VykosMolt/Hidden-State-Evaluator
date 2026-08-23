@@ -101,11 +101,19 @@ def _conditionally_bound_module_names(tree):
             else:
                 unconditional |= _module_binds([node])
         elif isinstance(node, ast.Try):
-            handled = any(
-                h.type is not None
-                and "ImportError" in ast.dump(h.type)
-                or "ModuleNotFoundError" in ast.dump(h.type or ast.Pass())
-                for h in node.handlers)
+            # A bare `except:` or `except Exception:` swallows an import
+            # error just as effectively as `except ImportError:`; only
+            # literal-matching the two import types missed the two commonest
+            # shapes.
+            def _swallows(h):
+                if h.type is None:
+                    return True             # bare except
+                dumped = ast.dump(h.type)
+                return any(tok in dumped for tok in
+                           ("ImportError", "ModuleNotFoundError",
+                            "'Exception'", "'BaseException'"))
+
+            handled = any(_swallows(h) for h in node.handlers)
             if handled:
                 conditional |= _module_binds(node.body)
                 for h in node.handlers:
@@ -145,44 +153,6 @@ def unbound_globals(path):
     return found
 
 
-def _definitely_bound(nodes, name):
-    """True when some construct binds ``name`` on EVERY path through it.
-
-    An if/else that binds in both branches, or a try/except where the body
-    and every handler bind, leaves the name defined however control flowed.
-    Without this the branch-only check reports definite assignments.
-    """
-    def binds(stmts):
-        return name in _module_binds(stmts or [])
-
-    def ok(stmts):
-        """This path either binds the name or never falls through."""
-        return binds(stmts) or _terminates(stmts)
-
-    for n in nodes:
-        if isinstance(n, ast.If) and n.orelse:
-            if binds(n.body) and ok(n.orelse):
-                return True
-            if binds(n.orelse) and ok(n.body):
-                return True
-        if isinstance(n, ast.Try):
-            # No handlers (try/finally only): an exception propagates, so
-            # reaching the code after the construct proves the body ran to
-            # completion and the binding happened.
-            if binds(n.body) and not n.handlers:
-                return True
-            if (binds(n.body) and n.handlers
-                    and all(ok(h.body) for h in n.handlers)):
-                return True
-        if isinstance(n, (ast.For, ast.AsyncFor)) and n.orelse:
-            if binds(n.body) and ok(n.orelse):
-                return True
-        if isinstance(n, ast.For) and binds(n.body) \
-                and _always_iterates(n.iter):
-            return True
-    return False
-
-
 def _always_iterates(node):
     """True when this iterable is provably non-empty at parse time.
 
@@ -200,6 +170,79 @@ def _always_iterates(node):
             if isinstance(lo, int) and isinstance(hi, int):
                 return hi > lo
     return False
+
+
+def _binds_every_path(stmts, name):
+    """True when EVERY path through ``stmts`` binds ``name``.
+
+    The previous version asked only whether the name was bound ANYWHERE in
+    the subtree, so an ``if``/``elif`` chain with no ``else`` counted as a
+    definite assignment -- the single commonest UnboundLocalError shape, and
+    exactly what the branch-only pass exists to catch.
+    """
+    for n in stmts or []:
+        if _stmt_binds_definitely(n, name):
+            return True
+    return False
+
+
+def _stmt_binds_definitely(n, name):
+    """True when this ONE statement binds ``name`` on every path through it."""
+    # a plain binding at this level is unconditional
+    if isinstance(n, (ast.Assign, ast.AnnAssign, ast.AugAssign,
+                      ast.Import, ast.ImportFrom, ast.FunctionDef,
+                      ast.AsyncFunctionDef, ast.ClassDef)):
+        return name in _module_binds([n])
+    if isinstance(n, ast.If):
+        if not n.orelse:
+            return False                     # no else: the else path binds nothing
+        return ((_binds_every_path(n.body, name) or _terminates(n.body))
+                and (_binds_every_path(n.orelse, name)
+                     or _terminates(n.orelse))
+                and not (_terminates(n.body) and _terminates(n.orelse)))
+    if isinstance(n, ast.Try):
+        if not n.handlers:
+            return _binds_every_path(n.body, name)
+        # Two ways out of a try/except/else: the body succeeded and the
+        # `else` ran, or a handler ran.  A binding in EITHER the body or the
+        # else covers the first path -- requiring it in the body alone
+        # rejected the ordinary `try: v = g() / except: return / else: w = v`
+        # shape.
+        success_ok = (_binds_every_path(n.body, name)
+                      or _binds_every_path(n.orelse, name)
+                      or _terminates(n.body) or _terminates(n.orelse))
+        handlers_ok = all(_binds_every_path(h.body, name)
+                          or _terminates(h.body) for h in n.handlers)
+        return success_ok and handlers_ok
+    if isinstance(n, (ast.With, ast.AsyncWith)):
+        return _binds_every_path(n.body, name)
+    if isinstance(n, ast.For) and _always_iterates(n.iter):
+        return _binds_every_path(n.body, name)
+    if isinstance(n, ast.While) and _is_true_literal(n.test):
+        # `while True:` always enters its body
+        return _binds_every_path(n.body, name)
+    if isinstance(n, ast.Match):
+        cases = getattr(n, "cases", [])
+        if cases and any(_is_wildcard_case(c) for c in cases):
+            return all(_binds_every_path(c.body, name) or _terminates(c.body)
+                       for c in cases)
+        return False
+    return False
+
+
+def _is_true_literal(node):
+    return isinstance(node, ast.Constant) and node.value is True
+
+
+def _is_wildcard_case(case):
+    pat = getattr(case, "pattern", None)
+    return (isinstance(pat, ast.MatchAs) and pat.pattern is None
+            and getattr(case, "guard", None) is None)
+
+
+def _definitely_bound(nodes, name):
+    """True when some construct in this scope binds ``name`` on every path."""
+    return any(_stmt_binds_definitely(n, name) for n in nodes)
 
 
 def _terminates(stmts):
@@ -279,7 +322,7 @@ def unbound_locals(path):
         # common UnboundLocalError shape there is.
         cond_spans = [(n.lineno, n.end_lineno) for n in nodes
                       if isinstance(n, (ast.If, ast.Try, ast.While,
-                                        ast.For, ast.AsyncFor))]
+                                        ast.For, ast.AsyncFor, ast.Match))]
         for name, blines in binds.items():
             if name in params or name in declared:
                 continue
@@ -288,7 +331,7 @@ def unbound_locals(path):
             if not all(any(lo <= b <= hi for lo, hi in cond_spans)
                        for b in blines):
                 continue                     # some binding is unconditional
-            if _definitely_bound(nodes, name):
+            if _definitely_bound(fn.body, name):
                 continue     # every path through some construct binds it
             for n in nodes:
                 if not (isinstance(n, ast.Name)

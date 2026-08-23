@@ -28,6 +28,7 @@ import sys
 from .hf_transfer import child_env
 from .o1_isolation import MODE_READ, MODE_WRITE, guard_path
 from .redaction import redact
+from .transient import TransientStepError
 
 
 class ScopeError(RuntimeError):
@@ -56,15 +57,14 @@ def _helper_error(text: str, limit: int = 400) -> str:
 
 
 def _run_helper(repo: str, mode: str, timeout: float) -> dict:
-    proc = subprocess.run(
-        [sys.executable, "-m", "foundation_learner.campaign.hf_transfer",
-         "scope", "--repo", repo, "--mode", mode],
-        capture_output=True, text=True, timeout=timeout,
-        env=child_env(os.environ.get("HF_TOKEN")))
-    if proc.returncode != 0:
-        raise ScopeError(redact(
-            f"{mode.upper()} scope check failed for {repo}: "
-            f"{_helper_error(proc.stdout + proc.stderr)}"))
+    from .transient import run_helper_with_retry
+
+    proc = run_helper_with_retry(
+        ["scope", "--repo", repo, "--mode", mode], timeout,
+        deterministic_error=ScopeError,
+        label=f"{mode.upper()} scope check failed for {repo}",
+        redact=redact, helper_error=_helper_error,
+        child_env=child_env(os.environ.get("HF_TOKEN")))
     try:
         return json.loads(proc.stdout.strip().splitlines()[-1])
     except (json.JSONDecodeError, IndexError):
@@ -168,6 +168,11 @@ def main() -> int:
         return 2
     try:
         report = check(read_source, write)
+    except TransientStepError as exc:
+        # hub/network condition -- the token the pod entry and the driver
+        # both read as "reacquire", never as a deployment defect
+        print(f"REFUSED (transient): {exc}", file=sys.stderr)
+        return 3
     except ScopeError as exc:
         print(f"REFUSED: {exc}", file=sys.stderr)
         return 2

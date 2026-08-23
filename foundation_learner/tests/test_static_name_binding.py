@@ -26,18 +26,27 @@ _SELF_TEST_FIXTURES = (
     # --- true positives: these really do raise at runtime ---
     ("def f():\n    return missing_name\n", 1, 0),
     ("def f():\n    print(x)\n    x = 1\n", 0, 1),
-    # branch-only binding: the most common UnboundLocalError shape
+    # branch-only binding, and the if/elif chain with NO else -- the single
+    # commonest UnboundLocalError shape, and the one an earlier version of
+    # this checker reported as a definite assignment
     ("def f(c):\n    if c:\n        x = 1\n    return x\n", 0, 1),
+    ("def f(c):\n    if c == 1:\n        x = 1\n    elif c == 2:\n"
+     "        x = 2\n    return x\n", 0, 1),
     ("def f(g):\n    try:\n        d = g()\n    except ValueError:\n"
      "        pass\n    return d\n", 0, 1),
     ("def f(xs, g):\n    for _ in xs:\n        s = g()\n    return s\n", 0, 1),
-    # bound ONLY under TYPE_CHECKING / a swallowed import: absent at runtime,
-    # the same shape as the sha256_file bug this guard exists for
+    # bound ONLY under TYPE_CHECKING or a swallowed import: absent at
+    # runtime, the same shape as the sha256_file bug this guard exists for.
+    # `except Exception` and a bare `except` swallow just as effectively.
     ("from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    import foo\n"
      "def f():\n    return foo.bar()\n", 1, 0),
     ("try:\n    import foo\nexcept ImportError:\n    pass\n"
      "def f():\n    return foo.bar()\n", 1, 0),
-    # --- true negatives: flagging any of these would make the guard a liar ---
+    ("try:\n    import foo\nexcept Exception:\n    pass\n"
+     "def f():\n    return foo.bar()\n", 1, 0),
+    ("try:\n    import foo\nexcept:\n    pass\n"
+     "def f():\n    return foo.bar()\n", 1, 0),
+    # --- true negatives: flagging any of these would block real code ---
     ("def f(x):\n    print(x)\n    x = 2\n", 0, 0),
     ("g = 1\ndef f():\n    global g\n    print(g)\n    g = 2\n", 0, 0),
     ("def o():\n    v = 1\n    def i():\n        return v\n    return i\n", 0, 0),
@@ -47,10 +56,17 @@ _SELF_TEST_FIXTURES = (
      "        return g\n    def g():\n        return 2\n    return g\n", 0, 0),
     ("def f(c):\n    if c:\n        x = 1\n    else:\n        x = 2\n"
      "    return x\n", 0, 0),
+    ("def f(c):\n    if c == 1:\n        x = 1\n    elif c == 2:\n"
+     "        x = 2\n    else:\n        x = 3\n    return x\n", 0, 0),
     ("def f(g):\n    try:\n        d = g()\n    except ValueError:\n"
      "        raise RuntimeError('x')\n    return d\n", 0, 0),
+    ("def f(g):\n    try:\n        v = g()\n    except ValueError:\n"
+     "        return None\n    else:\n        w = v\n    return w\n", 0, 0),
     ("def f(g):\n    try:\n        out = g()\n    finally:\n        pass\n"
      "    return out\n", 0, 0),
+    ("def f(g):\n    while True:\n        x = g()\n        break\n"
+     "    return x\n", 0, 0),
+    ("def f(g):\n    with g() as h:\n        v = h\n    return v\n", 0, 0),
     ("def f(g):\n    for _ in range(64):\n        s = g()\n        break\n"
      "    return s\n", 0, 0),
     ("def f():\n    for _ in range(3):\n        try:\n            print(t)\n"
