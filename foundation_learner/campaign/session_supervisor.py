@@ -421,6 +421,7 @@ class SessionSupervisor:
     determinism: dict | None = field(default=None, init=False)
     close_out: dict = field(default_factory=dict, init=False)
     _t0: float | None = field(default=None, init=False)
+    _provisioning_seconds: float | None = field(default=None, init=False)
     _records: int = field(default=0, init=False)
     torn_journal_tail: dict | None = field(default=None, init=False)
 
@@ -506,7 +507,7 @@ class SessionSupervisor:
             "rehearsal": self.rehearsal,
             "utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "monotonic": round(self.clock.monotonic(), 6),
-            **(payload or {}),
+            **_redact_payload(payload or {}),
         }
         self.guard.append_line(
             self.journal_path,
@@ -677,6 +678,17 @@ class SessionSupervisor:
                 restored[state] = record["result"]
                 stamps[state] = record.get("utc")
         self.state_results.update(restored)
+        # Reuse the provisioning charge frozen by the ORIGINAL START_SESSION.
+        # Re-measuring here would read the container uptime, which on a
+        # resume already contains the O1 phase -- the same double charge
+        # that starved the ladder before.
+        start = restored.get("START_SESSION")
+        if isinstance(start, Mapping) and self._provisioning_seconds is None:
+            try:
+                self._provisioning_seconds = float(
+                    start["provisioning_seconds"])
+            except (KeyError, TypeError, ValueError):
+                pass
         report = {"restored_states": sorted(restored),
                   "available_foundation_learner_seconds": None}
         compute = restored.get("COMPUTE_REMAINING_AUTHORIZED_TIME")
@@ -794,10 +806,34 @@ class SessionSupervisor:
                 pod_limit = float(inherited) if inherited else float("inf")
             except ValueError:
                 pod_limit = float("inf")
-            bound = max(0.0, min(pod_limit, float(timeout)) - self._elapsed())
+            # The pod's allowance also has to pay for provisioning (pod
+            # creation -> START_SESSION) and for the FL reserve.  Bounding
+            # O1 by the RAW pod limit let it consume both: the config gate
+            # only compares o1_timeout + reserve against the CONFIG's
+            # session_authorized_seconds, which on the B300 profile is far
+            # larger than the pod's real allowance (21,200 configured vs
+            # 18,250 actual at $7.89/h), leaving ~50 s of slack that any
+            # provisioning overrun turns negative.  Reserve both here, so
+            # the FL minimum survives on either profile.
+            reserve = float(self.payload.get("fl_minimum_seconds")
+                            or FL_MINIMUM_SECONDS_DEFAULT)
+            usable = pod_limit - self._provisioning_charge() - reserve
+            bound = max(0.0, min(usable, float(timeout)) - self._elapsed())
             env[POD_AUTHORIZED_SECONDS_ENV] = str(int(bound))
             env["O1_PHASE_BOUND_BY_FL"] = "1"
-        proc = self.runner(command, shell=shell, capture_output=True, text=True,
+            # kill the child at the same bound: leaving the raw o1_timeout
+            # here would let O1 outlive the budget it was handed
+            timeout = min(float(timeout), max(0.0, bound))
+        # NOT text=True.  Strict UTF-8 decoding of a multi-hour child means a
+        # single stray byte from a CUDA/NCCL/driver message raises
+        # UnicodeDecodeError at the END of the phase, discarding the whole
+        # O1 result after it was fully paid for.  production_entry avoids
+        # text=True for exactly this reason.  Decode ourselves, replacing
+        # undecodable bytes.  (Output is deliberately captured rather than
+        # streamed: O1's completion markers must be namespaced before they
+        # reach the container log, or the off-pod driver terminates the pod
+        # the moment the O1 phase ends.)
+        proc = self.runner(command, shell=shell, capture_output=True,
                            timeout=timeout, env=env,
                            cwd=self.payload.get("o1_workdir") or None)
         seconds = self.clock.monotonic() - started
@@ -817,9 +853,9 @@ class SessionSupervisor:
         # The markers are namespaced on re-emission; the SESSION's own
         # marker is printed by main() at the true end (see _session_marker).
         child_out = _namespace_o1_markers(redact(
-            getattr(proc, "stdout", "") or ""))
+            _as_text(getattr(proc, "stdout", ""))))
         child_err = _namespace_o1_markers(redact(
-            getattr(proc, "stderr", "") or ""))
+            _as_text(getattr(proc, "stderr", ""))))
         if child_out:
             print(child_out, end="" if child_out.endswith("\n") else "\n",
                   flush=True)
@@ -862,7 +898,9 @@ class SessionSupervisor:
 
     def state_START_SESSION(self) -> dict:
         self._t0 = self.clock.monotonic()
+        provisioning = self._provisioning_charge()
         return {
+            "provisioning_seconds": provisioning,
             "config_path": self.config.path,
             "rehearsal": self.rehearsal,
             "unresolved_fields": self.payload.get("_unresolved_fields", []),
@@ -897,6 +935,22 @@ class SessionSupervisor:
         missing = sorted(m for m, ok in present.items() if not ok)
         entry = self.state_results.get("RUN_O1_CALIBRATION") or {}
         rc = entry.get("returncode")
+        tails = ((entry.get("stdout_tail") or "")
+                 + (entry.get("stderr_tail") or ""))
+        # A transient refusal is checked BEFORE the missing-marker branch.
+        # The transient classifications live in the PRE-ENTRY steps
+        # (runner/fetch_artifacts.py, runner/check_hf_scope.py), which run
+        # before production_entry writes FINAL_STATUS.json -- the only
+        # declared completion marker.  So an HF outage during the 5 GB
+        # checkpoint fetch always took the `missing` branch below and was
+        # recorded as a PERMANENT deterministic refusal, blocking the whole
+        # deployment until a human deleted a marker file.
+        if "REFUSED (transient)" in tails:
+            print("REFUSED (transient): the O1 phase failed transiently; "
+                  "a replacement pod may succeed", file=sys.stderr, flush=True)
+            raise TransientO1Failure(
+                f"O1 entry exited {rc} with a transient refusal "
+                f"(completion artefacts missing: {missing or 'none'})")
         if missing:
             raise SupervisorError(
                 f"O1_HALT: the O1 phase did not produce its declared "
@@ -908,17 +962,7 @@ class SessionSupervisor:
         # The exit status is the one outcome-free signal FL may consult; the
         # marker content stays unread.
         if rc != 0:
-            tails = (entry.get("stdout_tail") or "") + (entry.get("stderr_tail") or "")
-            if "REFUSED (transient)" in tails:
-                # the O1 child classified its own failure as transient (a
-                # hub outage during its scope probe): re-emit the class so
-                # the driver's eviction path applies, instead of converting
-                # it into a deterministic session abort
-                print("REFUSED (transient): the O1 phase failed transiently; "
-                      "a replacement pod may succeed", file=sys.stderr,
-                      flush=True)
-                raise TransientO1Failure(
-                    f"O1 entry exited {rc} with a transient refusal")
+            # transient already handled above, before the marker check
             raise SupervisorError(
                 f"O1_HALT: the O1 entry exited with returncode {rc}; its "
                 f"completion artefacts are present but a non-zero exit is "
@@ -1014,6 +1058,30 @@ class SessionSupervisor:
                                      else "rehearsal stand-in tree hash"),
                 "rehearsal": self.rehearsal}
 
+    def _measure_provisioning(self) -> float:
+        """Pre-supervisor overhead: POD CREATION -> START_SESSION.
+
+        Evaluated ONCE, when the supervisor starts.  Measuring it later
+        would read the whole container uptime, which by then also contains
+        the O1 phase -- and since the caller separately subtracts
+        ``_elapsed()`` (also the O1 phase), O1 was charged TWICE and the FL
+        ladder was starved to zero for any O1 phase past ~8,500 s.
+        """
+        provisioning = PROVISIONING_ALLOWANCE_SECONDS
+        stamp = os.environ.get("O1_POD_ENTRY_EPOCH", "").strip()
+        if stamp:
+            try:
+                provisioning = max(provisioning, time.time() - float(stamp))
+            except ValueError:
+                pass
+        return provisioning
+
+    def _provisioning_charge(self) -> float:
+        """The frozen provisioning charge; measured on first use only."""
+        if self._provisioning_seconds is None:
+            self._provisioning_seconds = self._measure_provisioning()
+        return self._provisioning_seconds
+
     def _pod_authorized_seconds(self) -> tuple[float, str]:
         """This pod's runtime allowance and where it came from.
 
@@ -1033,14 +1101,7 @@ class SessionSupervisor:
         # allowance and would otherwise be paid out of the 1,200 s
         # final-transfer reserve.  Charge a fixed provisioning allowance,
         # or the measured container uptime when the entry stamped it.
-        provisioning = PROVISIONING_ALLOWANCE_SECONDS
-        stamp = os.environ.get("O1_POD_ENTRY_EPOCH", "").strip()
-        if stamp:
-            try:
-                provisioning = max(provisioning,
-                                   time.time() - float(stamp))
-            except ValueError:
-                pass
+        provisioning = self._provisioning_charge()
         raw = os.environ.get(POD_AUTHORIZED_SECONDS_ENV, "").strip()
         if not raw and not self.rehearsal:
             raise SupervisorError(
@@ -1309,6 +1370,36 @@ class SessionSupervisor:
 _O1_MARKER_RE = re.compile(r"ZERO_TOUCH_(COMPLETE|ABORTED_AT_[A-Z0-9_]+)")
 
 
+def _redact_payload(value):
+    """Redact every string inside a journal payload, at any depth.
+
+    The journal is pushed to the results repo, and STATE_FAILED /
+    EMERGENCY_STATE_FAILED carry ``repr(exc)`` -- which can quote a command
+    line, an environment or a URL.  redact() was applied only to captured
+    child output, so anything raised as an exception bypassed it.
+    """
+    if isinstance(value, str):
+        return redact(value)
+    if isinstance(value, Mapping):
+        return {k: _redact_payload(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_redact_payload(v) for v in value]
+    return value
+
+
+def _as_text(raw) -> str:
+    """Decode child output without ever raising.
+
+    Accepts bytes (the real subprocess, which is no longer run with
+    text=True) or str (injected test/rehearsal runners).
+    """
+    if raw is None:
+        return ""
+    if isinstance(raw, bytes):
+        return raw.decode("utf-8", errors="replace")
+    return str(raw)
+
+
 def _namespace_o1_markers(text: str) -> str:
     """``ZERO_TOUCH_COMPLETE`` -> ``O1_PHASE_COMPLETE`` (and
     ``ZERO_TOUCH_ABORTED_AT_X`` -> ``O1_PHASE_ABORTED_AT_X``).
@@ -1437,6 +1528,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     ``RUN_FL_LADDER`` and refused for want of a context factory (R-C1).
     """
     args = build_parser().parse_args(argv)
+    from ..eviction import install_eviction_handler
+
+    install_eviction_handler()
     config = None
     if not args.out and not args.terminate_only:
         build_parser().error("--out is required")

@@ -2,24 +2,26 @@
   "fast_mode": false,
   "schema": "flb200.test_report.v1",
   "scope_note": "Hardware-independent local validation only: the tiny NONSCIENTIFIC Ouro model, tiny pools, a stub O1 command, a mocked clock and CPU execution. No B200 hardware claim, no throughput claim, and no scientific claim is made or implied. The real checkpoint is touched only by scripts/local_smoke_test.py, which is reported separately and is also nonscientific.",
-  "seconds": 1912.24,
+  "seconds": 1909.23,
   "suites": [
     {
       "command": "-m pytest /home/moloch/ouro_worktrees/foundation-learner-b200-v0/foundation_learner/tests -q --no-header -p no:cacheprovider",
       "counts": {
         "deselected": 0,
         "errors": 0,
-        "failed": 0,
-        "passed": 1654,
+        "failed": 1,
+        "passed": 1750,
         "skipped": 8
       },
-      "failures": [],
-      "returncode": 0,
-      "seconds": 1489.6,
+      "failures": [
+        "FAILED foundation_learner/tests/test_training_trainer.py::test_bf16_autocast_and_gpu_accounting_on_a_real_device"
+      ],
+      "returncode": 1,
+      "seconds": 1509.4,
       "skipped_modules": [],
       "suite": "unit_and_hostile",
-      "tail": "........................................................................ [  4%]\n........................................................................ [  8%]\n........................................................................ [ 12%]\n........................................................................ [ 17%]\n........................................................................ [ 21%]\n........................................................................ [ 25%]\n........................................................................ [ 30%]\n........................................................................ [ 34%]\n........................................................................ [ 38%]\n........................................................................ [ 43%]\n............................................sssssss.s................... [ 47%]\n........................................................................ [ 51%]\n........................................................................ [ 56%]\n........................................................................ [ 60%]\n........................................................................ [ 64%]\n........................................................................ [ 69%]\n........................................................................ [ 73%]\n........................................................................ [ 77%]\n........................................................................ [ 82%]\n........................................................................ [ 86%]\n........................................................................ [ 90%]\n........................................................................ [ 95%]\n........................................................................ [ 99%]\n......                                                                   [100%]\n=============================== warnings summary ===============================\nfoundation_learner/tests/test_training_lora.py: 14 warnings\n  /home/moloch/ouro_project/venv/lib/python3.14/site-packages/torch/jit/_script.py:359: DeprecationWarning: `torch.jit.script_method` is not supported in Python 3.14+ and may break. Please switch to `torch.compile` or `torch.export`.\n    warnings.warn(\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n1654 passed, 8 skipped, 14 warnings in 1487.27s (0:24:47)\n",
-      "verdict": "PASS"
+      "tail": "cast_and_gpu_acc0')\n\n    @pytest.mark.skipif(not torch.cuda.is_available(), reason=\"no CUDA device\")\n    def test_bf16_autocast_and_gpu_accounting_on_a_real_device(tmp_path):\n        \"\"\"Exercise the accelerator code path with the TINY model only.\n    \n        The frozen 2.6 B checkpoint is never loaded here (contract \u00a720 / task\n        constraint); this covers bf16 autocast, CUDA synchronisation, GPU-second\n        accounting, CUDA RNG capture and gradient checkpointing plumbing.\n        \"\"\"\n        from foundation_learner.training.checkpointing import load_checkpoint\n    \n        bundle = build_tiny_model(seed=17, device=\"cuda\")\n        examples = build_examples(bundle, \"FL3\", n=2)\n        cfg = smoke_cfg(\"FL3\", updates=4, bf16=True, gradient_checkpointing=True)\n>       result = tr.run_training_arm(\n            cfg, bundle, examples, str(tmp_path / \"cuda\"), validate_config=False\n        )\n\nfoundation_learner/tests/test_training_trainer.py:354: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \nfoundation_learner/training/trainer.py:397: in run_training_arm\n    _train_loop(\nfoundation_learner/training/trainer.py:547: in _train_loop\n    loss.backward()\n../../ouro_project/venv/lib/python3.14/site-packages/torch/_tensor.py:631: in backward\n    torch.autograd.backward(\n../../ouro_project/venv/lib/python3.14/site-packages/torch/autograd/__init__.py:379: in backward\n    _engine_run_backward(\n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\nt_outputs = (tensor(10.7628, device='cuda:0', grad_fn=<MeanBackward0>),)\nargs = ((tensor(1., device='cuda:0'),), False, False, ())\nkwargs = {'accumulate_grad': True, 'allow_unreachable': True}\nattach_logging_hooks = False\n\n    def _engine_run_backward(\n        t_outputs: Sequence[torch.Tensor | GradientEdge],\n        *args: Any,\n        **kwargs: Any,\n    ) -> tuple[torch.Tensor, ...]:\n        attach_logging_hooks = log.getEffectiveLevel() <= logging.DEBUG\n        if attach_logging_hooks:\n            unregister_hooks = _register_logging_hooks_on_whole_graph(t_outputs)\n    \n        # Need to save the context so compiler config will be visible in device threads\n        torch._C._stash_obj_in_tls(\"context\", contextvars.copy_context())\n    \n        try:\n>           return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass\n                t_outputs, *args, **kwargs\n            )  # Calls into the C++ engine to run the backward pass\nE           torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 40.00 MiB. GPU 0 has a total capacity of 11.54 GiB of which 39.50 MiB is free. Process 1512674 has 11.07 GiB memory in use. Including non-PyTorch memory, this process has 422.00 MiB memory in use. Of the allocated memory 190.04 MiB is allocated by PyTorch, and 25.96 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://docs.pytorch.org/docs/stable/notes/cuda.html#optimizing-memory-usage-with-pytorch-cuda-alloc-conf)\n\n../../ouro_project/venv/lib/python3.14/site-packages/torch/autograd/graph.py:882: OutOfMemoryError\n=============================== warnings summary ===============================\nfoundation_learner/tests/test_training_lora.py: 14 warnings\n  /home/moloch/ouro_project/venv/lib/python3.14/site-packages/torch/jit/_script.py:359: DeprecationWarning: `torch.jit.script_method` is not supported in Python 3.14+ and may break. Please switch to `torch.compile` or `torch.export`.\n    warnings.warn(\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n=========================== short test summary info ============================\nFAILED foundation_learner/tests/test_training_trainer.py::test_bf16_autocast_and_gpu_accounting_on_a_real_device\n1 failed, 1750 passed, 8 skipped, 14 warnings in 1506.64s (0:25:06)\n",
+      "verdict": "FAIL"
     },
     {
       "checks": {
@@ -61,7 +63,7 @@
         "SECOND_SEED": "COMPLETE"
       },
       "report_path": "/home/moloch/ouro_worktrees/foundation-learner-b200-v0/foundation_learner/reports/local_runs/dress_rehearsal/REHEARSAL_REPORT.json",
-      "seconds": 422.25,
+      "seconds": 399.19,
       "states_walked": [
         "START_SESSION",
         "RUN_O1_CALIBRATION",
@@ -81,19 +83,19 @@
     },
     {
       "coverage": {
-        "listed": 262,
+        "listed": 275,
         "mismatched": [],
         "missing": [],
         "ok": true,
-        "present": 262,
+        "present": 275,
         "unlisted": []
       },
       "include_pregen": true,
-      "seconds": 0.25,
+      "seconds": 0.46,
       "suite": "package_checksums",
       "verdict": "PASS"
     }
   ],
-  "utc": "2026-08-10T04:46:53Z",
-  "verdict": "ALL FOUNDATION LEARNER LOCAL CHECKS PASSED"
+  "utc": "2026-08-23T20:34:58Z",
+  "verdict": "1 SUITE(S) FAILED"
 }

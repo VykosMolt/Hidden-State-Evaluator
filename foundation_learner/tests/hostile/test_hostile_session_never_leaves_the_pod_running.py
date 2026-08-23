@@ -694,8 +694,24 @@ def test_a_real_session_charges_provisioning_against_the_allowance(
     authorized, source = sup._pod_authorized_seconds()
     assert authorized == 20000 - ss.PROVISIONING_ALLOWANCE_SECONDS
     assert "provisioning" in source
-    # a container that has already been up longer than the fixed allowance
-    # is charged its measured uptime instead
+    # A container already up longer than the fixed allowance is charged its
+    # measured uptime instead.  A FRESH supervisor, because the charge is
+    # measured once at START_SESSION and then frozen: on a real pod the entry
+    # script has always stamped O1_POD_ENTRY_EPOCH before the supervisor
+    # exists, so the env never changes under a live instance the way it does
+    # in this fixture.
     monkeypatch.setenv("O1_POD_ENTRY_EPOCH", str(_time.time() - 3000))
-    authorized, _ = sup._pod_authorized_seconds()
+    sup2 = make_supervisor(tmp_path, path)
+    authorized, _ = sup2._pod_authorized_seconds()
     assert 16990 <= authorized <= 17001, authorized
+
+    # ...and it must STAY frozen.  Re-measuring on every call is what charged
+    # the O1 phase twice: by the time RUN_FL_LADDER asked, container uptime
+    # already contained the whole O1 phase, which the caller then subtracted
+    # again as _elapsed(), starving the FL ladder to zero for any O1 phase
+    # past ~8,500 s.
+    monkeypatch.setenv("O1_POD_ENTRY_EPOCH", str(_time.time() - 12000))
+    again, _ = sup2._pod_authorized_seconds()
+    assert again == authorized, (
+        f"the provisioning charge was re-measured ({again} != {authorized}); "
+        f"it must be frozen at START_SESSION")
