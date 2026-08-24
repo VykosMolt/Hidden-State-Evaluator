@@ -13,14 +13,14 @@
             "endTime": "2026-08-25T00:00:00Z",
             "startTime": "2026-07-25T00:00:00Z"
           },
-          "recordCount": 3,
+          "recordCount": 6,
           "totals": {
             "cpuAmount": 0,
-            "diskAmount": 0.0009259259095415473,
-            "gpuAmount": 1.6843133866786957,
-            "totalAmount": 1.6852393125882372
+            "diskAmount": 0.003703703638166189,
+            "gpuAmount": 3.1946149764116853,
+            "totalAmount": 3.1983186800498515
           },
-          "uniquePodCount": 3
+          "uniquePodCount": 6
         },
         "records": [
           {
@@ -31,6 +31,15 @@
             "podId": "02qa6d8ni12lkt",
             "startTime": "2026-08-24T00:00:00Z",
             "totalAmount": 0.8854562913766131
+          },
+          {
+            "cpuAmount": 0,
+            "diskAmount": 0.0018518518190830946,
+            "endTime": "2026-08-25T00:00:00Z",
+            "gpuAmount": 0.8521090224385262,
+            "podId": "aat70vjybctgpq",
+            "startTime": "2026-08-24T00:00:00Z",
+            "totalAmount": 0.8539608742576092
           },
           {
             "cpuAmount": 0,
@@ -45,6 +54,24 @@
             "cpuAmount": 0,
             "diskAmount": 0,
             "endTime": "2026-08-25T00:00:00Z",
+            "gpuAmount": 0.0037543249782174826,
+            "podId": "fv38843usfa18j",
+            "startTime": "2026-08-24T00:00:00Z",
+            "totalAmount": 0.0037543249782174826
+          },
+          {
+            "cpuAmount": 0,
+            "diskAmount": 0.0009259259095415473,
+            "endTime": "2026-08-25T00:00:00Z",
+            "gpuAmount": 0.654438242316246,
+            "podId": "jnyymivx644hjg",
+            "startTime": "2026-08-24T00:00:00Z",
+            "totalAmount": 0.6553641682257876
+          },
+          {
+            "cpuAmount": 0,
+            "diskAmount": 0,
+            "endTime": "2026-08-25T00:00:00Z",
             "gpuAmount": 0.6575000286102295,
             "podId": "lvar1b2yj16o82",
             "startTime": "2026-08-24T00:00:00Z",
@@ -52,13 +79,12 @@
           }
         ]
       },
-      "retrieved_utc": "2026-08-24T11:13:00Z"
+      "retrieved_utc": "2026-08-24T17:05:48Z"
     },
     "compatible_datacenters": {
       "datacenters": [
         "EU-NL-1",
-        "EUR-IS-1",
-        "US-WA-2"
+        "EUR-IS-1"
       ]
     },
     "graphql_spot_contract": {
@@ -103,8 +129,7 @@
       "availability": "LOW",
       "datacenters": [
         "EU-NL-1",
-        "EUR-IS-1",
-        "US-WA-2"
+        "EUR-IS-1"
       ],
       "fallback_reason": null,
       "gpu_id": "NVIDIA B300 SXM6 AC",
@@ -154,9 +179,9 @@
     "surfaces_ok": true
   },
   "qualifying_offer_now": true,
-  "report_sha256": "74759d24db65437e0ea66dbaf704beadff2d88ac91d49405fa635af18dcb5c33",
+  "report_sha256": "e6ac9ea7e3dc47a18a017d4d523f36a015ca5d566effc1f67adf2be90c91e435",
   "schema": "o1b200.runpod_readonly_preflight.v1",
   "selected_profile": "B300",
-  "utc": "2026-08-24T11:12:51Z",
+  "utc": "2026-08-24T17:05:41Z",
   "verdict": "PASS"
 }

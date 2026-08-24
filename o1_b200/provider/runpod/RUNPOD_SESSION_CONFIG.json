@@ -14,7 +14,7 @@
     "package": "O1_B300_RUNNER_v0.3.16_RUNPOD_PRERENTAL",
     "result_destination": "private HF repo Vykos/o1-b200-results (SEPARATE from staging; pod write token fine-grained to results only)"
   },
-  "image_digest_ref": "ghcr.io/vykosmolt/o1-b300-runner@sha256:24fc8aab5a0f5552c249b2ea54e9352845cb8253d30f0c5350f00df02a03f336",
+  "image_digest_ref": "ghcr.io/vykosmolt/o1-b300-runner@sha256:b50a64c733fd4531aa12d43b33587e0acd942d447ec5d0dad7e3cb4e0de431d3",
   "package_zip_sha256": "c39dff64bd3b87356bd060265c8b5eff870a66672d65aace84d00a0d104e879e",
   "profile_preference": [
     "B300",
