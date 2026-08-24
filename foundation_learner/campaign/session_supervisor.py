@@ -121,11 +121,23 @@ O1_CLOSE_RECEIPT = "O1_CLOSE_RECEIPT.json"
 #: but finite, because waiting forever costs money either way.
 TERMINATE_TIMEOUT_SECONDS = 900.0
 TRANSFER_TIMEOUT_SECONDS = 900.0
-#: Charged against the pod allowance before this supervisor's clock starts
-#: (image pull + container start + fetches + gates); the entry script may
-#: stamp O1_POD_ENTRY_EPOCH so the measured container uptime is used when
-#: larger.
-PROVISIONING_ALLOWANCE_SECONDS = 1200.0
+#: Charged against the pod allowance before this supervisor's clock starts.
+#: This is a FLOOR: max(this, measured container uptime at START_SESSION),
+#: so it only binds when the real overhead is smaller -- which it always is.
+#:
+#: MEASURED ON A REAL B300, 2026-08-24 (o1_b200/reports/B300_HARDWARE_EVIDENCE.json):
+#:   checkpoint fetch 5.34 GB   9 s   (567 MB/s)
+#:   full staging     5.85 GB  10 s   (600 MB/s)
+#:   model load                2.4 s
+#:   identity hardware gate    < 5 s
+#: i.e. container start -> START_SESSION is ~30-60 s, not 1200.  (The 13.8 GB
+#: image pull took 216 s but happens BEFORE the container starts, so it is
+#: outside this window and outside O1_POD_ENTRY_EPOCH entirely.)
+#:
+#: 1200 over-charged the ladder by ~19 minutes of every pod.  300 is still a
+#: 5-10x margin over everything measured, and this remains a floor: if a cold
+#: host really is slower, the measured uptime wins.
+PROVISIONING_ALLOWANCE_SECONDS = 300.0
 
 #: Below this the O1 phase cannot reach even its own affordability
 #: gate, so spawning it only converts budget exhaustion into a
