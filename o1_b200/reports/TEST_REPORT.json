@@ -112,6 +112,31 @@
     },
     {
       "checks": [
+        "enumeration is len(tasks)*8*(1+len(grid)) requests with unique keys",
+        "enumerated set equals a faithful replay of the sealed calibration loop (both inclusions), resume path included",
+        "HOSTILE: any un-enumerated request RAISES MissingPrecomputedRow naming the key (never a silent serial fallback or default row)",
+        "HOSTILE: same task_id with different task_content_sha256 is refused, not served from the precomputed row",
+        "a planned but not-yet-generated row raises rather than returning a placeholder",
+        "+0.0/-0.0 and int/numpy-int/exact-float seed spellings never miss",
+        "HOSTILE: a >=2**53 seed passed as a float is refused with a precision error, never silently truncated to a neighbour",
+        "direction is keyed on array CONTENT (a copy hits, a one-ULP perturbation misses), never on array identity",
+        "decode() delegates to the sealed tokenizer with skip_special_tokens=True, exactly like RealBackend.decode",
+        "batch_size is honoured, every request is generated exactly once, and a baseline bank is never split across batches",
+        "batch_size < 8 is refused (the baseline bank must share one batch shape)",
+        "HOSTILE: baseline prefill boundaries that differ across the bank are refused at precompute (same condition as sealed O4)",
+        "a duplicated alpha in the swept grid is caught by the key uniqueness assert at construction",
+        "degenerate enumeration inputs (axis shape, non-finite axes, empty tasks/grid, duplicate task_id) are refused",
+        "loading the sealed checkpoint without manifest_raw is refused: assert_runtime_versions() cannot be skipped via injection",
+        "the default generation path is engine_batched.generate_batch (the equivalence-gated engine), not the injection hook",
+        "end to end on the real batched engine (synthetic runtime): the sealed scorer accepts every served row, decode round-trips, and each served row is bitwise the single-row result for its own request"
+      ],
+      "failed": 0,
+      "failures": [],
+      "module": "test_calibration_backend",
+      "passed": 17
+    },
+    {
+      "checks": [
         "equivalence matrix: replica w2/w3 + batched b1..b32 + compaction are structurally exact and scientific-core identical to serial",
         "worker crash mid-run: safe restart completes with no missing and no duplicate rows",
         "interruption + resume reproduces the uninterrupted run exactly",
@@ -416,12 +441,13 @@
         "the leftover sweep terminates only this session's pods and never a foreign one",
         "a permanent refusal is recorded for defects but never for budget-dependent aborts the pod declares",
         "budget-dependence survives every hop from the pod's exception to the driver's refusal-marker decision",
-        "the O1 -> FL hop re-reads the child's budget classification instead of dropping it"
+        "the O1 -> FL hop re-reads the child's budget classification instead of dropping it",
+        "the affordability gate projects from the backend the calibration will actually run on, and only when that configuration earned its own equivalence verdict"
       ],
       "failed": 0,
       "failures": [],
       "module": "test_review_repairs",
-      "passed": 35
+      "passed": 36
     },
     {
       "checks": [
@@ -455,7 +481,7 @@
   "schema": "o1b200.test_report.v1",
   "scope_note": "Hardware-independent local validation only: synthetic runtime + non-O1 corpus + mocked provider/clock. No B200 hardware claim is made or implied.",
   "total_failed": 0,
-  "total_passed": 291,
-  "utc": "2026-08-24T13:23:22Z",
+  "total_passed": 309,
+  "utc": "2026-08-24T15:10:22Z",
   "verdict": "ALL O1 B200 RUNNER TESTS PASSED"
 }

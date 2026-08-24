@@ -25,6 +25,7 @@ MODULES = [
     "test_persistence",
     "test_intervention_transport",
     "test_engine_batched",
+    "test_calibration_backend",
     "test_backends",
     "test_corpus_and_policies",
     "test_budget_watchdog",

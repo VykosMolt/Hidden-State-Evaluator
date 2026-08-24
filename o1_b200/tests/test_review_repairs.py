@@ -1257,6 +1257,79 @@ def run_extra(r: Runner) -> Runner:
             "instead of dropping it",
             u5_the_o1_to_fl_hop_carries_the_same_classification)
 
+    # -------- V1: the affordability gate follows the injected backend -----
+
+    def v1_affordability_projects_from_the_backend_that_will_actually_run():
+        """The gate must project the rate the CALIBRATION will deliver.
+
+        The sealed orchestrator always accepted an injected backend; only
+        its CLI omitted it, so the calibration ran serially and the gate
+        projected serially to match.  Now that calibration_launcher injects
+        the selected backend, a gate still pinned to REFERENCE_SERIAL would
+        refuse affordable sessions -- and, far worse, a gate that trusts the
+        selected rate WITHOUT checking the calibration will really use it
+        passes and then runs out of runtime mid-corpus, having paid for it.
+        """
+        from o1_b200.runner.production_entry import (
+            calibration_backend_choice, ProductionEntryError,
+            CALIBRATION_REFERENCE_ID)
+        fast = "B200_BATCHED_w1_b256"
+        bench = [{"config_id": CALIBRATION_REFERENCE_ID,
+                  "backend": "REFERENCE_SERIAL", "workers": 1, "batch": 1,
+                  "completed_rows_per_hour": 150.0},
+                 {"config_id": fast, "backend": "B200_BATCHED",
+                  "workers": 1, "batch": 256,
+                  "completed_rows_per_hour": 11317.0}]
+
+        def ctx(equivalence, selected=fast, benchmark=bench):
+            return {"benchmark": benchmark, "equivalence": equivalence,
+                    "selected_backend": {"config_id": selected}}
+
+        # the whole point: a verified selection is projected from
+        got = calibration_backend_choice(
+            ctx({fast: {"eligible_structurally": True}}))
+        assert got["config_id"] == fast, got
+        assert got["rows_per_hour"] == 11317.0 and got["batch"] == 256, got
+
+        # every way of NOT having earned it falls back to the terminal
+        # fallback, never to the fast rate
+        for equivalence, why in (
+                ({}, "no equivalence verdict at all"),
+                ({fast: {"eligible_structurally": False}}, "verdict is False"),
+                ({fast: {"skipped": "precalibration cost rule"}},
+                 "skipped untested"),
+                ({fast: {"eligible_structurally": None}}, "verdict is None")):
+            got = calibration_backend_choice(ctx(equivalence))
+            assert got["config_id"] == CALIBRATION_REFERENCE_ID, (why, got)
+            assert got["rows_per_hour"] == 150.0, (why, got)
+
+        # selected and verified, but never benchmarked -> no rate to trust
+        got = calibration_backend_choice(
+            ctx({fast: {"eligible_structurally": True}},
+                benchmark=[bench[0]]))
+        assert got["config_id"] == CALIBRATION_REFERENCE_ID, got
+
+        # a zero/absent reference rate is not silently treated as usable
+        for broken in ({"config_id": CALIBRATION_REFERENCE_ID,
+                        "completed_rows_per_hour": 0.0},
+                       {"config_id": CALIBRATION_REFERENCE_ID,
+                        "completed_rows_per_hour": None}):
+            try:
+                calibration_backend_choice(
+                    {"benchmark": [broken], "equivalence": {},
+                     "selected_backend": {}})
+            except ProductionEntryError as exc:
+                assert "unmeasured rate" in str(exc), exc
+            else:
+                raise AssertionError(
+                    f"a {broken['completed_rows_per_hour']!r} reference rate "
+                    f"must not be projected from")
+
+    r.check("the affordability gate projects from the backend the "
+            "calibration will actually run on, and only when that "
+            "configuration earned its own equivalence verdict",
+            v1_affordability_projects_from_the_backend_that_will_actually_run)
+
     return r
 
 

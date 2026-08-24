@@ -217,7 +217,17 @@ def _gpu_stats(worker_gpu: dict | None = None) -> dict:
 
 def benchmark_config(entry: dict, corpus_dir: str, out_dir: str,
                      model_artifact: dict, task_subset=None,
-                     device: str = "cpu") -> dict:
+                     device: str = "cpu", return_rows: bool = False) -> dict:
+    """Measure one configuration over the validation corpus.
+
+    ``return_rows`` additionally returns the finalized records.  The
+    equivalence phase needs the ROWS and the benchmark needs the THROUGHPUT;
+    one execution yields both, and on real hardware the REFERENCE_SERIAL pass
+    is ~1.9 h of a ~5 h session, so it must not be paid twice.  Rows are
+    opt-in because every non-reference stage's report is serialized to
+    BENCHMARK_REPORT.real.json, where 384 records per stage would bloat it
+    for no purpose.
+    """
     backend_id = entry["backend"]
     w = int(entry.get("workers", 1))
     b = int(entry.get("batch", 1))
@@ -281,6 +291,7 @@ def benchmark_config(entry: dict, corpus_dir: str, out_dir: str,
     backend.shutdown()
     backend2.shutdown()
     return {
+        **({"rows": rows} if return_rows else {}),
         "config_id": entry["config_id"],
         "backend": backend_id, "workers": w, "batch": b,
         "n_rows": len(rows),

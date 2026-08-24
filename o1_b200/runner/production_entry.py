@@ -43,6 +43,7 @@ from .precommit_template import finalize, load_template, resolve
 from .provider_adapter import LocalProviderAdapter
 from .runbuild import O1_MANIFEST_PATHS
 from .benchmark_o1_b200 import (_oom_types, _stage_cost_estimate,
+                                benchmark_config,
                                 load_benchmark_order)
 from .identity import domain_sha256, sha256_file
 from .selection import benchmark_candidates, derive_gates, select_backend
@@ -82,6 +83,74 @@ ROOT = sealed_import.WORKTREE_ROOT
 CHECKPOINT_DIR = os.environ.get("O1_CHECKPOINT_DIR",
                                 "/artifacts/ouro_rltt_local")
 O1_ROWS_TOTAL = 4608
+
+
+#: The terminal fallback: serial, batch 1, eligible by construction.
+CALIBRATION_REFERENCE_ID = "REFERENCE_SERIAL_w1_b1"
+
+
+def calibration_backend_choice(ctx: dict) -> dict:
+    """The backend the CALIBRATION will actually run on.
+
+    ``orchestrate_calibration`` has always accepted an injected backend
+    (run_o1_v2_orchestrator.py, ``backend=None``); only its CLI omitted it,
+    so every previous revision ran the calibration through the sealed
+    one-row-at-a-time RealBackend and the affordability gate projected the
+    serial rate accordingly.  runner/calibration_launcher.py supplies that
+    injected backend, so the projection must follow the same decision.
+
+    THE GATE AND THE LAUNCHER MUST BOTH READ THIS FUNCTION.  A gate that
+    projects from a rate the calibration will not deliver is exactly the
+    failure the gate exists to prevent, and it fails in the expensive
+    direction: it PASSES, and the session then runs out of authorized
+    runtime part-way through a 4,608-row corpus, having paid for all of it.
+
+    A configuration is usable here only if the frozen rule SELECTED it and
+    it earned its OWN structural-equivalence verdict.  Anything else falls
+    back to REFERENCE_SERIAL.  A configuration without its own equivalence
+    verdict is ineligible, even when it is the fastest.
+    """
+    bench = {c.get("config_id"): c for c in (ctx.get("benchmark") or [])}
+    equivalence = ctx.get("equivalence") or {}
+
+    def measured_rate(config_id):
+        entry = bench.get(config_id)
+        if entry is None:
+            return None
+        try:
+            rate = float(entry.get("completed_rows_per_hour"))
+        except (TypeError, ValueError):
+            return None
+        return rate if rate > 0 else None
+
+    def described(config_id, rate, basis):
+        entry = bench.get(config_id) or {}
+        return {"config_id": config_id,
+                "backend": entry.get("backend"),
+                "workers": int(entry.get("workers") or 1),
+                "batch": int(entry.get("batch") or 1),
+                "rows_per_hour": rate,
+                "basis": basis}
+
+    selected = ctx.get("selected_backend") or {}
+    config_id = str(selected.get("config_id") or "")
+    if config_id and config_id != CALIBRATION_REFERENCE_ID:
+        verdict = equivalence.get(config_id) or {}
+        rate = measured_rate(config_id)
+        if verdict.get("eligible_structurally") is True and rate:
+            return described(config_id, rate,
+                             "selected by the frozen rule and structurally "
+                             "equivalent to REFERENCE_SERIAL over the full "
+                             "validation corpus")
+
+    rate = measured_rate(CALIBRATION_REFERENCE_ID)
+    if rate is None:
+        raise ProductionEntryError(
+            f"no measured {CALIBRATION_REFERENCE_ID} throughput; the "
+            f"affordability gate cannot be projected from an unmeasured rate")
+    return described(CALIBRATION_REFERENCE_ID, rate,
+                     "terminal fallback: no selected configuration carried "
+                     "both an equivalence verdict and a measured rate")
 RECORDS_SYNC_EVERY_ROWS = 50
 RECORDS_SYNC_POLL_SECONDS = 15.0
 
@@ -300,8 +369,30 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
                        for cid, v in sorted(ctx["equivalence"].items())}}
         phase_t0 = clock()
         remaining_at_start = ctx["runtime_limit"] - phase_t0
-        ref = run_backend("REFERENCE_SERIAL", corpus_dir,
-                          os.path.join(out_dir, "eq_ref"), artifact)
+        # Measure the reference pass with the BENCHMARK's own instrument, not
+        # a bare run_backend.  The equivalence phase needs this pass's ROWS
+        # and the benchmark phase needs its THROUGHPUT; a bare run_backend
+        # returns only {finalized, rows, bundle, config_id}, so the eight
+        # throughput fields the reuse tried to copy out of it did not exist
+        # and the reused REFERENCE_SERIAL entry reached selection as a stub
+        # with no measured rate -- failing four non-waivable gates and
+        # aborting at BACKEND_SELECT, or passing a divide-by-zero rate into
+        # the affordability gate.  benchmark_config measures the same corpus
+        # with the same bundle (both call build_validation_bundle identically)
+        # and additionally performs the resume no-op and stability windows the
+        # gates require, so one execution now yields both.
+        ref_entry = next(e for e in stages
+                         if e["backend"] == "REFERENCE_SERIAL")
+        # device= is deliberately left at the same value the other
+        # equivalence stages use (run_backend's default): it feeds
+        # runtime_environment_sha256, so changing it here alone would give
+        # the reference pass a different environment identity from the
+        # candidates it is compared against.
+        ref_measured = benchmark_config(
+            ref_entry, corpus_dir, os.path.join(out_dir, "eq_ref"),
+            artifact, return_rows=True)
+        ref = {"rows": ref_measured.pop("rows"),
+               "config_id": ref_entry["config_id"]}
         ref_seconds = max(1.0, clock() - phase_t0)
         # BENCHMARK_ORDER amendment 2: the pre-calibration phase (equivalence
         # + benchmark, both over the full validation corpus per stage) is
@@ -346,15 +437,14 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
             # THIS pass instead of repeating the identical computation.
             # ``ref`` is a local of this phase; the benchmark phase is a
             # different function and cannot see it, so it travels in ctx.
+            # the FULL benchmark-shaped measurement, not a hand-picked
+            # subset: derive_gates reads fields this code should not be in
+            # the business of enumerating, and every field it cannot find
+            # defaults to a gate FAILURE.
             "reference_measured": {
+                **ref_measured,
                 "total_stage_seconds": ref_seconds,
-                "reused_from": "precalibration equivalence reference pass",
-                **{k: v for k, v in (ref or {}).items()
-                   if k in ("n_rows", "completed_rows_per_second",
-                            "effective_seconds_per_row",
-                            "decode_tokens_per_second", "model_load_seconds",
-                            "peak_hbm_bytes", "integrity_failures",
-                            "oom_count")}},
+                "reused_from": "precalibration equivalence reference pass"},
         }
         comp = {"REFERENCE_SERIAL_w1_b1": {
             "eligible_structurally": True, "scientific_core_identical": True,
@@ -658,25 +748,17 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
                 "key": key, "prior_commitments": len(existing)}
 
     def affordability(ctx):
-        # The sealed v2.1 orchestrator takes NO backend/worker/batch
-        # parameter — it builds its own single-row serial backend. So the
-        # calibration runs at the REFERENCE_SERIAL rate no matter which
-        # configuration the frozen policy selected, and projecting from the
-        # selected (fastest, batched) rate would under-estimate the time by
-        # the whole batching speed-up and pass a gate that cannot hold.
-        eq_ref = "REFERENCE_SERIAL_w1_b1"
-        serial = next((c for c in ctx.get("benchmark", [])
-                       if c.get("config_id") == eq_ref), None)
-        if serial is None:
-            raise ProductionEntryError(
-                f"no measured {eq_ref} throughput; the affordability gate "
-                f"cannot be projected from an unmeasured rate")
-        rows_per_hour = float(serial["completed_rows_per_hour"])
+        # Project from the backend the calibration will ACTUALLY run on.
+        # The launcher injects this same choice into the sealed
+        # orchestrator, so the gate and the run cannot disagree about the
+        # rate; see calibration_backend_choice.
+        choice = calibration_backend_choice(ctx)
+        ctx["calibration_backend"] = choice
+        rows_per_hour = float(choice["rows_per_hour"])
         ctx["affordability_rate_basis"] = {
-            "config_id": eq_ref, "rows_per_hour": rows_per_hour,
-            "why": ("the sealed orchestrator generates serially; the "
-                    "selected backend governs the non-O1 benchmark and the "
-                    "precommit record, not calibration throughput")}
+            "config_id": choice["config_id"],
+            "rows_per_hour": rows_per_hour,
+            "why": choice["basis"]}
         # Progress must come from the DURABLE marker, not from local disk.
         # The restore runs inside the CALIBRATION handler, which is a LATER
         # state, and out_dir is fresh container disk on every pod -- so a
@@ -856,8 +938,13 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
             os.path.join(out_dir, "RUNTIME_ARTIFACT_PATHS.pod.json"))
         sealed_precommit_path = os.path.join(
             out_dir, "CALIBRATION_PRECOMMIT.sealed_format.json")
+        # WORKTREE_ROOT so the child can import o1_b200.runner.
+        # calibration_launcher; SEALED_DIR so the sealed modules resolve by
+        # bare name exactly as they did when the sealed CLI was invoked
+        # directly.  cwd stays SEALED_DIR, unchanged.
         env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1",
-               "PYTHONPATH": sealed_import.SEALED_DIR}
+               "PYTHONPATH": os.pathsep.join(
+                   [sealed_import.WORKTREE_ROOT, sealed_import.SEALED_DIR])}
         # The sealed record sink binds every row to the precommit's sha256
         # and refuses to mix bindings, so the precommit must be minted ONCE
         # for the whole session and reused by every later pod — regenerating
@@ -927,11 +1014,25 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
         _log_event(out_dir, "SEALED_PRECOMMIT_BOUND", reused=reused)
         # 3. run the sealed v2.1 orchestrator (never re-implemented) as a
         #    subprocess; mirror the records file periodically for durability
+        # Invoke the sealed orchestrator THROUGH runner/calibration_launcher,
+        # which supplies the ``backend=`` seam orchestrate_calibration has
+        # always had and its CLI never exposed.  The sealed package itself is
+        # untouched and still byte-verified by sealed_import before it can be
+        # imported at all.  With the reference configuration the launcher
+        # injects nothing and the run is the sealed default unchanged.
+        #
+        # This is the SAME choice the affordability gate projected from -- see
+        # calibration_backend_choice.  Recomputing it here rather than
+        # trusting a stale ctx entry keeps the two from drifting apart on a
+        # resumed pod, where the gate ran in an earlier process.
+        choice = calibration_backend_choice(ctx)
+        ctx["calibration_backend"] = choice
+        _log_event(out_dir, "CALIBRATION_BACKEND_INJECTED",
+                   config_id=choice["config_id"], batch=choice["batch"],
+                   rows_per_hour=choice["rows_per_hour"],
+                   basis=choice["basis"])
         cmd = [
-            sys.executable,
-            os.path.join(sealed_import.SEALED_DIR,
-                         "run_o1_v2_orchestrator.py"),
-            "calibration",
+            sys.executable, "-m", "o1_b200.runner.calibration_launcher",
             "--manifest-design", manifest_path,
             "--artifact-paths", artifact_map_path,
             "--precommit", sealed_precommit_path,
@@ -943,6 +1044,8 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
             "--metadata-output", os.path.join(out_dir, "o1_metadata.json"),
             "--progress", progress_path,
             "--boundary-cache-dir", os.path.join(out_dir, "boundary_cache"),
+            "--backend", str(choice["config_id"]),
+            "--batch-size", str(int(choice["batch"])),
         ]
         # binary stdout + explicit decoding: text=True decodes strict UTF-8,
         # so one stray byte from a CUDA/NCCL/driver message would raise
