@@ -140,6 +140,67 @@ configuration without its own verdict is ineligible for selection, so the
 deepest batch — which throughput ranking would otherwise prefer — can never
 be chosen on a verdict measured for a different batch size.
 
+## 6b. What real hardware measured (2026-08-24)
+
+Five B300 pods, USD 3.07 total. Full record in
+`reports/B300_HARDWARE_EVIDENCE.json`. This section exists because until this
+date **every** claim here about B300 behaviour was inference.
+
+**sm_103 native execution: CONFIRMED.** Device reports compute capability
+10.3, 148 SMs, 287.4 GB. `torch.cuda.get_arch_list()` does **not** contain
+sm_103 -- the wheel targets sm_100 -- and a bf16 8192-cubed matmul ran at
+1763.8 TFLOP/s. With zero PTX embedded, a kernel either loads as native SASS
+or raises. The same-major/higher-minor argument holds on silicon.
+
+**Hardware gate: ACCEPTED**, identity-only and full-workload, `problems: []`.
+The O1 intervention hook lands its perturbation to six significant figures
+(injected_rms 0.06737900525, realized_delta_rms 0.06737968326).
+
+**Provisioning was 5x over-stated.** Checkpoint fetch is 5.34 GB in **9 s**
+(567 MB/s); full staging 5.85 GB in 10 s; model load 2.4 s; image pull 216 s
+(and that happens before the container starts, so it is outside
+`O1_POD_ENTRY_EPOCH` entirely). `PROVISIONING_ALLOWANCE_SECONDS` has been
+corrected 1200 -> 300, returning ~15 min per pod to the FL ladder.
+
+**The affordability model is conservative, not optimistic.** The gate assumes
+~1.7 s/row = 2,118 rows/h. Measured with full 256-token rows at a modest
+batch 256: **11,317 rows/h**, i.e. the whole 4,608-row calibration in
+**0.41 h**. The 15x laptop extrapolation that three review rounds treated as
+the biggest risk has ~5x of margin.
+
+**Per-row latency is architectural.** `total_ut_steps: 4` over 48 layers is
+~192 layer-passes per generated token, and per-row latency is FLAT (~47 s for
+a 256-token row) from batch 1 to batch 64. Throughput comes entirely from
+batch parallelism and never from per-row speed.
+
+### An open scientific decision: the frozen benchmark order stops at b48
+
+`policies/BENCHMARK_ORDER.json` declares `frozen_before_hardware_access:
+true` and its deepest stage is `B200_BATCHED_w1_b48`. Measured on a B300, at
+32 new tokens, throughput scales essentially linearly far past that:
+
+| batch | tok/s | peak HBM | note |
+|---|---|---|---|
+| 48 | 251.8 | 12.1 GB | deepest frozen stage |
+| 256 | 1121.0 | 28.1 GB | ~4.5x b48 |
+| 1024 | 3178.5 | 96.3 GB | |
+| 2048 | 5206.0 | 187.2 GB | ~20x b48 |
+| 4096 | OOM | | ceiling at 32 tokens |
+
+**This file has deliberately NOT been changed.** Extending a benchmark order
+after seeing hardware results is precisely the post-hoc tuning the freeze
+exists to prevent: the order decides which backend is selected, and choosing
+it with knowledge of the outcome is not the same experiment. Whether to
+re-freeze a deeper order is an explicit scientific decision for the operator,
+made and recorded deliberately -- not a silent edit. (Note also that
+`policies/` is inside the image source identity, so any change requires a
+rebuild and re-push.)
+
+The caveat that matters if it is revisited: the deep-batch numbers above are
+at **32** new tokens. KV cache grows with sequence length, so the ceiling for
+real 256-token rows is well below 2048; b128 and b256 were the only deep
+batches measured at full row length.
+
 ## 7. What is NOT proven
 
 * No B300 or B200 hardware has executed anything from this stack.

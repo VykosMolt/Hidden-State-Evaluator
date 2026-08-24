@@ -1,6 +1,6 @@
 {
   "base_image_digest": "python@sha256:23c59390fc717bf09f9336908199a0ae75d9c4264bf296123f94ad772fea3b52",
-  "build_timestamp_utc": "2026-08-24T00:40:48Z",
+  "build_timestamp_utc": "2026-08-24T10:42:31Z",
   "dependency_lock_sha256": "53c15b49312dbe6b1ca1e399ae9cf6045c1bdbc53ab1f825a5d3cfbf0870335b",
   "dockerfile_sha256": "3f000a4f2a96f64afd247eeb96d6505f7b0192ee18f9695e3fabcacc1cac73d6",
   "environment": {
@@ -23,13 +23,13 @@
     "transformers": "4.54.1"
   },
   "foundation_learner_layout": "/opt/foundation_learner/foundation_learner (import root /opt/foundation_learner); pregen episode corpus NOT baked \u2014 campaign/fetch_pregen.py materialises and hash-verifies it on the pod",
-  "foundation_learner_source_sha256": "ddfa2c30bd6098e86f9f3fe553e2fe02687429a9c6bf21de681d1a20c855caee",
-  "image_id_local": "sha256:dc689d0d8b66feb7425322960c16adf88fe6b727bec5bb98251b77caafee84c4",
-  "image_name": "o1-b300-runner:v0.3.12",
+  "foundation_learner_source_sha256": "5655927d847399e545f377429cbbbbd6981d257659e579ac154532921bf3170f",
+  "image_id_local": "sha256:24c19b7f2aaf900a0f3bc7044b7a92a85dce3401cbfc440df1c882b271db04ce",
+  "image_name": "o1-b300-runner:v0.3.14",
   "notes": "no FP8/FP4/quantization/speculative/vLLM/TensorRT-LLM/SGLang; no startup installation/compilation/clone/resolution; checkpoint never baked; no credentials",
-  "o1_b200_source_sha256": "17d614e17c9ab8ec16b8a0e4ddf6d552f079870969851dee2a81915efff00d08",
+  "o1_b200_source_sha256": "5e927c3e1c39dbbc8e67917dee6e0ac2ca3ab0868591eb9ccaeb82559f440ae2",
   "platform": "linux/amd64",
-  "registry_digest_ref": "ghcr.io/vykosmolt/o1-b300-runner@sha256:dc689d0d8b66feb7425322960c16adf88fe6b727bec5bb98251b77caafee84c4",
+  "registry_digest_ref": "ghcr.io/vykosmolt/o1-b300-runner@sha256:24c19b7f2aaf900a0f3bc7044b7a92a85dce3401cbfc440df1c882b271db04ce",
   "registry_pushed_utc": "2026-08-24",
   "schema": "o1b300.container_image_record.v2",
   "supported_driver_range": ">= r580 (CUDA 13.0 requirement; RunPod B300/B200 hosts report CUDA 13.0/13.2)",

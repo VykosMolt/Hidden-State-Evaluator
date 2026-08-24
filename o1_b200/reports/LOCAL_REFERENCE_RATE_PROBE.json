@@ -18,5 +18,22 @@
     "affordability_requirement": "1.30 x C + 1,500 s <= remaining after the pre-calibration phase",
     "conclusion": "o1_timeout_seconds=9,000 would likely be REFUSED by O1's own gate; 14,000 gives margin while FL receives what O1 does not USE (the FL clock is actual elapsed, not the timeout)"
   },
-  "utc": "2026-08-22T13:11:18Z"
+  "utc": "2026-08-22T13:11:18Z",
+  "hardware_measurement_2026_08_24": {
+    "status": "MEASURED on a real NVIDIA B300 SXM6 AC; supersedes the laptop extrapolation as the basis for sizing",
+    "method": "plain batched generation on the real 2.6B checkpoint; NOT the project's B200_BATCHED engine (which needs the sealed prompt template and axis directions), so treat as an indicator of scale rather than the official benchmark",
+    "full_256_token_rows": {
+      "batch_128_rows_per_hour": 6613,
+      "batch_256_rows_per_hour": 11317,
+      "batch_256_hours_for_4608_rows": 0.41
+    },
+    "affordability_gate_assumption": {
+      "seconds_per_row": 1.7,
+      "rows_per_hour": 2118,
+      "hours_for_4608_rows": 2.18
+    },
+    "verdict": "the laptop 15x extrapolation is CONSERVATIVE by ~5x at batch 256",
+    "per_row_latency_note": "~47 s per 256-token row, FLAT from batch 1 to 64: total_ut_steps=4 over 48 layers is ~192 layer-passes per token. Latency is architectural; throughput is parallelism only.",
+    "evidence": "reports/B300_HARDWARE_EVIDENCE.json"
+  }
 }

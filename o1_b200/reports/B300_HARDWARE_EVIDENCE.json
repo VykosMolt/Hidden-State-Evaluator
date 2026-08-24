@@ -1,0 +1,127 @@
+{
+  "schema": "o1b300.hardware_evidence.v1",
+  "status": "MEASURED ON REAL HARDWARE 2026-08-24",
+  "note": "First contact with real silicon. Every prior claim in this package about B300 behaviour was inference from cuobjdump output, or extrapolation from a laptop 5070 Ti. These are measurements. Five NVIDIA B300 SXM6 AC pods, RunPod Secure on-demand, USD 3.07 total.",
+
+  "device": {
+    "name": "NVIDIA B300 SXM6 AC",
+    "compute_capability": "10.3",
+    "sm_count": 148,
+    "total_hbm_gb": 287.4,
+    "driver_versions_observed": ["580.159.03", "580.126.09"],
+    "torch": "2.12.1+cu130",
+    "cuda_runtime": "13.0",
+    "cudnn": 92000
+  },
+
+  "sm103_native_execution": {
+    "claim_before": "sm_100 cubins execute natively on sm_103 under NVIDIA's same-major/higher-minor SASS rule; 59 sm_103a cubins and ZERO PTX, so JIT fallback is structurally impossible. Evidence was cuobjdump only, never exercised on hardware.",
+    "verdict": "CONFIRMED",
+    "evidence": {
+      "torch_arch_list": ["sm_75", "sm_80", "sm_86", "sm_90", "sm_100", "sm_120"],
+      "note": "sm_103 is NOT in the build target list; the device is 10.3 and the wheel targets 10.0",
+      "bf16_8192_cubed_matmul_tflops": 1763.8,
+      "reasoning": "With no PTX embedded a kernel either loads as native SASS or raises. It ran at 1.76 PFLOP/s."
+    }
+  },
+
+  "hardware_gate": {
+    "verdict": "ACCEPTED on real B300, problems: []",
+    "identity_only": "ACCEPTED",
+    "full_with_workloads": "ACCEPTED",
+    "workloads": {
+      "bf16_gemm": "ok",
+      "ouro_rltt_load": "ok",
+      "ouro_rltt_forward": "ok, logits [1, 8, 49152]",
+      "ouro_rltt_generate": "ok",
+      "backward_optimizer_step": "ok",
+      "checkpoint_save_load": "ok, roundtrip true",
+      "o1_intervention_hook_and_transport": {
+        "ok": true,
+        "injected_rms": 0.06737900525331497,
+        "realized_delta_rms": 0.06737968325614929,
+        "note": "the O1 experimental apparatus lands its perturbation to 6 significant figures on real hardware"
+      },
+      "allocator_released_after_gate": true
+    }
+  },
+
+  "provisioning": {
+    "claim_before": "MIN_REACQUISITION_SECONDS comment: image pull (13.8 GB) + checkpoint fetch (5 GB) + hash + hardware gate take ~20-30 min before any science can happen. PROVISIONING_ALLOWANCE_SECONDS = 1200.",
+    "verdict": "5x TOO CONSERVATIVE",
+    "measured": {
+      "image_pull_by_digest_from_ghcr_seconds": 216,
+      "checkpoint_fetch_5_34_gb_seconds": 9,
+      "checkpoint_fetch_mb_per_second": 567.5,
+      "full_staging_fetch_5_85_gb_seconds": 10,
+      "full_staging_fetch_mb_per_second": 600,
+      "model_load_seconds": 2.4,
+      "identity_gate_seconds": "< 5",
+      "realistic_total_seconds": 240
+    },
+    "consequence": "PROVISIONING_ALLOWANCE_SECONDS is subtracted directly from the FL ladder's allowance. Rounds 3-5 of review spent substantial effort on arithmetic around a constant that is five times too large."
+  },
+
+  "anonymous_registry_pull": {
+    "verdict": "CONFIRMED",
+    "note": "RunPod pulled ghcr.io/vykosmolt/o1-b300-runner@sha256:... anonymously by DIGEST in ~3.5 min. The image_digest_ref mechanism works against the real registry."
+  },
+
+  "throughput": {
+    "model": "Ouro-RLTT 2.6B, 48 layers, hidden 2048, total_ut_steps 4",
+    "architecture_note": "4 universal-transformer passes over 48 layers = ~192 layer-passes per generated token. Per-row LATENCY is therefore structural and irreducible (~47 s for a 256-token row, FLAT from batch 1 to batch 64). All throughput comes from batch parallelism, none from per-row speed.",
+
+    "sweep_32_new_tokens": {
+      "purpose": "find the memory ceiling; NOT the calibration row shape",
+      "rows": [
+        {"batch": 1, "tokens_per_second": 5.1, "peak_hbm_gb": 5.5},
+        {"batch": 4, "tokens_per_second": 21.6, "peak_hbm_gb": 6.0},
+        {"batch": 16, "tokens_per_second": 86.9, "peak_hbm_gb": 7.6},
+        {"batch": 32, "tokens_per_second": 173.3, "peak_hbm_gb": 10.0},
+        {"batch": 48, "tokens_per_second": 251.8, "peak_hbm_gb": 12.1},
+        {"batch": 64, "tokens_per_second": 342.8, "peak_hbm_gb": 14.3},
+        {"batch": 128, "tokens_per_second": 637.8, "peak_hbm_gb": 16.7},
+        {"batch": 256, "tokens_per_second": 1121.0, "peak_hbm_gb": 28.1},
+        {"batch": 512, "tokens_per_second": 1744.6, "peak_hbm_gb": 50.8},
+        {"batch": 1024, "tokens_per_second": 3178.5, "peak_hbm_gb": 96.3},
+        {"batch": 2048, "tokens_per_second": 5206.0, "peak_hbm_gb": 187.2},
+        {"batch": 4096, "result": "CUDA OOM"}
+      ],
+      "scaling": "essentially linear to 2048; 67x at batch 64, 1021x at batch 2048"
+    },
+
+    "real_256_token_rows": {
+      "purpose": "THE calibration row shape; use these numbers, not the 32-token sweep",
+      "rows": [
+        {"batch": 128, "seconds": 69.7, "rows_per_hour": 6613, "hours_for_4608_rows": 0.70},
+        {"batch": 256, "seconds": 81.4, "rows_per_hour": 11317, "hours_for_4608_rows": 0.41}
+      ],
+      "caveat": "KV cache grows with sequence length, so the deep-batch ceiling for 256-token rows is well BELOW the 2048 reached at 32 tokens. Batches above 256 were not measured at full row length."
+    },
+
+    "affordability_gate_check": {
+      "gate_assumption_seconds_per_row": 1.7,
+      "gate_assumption_rows_per_hour": 2118,
+      "gate_assumption_hours_for_4608_rows": 2.18,
+      "measured_at_batch_256_full_rows": 11317,
+      "verdict": "the 15x laptop extrapolation is CONSERVATIVE by ~5x at a modest batch 256",
+      "note": "measured with plain batched generation, NOT the project's B200_BATCHED engine (which needs the sealed prompt template and axis directions). Treat as an indicator of scale, not as the official benchmark."
+    }
+  },
+
+  "artifact_verify_caught_a_real_defect": {
+    "what_happened": "The production state machine was run on hardware against image v0.3.13. It aborted at ARTIFACT_VERIFY: MISMATCH policies 81dde8b9... != 549da846...",
+    "cause": "v0.3.13 was built from a tree carrying a temporary smoke-test budget policy (USD 9/8/1). That change was reverted afterwards, so the image's baked policies no longer matched the manifest shipped in the same image.",
+    "verdict": "THE GUARD WORKS. It refused to start any scientific process on an internally inconsistent image, on hardware, before spending anything. No local test caught this, because locally the reverted tree is self-consistent.",
+    "resolution": "v0.3.13 deleted from GHCR. v0.3.12 remains bound and was verified consistent: all 11 pod artifacts match POD_TRANSFER_MANIFEST, both source-tree hashes match the image record."
+  },
+
+  "round_2_f10_fix_observed_working": {
+    "note": "FINAL_STATUS.json on the pod reported termination_confirmed: false with termination_authority: IN_POD_STUB_NOT_AUTHORITATIVE. Before the round-2 repair this file claimed termination_confirmed: true from an in-memory stub that terminates nothing."
+  },
+
+  "benchmark_cli_limitation": {
+    "finding": "runner/benchmark_o1_b200.py accepts only --mode local-synthetic. It benchmarks the harness, not the model. The genuine benchmark runs inside the production state machine's NON_O1_BENCHMARK state and cannot be invoked standalone.",
+    "consequence": "Any future attempt to measure real throughput must go through production_entry, or measure directly as this evidence did."
+  }
+}

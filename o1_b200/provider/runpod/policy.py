@@ -109,9 +109,17 @@ MIN_VIABLE_SESSION_SECONDS = 2 * 3600
 # repeat failure with zero synced progress is treated as a container defect
 # (loud abort), never retried as an eviction.
 MAX_POD_ACQUISITIONS = 4
-#: The least remaining allowance worth creating a pod for: image pull (13.8
-#: GB) + checkpoint fetch (5 GB) + hash + hardware gate take ~20-30 min
-#: before any science can happen.  A pod with less than this is pure cost.
+#: The least remaining allowance worth creating a pod for.
+#:
+#: The "~20-30 min before any science can happen" this comment used to claim
+#: was folklore.  MEASURED on a real B300, 2026-08-24
+#: (reports/B300_HARDWARE_EVIDENCE.json): image pull 216 s, checkpoint fetch
+#: 5.34 GB in 9 s (567 MB/s), model load 2.4 s, identity gate < 5 s -- about
+#: FOUR minutes end to end, not twenty to thirty.
+#:
+#: The VALUE is deliberately left at 1800.  Lowering it would authorise
+#: creating pods with less and less remaining allowance, and the measurement
+#: does not justify spending more readily -- only describing it honestly.
 MIN_REACQUISITION_SECONDS = 1800
 
 
