@@ -45,6 +45,7 @@ from .runbuild import O1_MANIFEST_PATHS
 from .benchmark_o1_b200 import (_oom_types, _stage_cost_estimate,
                                 benchmark_config,
                                 load_benchmark_order)
+from .calibration_backend import supports_calibration
 from .identity import domain_sha256, sha256_file
 from .selection import benchmark_candidates, derive_gates, select_backend
 
@@ -83,6 +84,41 @@ ROOT = sealed_import.WORKTREE_ROOT
 CHECKPOINT_DIR = os.environ.get("O1_CHECKPOINT_DIR",
                                 "/artifacts/ouro_rltt_local")
 O1_ROWS_TOTAL = 4608
+
+#: What the equivalence verdicts in EQUIVALENCE_REPORT.real.json DO and do
+#: NOT certify.  Shipped inside the report because that file is what an
+#: auditor reads, and a certificate whose scope is narrower than the run it
+#: licenses must say so on its face.
+EQUIVALENCE_SCOPE_DISCLOSURE = {
+    "certifies":
+        "row-for-row structural equivalence to REFERENCE_SERIAL over the "
+        "validation corpus: row IDs, task hashes, prompt tokens, action "
+        "mapping, axis/sign/alpha mapping, stream/seed mapping, record "
+        "schema and canonical ordering.",
+    "alpha_scope_limit":
+        "The equivalence corpus is built with shape='confirmatory', which "
+        "exercises alpha 0.04 and zero only. The calibration sweeps alpha in "
+        "[0.005, 0.01, 0.02, 0.04, 0.08] over both signs, so 8 of the 10 "
+        "signed alphas it uses lie OUTSIDE the certified range -- including "
+        "the smallest, where rho = RMS(delta_h)/injected_rms is most "
+        "sensitive to any numerical difference. "
+        "row_specs.validation_sweep_rowspecs exists for the "
+        "calibration-shaped enumeration and is NOT used by this phase; "
+        "widening the corpus to it costs roughly +50% on the reference pass.",
+    "batch_composition_limit":
+        "The verdicts are earned by backends.BatchedBackend, which batches "
+        "all baselines across tasks and then all intervention rows. The "
+        "calibration runs a different caller of the same certified engine "
+        "(calibration_backend.PrecomputedBatchedBackend), which co-batches a "
+        "task's baseline bank with its own structured groups. The "
+        "composition-independence this relies on IS exercised by a required "
+        "gate: the zero_alpha arm asserts BITWISE that a direction=None "
+        "row's boundary computed alongside edited rows equals h_base "
+        "computed in a pure baseline batch.",
+    "not_a_measured_defect":
+        "These are disclosed scope limits, not observed failures. No "
+        "numerical disagreement has been measured in either regime.",
+}
 
 
 #: The terminal fallback: serial, batch 1, eligible by construction.
@@ -137,11 +173,30 @@ def calibration_backend_choice(ctx: dict) -> dict:
     if config_id and config_id != CALIBRATION_REFERENCE_ID:
         verdict = equivalence.get(config_id) or {}
         rate = measured_rate(config_id)
-        if verdict.get("eligible_structurally") is True and rate:
+        entry = bench.get(config_id) or {}
+        # ASK THE LAUNCHER'S OWN PREDICATE.  Being selected and structurally
+        # equivalent is not enough: the calibration path must be able to RUN
+        # the configuration.  Every B200_REPLICA stage is batch 1, and a
+        # launcher keyed on batch alone injects nothing -- the gate would
+        # project the replica rate while the run went serial.  B200_BATCHED
+        # _w1_b4 is selectable and is refused at construction.  One predicate,
+        # both callers, or the gate lies about the run.
+        supported, why_not = supports_calibration(
+            entry.get("backend"), entry.get("workers"), entry.get("batch"))
+        if verdict.get("eligible_structurally") is True and rate and supported:
             return described(config_id, rate,
-                             "selected by the frozen rule and structurally "
+                             "selected by the frozen rule, structurally "
                              "equivalent to REFERENCE_SERIAL over the full "
-                             "validation corpus")
+                             "validation corpus, and runnable by the "
+                             "precomputed batched calibration path")
+        if verdict.get("eligible_structurally") is True and rate and why_not:
+            fallback_reason = (
+                f"{config_id} was selected and verified but the calibration "
+                f"path cannot run it ({why_not}); falling back")
+        else:
+            fallback_reason = ""
+    else:
+        fallback_reason = ""
 
     rate = measured_rate(CALIBRATION_REFERENCE_ID)
     if rate is None:
@@ -149,6 +204,7 @@ def calibration_backend_choice(ctx: dict) -> dict:
             f"no measured {CALIBRATION_REFERENCE_ID} throughput; the "
             f"affordability gate cannot be projected from an unmeasured rate")
     return described(CALIBRATION_REFERENCE_ID, rate,
+                     fallback_reason or
                      "terminal fallback: no selected configuration carried "
                      "both an equivalence verdict and a measured rate")
 RECORDS_SYNC_EVERY_ROWS = 50
@@ -527,7 +583,8 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
         ctx["corpus_row_count"] = len(ref["rows"])
         atomic_write_text(
             os.path.join(out_dir, "EQUIVALENCE_REPORT.real.json"),
-            json.dumps(comp, indent=2, sort_keys=True, default=str) + "\n")
+            json.dumps({**comp, "_scope": EQUIVALENCE_SCOPE_DISCLOSURE},
+                       indent=2, sort_keys=True, default=str) + "\n")
         ran = [cid for cid, v in comp.items()
                if not v.get("is_reference") and not str(
                    v.get("skipped", "")).startswith("precalibration cost rule")
@@ -669,8 +726,9 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
             "restored": True, **(payload.get("measured_on") or {})}
         atomic_write_text(
             os.path.join(out_dir, "EQUIVALENCE_REPORT.real.json"),
-            json.dumps(ctx["equivalence"], indent=2, sort_keys=True,
-                       default=str) + "\n")
+            json.dumps({**ctx["equivalence"],
+                        "_scope": EQUIVALENCE_SCOPE_DISCLOSURE},
+                       indent=2, sort_keys=True, default=str) + "\n")
         return True
 
 
@@ -938,13 +996,15 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
             os.path.join(out_dir, "RUNTIME_ARTIFACT_PATHS.pod.json"))
         sealed_precommit_path = os.path.join(
             out_dir, "CALIBRATION_PRECOMMIT.sealed_format.json")
-        # WORKTREE_ROOT so the child can import o1_b200.runner.
-        # calibration_launcher; SEALED_DIR so the sealed modules resolve by
-        # bare name exactly as they did when the sealed CLI was invoked
-        # directly.  cwd stays SEALED_DIR, unchanged.
+        # PYTHONPATH stays SEALED_DIR alone, exactly as before.  The child
+        # needs o1_b200 too, but the worktree root also holds top-level
+        # evaluate.py / main.py / train.py, and `evaluate` is a real
+        # third-party package: anything on PYTHONPATH precedes site-packages,
+        # so putting the root there would shadow it for the whole dependency
+        # tree.  The child APPENDS the root to sys.path instead, after
+        # site-packages, where it can only resolve names nothing else claims.
         env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1",
-               "PYTHONPATH": os.pathsep.join(
-                   [sealed_import.WORKTREE_ROOT, sealed_import.SEALED_DIR])}
+               "PYTHONPATH": sealed_import.SEALED_DIR}
         # The sealed record sink binds every row to the precommit's sha256
         # and refuses to mix bindings, so the precommit must be minted ONCE
         # for the whole session and reused by every later pod — regenerating
@@ -1032,7 +1092,10 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
                    rows_per_hour=choice["rows_per_hour"],
                    basis=choice["basis"])
         cmd = [
-            sys.executable, "-m", "o1_b200.runner.calibration_launcher",
+            sys.executable, "-c",
+            ("import sys; sys.path.append(%r); "
+             "from o1_b200.runner.calibration_launcher import main; "
+             "raise SystemExit(main())" % sealed_import.WORKTREE_ROOT),
             "--manifest-design", manifest_path,
             "--artifact-paths", artifact_map_path,
             "--precommit", sealed_precommit_path,
@@ -1044,7 +1107,11 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
             "--metadata-output", os.path.join(out_dir, "o1_metadata.json"),
             "--progress", progress_path,
             "--boundary-cache-dir", os.path.join(out_dir, "boundary_cache"),
+            "--precompute-report",
+            os.path.join(out_dir, "CALIBRATION_PRECOMPUTE.json"),
             "--backend", str(choice["config_id"]),
+            "--backend-family", str(choice.get("backend") or ""),
+            "--workers", str(int(choice["workers"])),
             "--batch-size", str(int(choice["batch"])),
         ]
         # binary stdout + explicit decoding: text=True decodes strict UTF-8,
@@ -1163,7 +1230,20 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
                          "ENVIRONMENT_REPORT.resolved.json",
                          "BENCHMARK_REPORT.real.json",
                          "BACKEND_SELECTION.json",
-                         "CALIBRATION_PRECOMMIT.deployed.json"):
+                         "CALIBRATION_PRECOMMIT.deployed.json",
+                         # Without these the shipped record set cannot be
+                         # audited.  The sealed CALIBRATION_METADATA's
+                         # elapsed_wall_seconds is measured from INSIDE
+                         # orchestrate_calibration, which the precomputed
+                         # path enters only after every row is generated --
+                         # so on a batched run it reports minutes of
+                         # bookkeeping, not hours of generation, and it is
+                         # restored across sessions so the under-count is
+                         # carried forward.  _Progress is sealed and must
+                         # not be touched; the honest fix is to ship the
+                         # generation time alongside it.
+                         "CALIBRATION_PRECOMPUTE.json",
+                         "production_entry_events.jsonl"):
                 p = os.path.join(out_dir, name)
                 if os.path.exists(p):
                     tar.add(p, arcname=name)

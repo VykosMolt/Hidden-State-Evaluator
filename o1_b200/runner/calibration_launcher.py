@@ -30,6 +30,7 @@ the gate cannot pass on a rate the calibration will not deliver.
 
 import argparse
 import json
+import os
 
 from . import sealed_import
 
@@ -56,6 +57,14 @@ def build_parser() -> argparse.ArgumentParser:
                    help="config_id or backend id to inject; the reference "
                         "backend means 'sealed default, nothing injected'")
     p.add_argument("--batch-size", type=int, default=1)
+    p.add_argument("--workers", type=int, default=1)
+    p.add_argument("--precompute-report",
+                   help="where to write the precompute coverage report; it "
+                        "carries the generation wall seconds the sealed "
+                        "metadata cannot see")
+    p.add_argument("--backend-family", default="",
+                   help="backend id (e.g. B200_BATCHED); defaults to parsing "
+                        "it from --backend")
     return p
 
 
@@ -75,13 +84,39 @@ def _sealed_preflight(args) -> dict:
     """
     from run_o1_v2_orchestrator import (              # sealed
         verify_calibration_precommit, verify_artifact_paths,
-        OrchestrationError)
+        OrchestrationError, load_jsonl, sha256_file)
     from verify_axis_artifact import verify as verify_axis  # sealed
 
     with open(args.manifest_design) as fh:
         manifest_raw = json.load(fh)
     verify_calibration_precommit(
         args.precommit, manifest_raw, args.calibration_task_manifest)
+
+    # Cheap sealed refusals that would otherwise be evaluated only AFTER the
+    # whole generation budget has been spent.  Each is milliseconds of
+    # filesystem work and each aborts the run.
+    if args.metadata_output and os.path.exists(args.metadata_output):
+        raise OrchestrationError(
+            "O0_PREFLIGHT",
+            f"refusing to overwrite existing {args.metadata_output}")
+    if not load_jsonl(args.calibration_task_manifest):
+        raise OrchestrationError(
+            "O0_PREFLIGHT", "calibration task manifest is empty")
+    # _RecordSink refuses to mix precommit bindings (O6_RESUME_BINDING).  On a
+    # resumed pod whose durable records were restored but whose precommit was
+    # re-minted, that refusal lands after generation.  Read-only equivalent:
+    if os.path.exists(args.output):
+        want = sha256_file(args.precommit)
+        for row in load_jsonl(args.output):
+            got = row.get("calibration_precommit_sha256")
+            if got and got != want:
+                raise OrchestrationError(
+                    "O6_RESUME_BINDING",
+                    f"existing records at {args.output} are bound to "
+                    f"precommit {got}, not {want}; refusing to generate "
+                    f"against a record set this run cannot extend")
+            break
+
     paths = verify_artifact_paths(manifest_raw, args.artifact_paths)
     axis_report = verify_axis(args.axis_package)
     if axis_report.get("verdict") != "SEALABLE":
@@ -98,8 +133,19 @@ def build_backend(args):
     add a moving part and buy nothing.
     """
     backend_id = str(args.backend or "").strip()
-    if backend_id in REFERENCE_BACKEND_IDS or int(args.batch_size) <= 1:
+    if backend_id in REFERENCE_BACKEND_IDS:
         return None
+    # The SAME predicate the affordability gate applied when it decided what
+    # rate to project.  Keying on batch alone here is what let a batch-1
+    # B200_REPLICA selection project the replica rate and then run serially.
+    from .calibration_backend import supports_calibration
+    supported, why_not = supports_calibration(
+        args.backend_family or backend_id, args.workers, args.batch_size)
+    if not supported:
+        raise ValueError(
+            f"refusing to inject {backend_id!r}: {why_not}. The affordability "
+            f"gate and this launcher must agree about what the calibration "
+            f"runs on; reaching here means they did not.")
 
     paths = _sealed_preflight(args)
     from .calibration_backend import PrecomputedBatchedBackend
@@ -112,6 +158,20 @@ def build_backend(args):
     # generate everything up front: .generate() is a lookup and RAISES on a
     # key it never precomputed, so a silent serial fallback is impossible
     report = backend.precompute()
+    if args.precompute_report:
+        # The sealed CALIBRATION_METADATA's elapsed_wall_seconds is measured
+        # from inside orchestrate_calibration, which this path enters only
+        # after every row has been generated.  _Progress is sealed; this file
+        # carries the generation time it cannot see, and is shipped in the
+        # result archive so the record set can be audited.
+        with open(args.precompute_report, "w", encoding="utf-8") as fh:
+            json.dump({"schema": "o1b300.calibration_precompute.v1",
+                       "backend": args.backend,
+                       "backend_family": args.backend_family,
+                       "workers": args.workers,
+                       "batch_size": args.batch_size,
+                       **report}, fh, indent=2, sort_keys=True, default=str)
+            fh.write("\n")
     print(json.dumps({"precompute": report}, indent=2, sort_keys=True,
                      default=str), flush=True)
     return backend
@@ -129,8 +189,12 @@ def main(argv=None) -> int:
         args.output, args.metadata_output, args.progress,
         args.boundary_cache_dir,
         backend=backend)
-    # identical to the sealed CLI's own final line: production_entry parses
-    # this, so the contract must not drift
+    # The sealed CLI ends by printing this same document.  production_entry
+    # does NOT parse the child's stdout -- its drain thread writes raw bytes
+    # to o1_orchestrator.log and never decodes them -- so nothing depends on
+    # this being the only JSON value on stdout (build_backend prints the
+    # precompute report before it).  Kept for parity with the sealed CLI and
+    # for a human reading the log.
     print(json.dumps(out, indent=2, sort_keys=True))
     return 0
 

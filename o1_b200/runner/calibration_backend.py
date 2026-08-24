@@ -270,6 +270,52 @@ def _default_generate_batch():
 # ==========================================================================
 
 
+#: The only backend family the precomputed calibration path can run.
+#: B200_REPLICA parallelises across PROCESSES at batch 1 per row; there is
+#: nothing for generate_batch to batch, so it cannot serve this path.
+BATCHED_CALIBRATION_BACKEND = "B200_BATCHED"
+
+
+def supports_calibration(backend_id, workers, batch) -> tuple[bool, str]:
+    """Can PrecomputedBatchedBackend actually run this configuration?
+
+    THE AFFORDABILITY GATE AND THE LAUNCHER MUST BOTH ASK THIS, and they must
+    ask the same function.  Asking it in only one place is how the gate comes
+    to project a rate the calibration will not deliver:
+
+      * every B200_REPLICA stage in the frozen order is batch 1.  A launcher
+        that keys on ``batch <= 1`` injects nothing, the sealed RealBackend is
+        built, and the calibration runs SERIALLY while the gate projected the
+        8-worker replica rate -- ~3.9 h projected against ~30.7 h actual.  The
+        session is killed part-way through the corpus having paid for all of
+        it, and the precommit records a backend that did not produce the rows.
+      * B200_BATCHED_w1_b4 is a non-conditional stage, so it can be selected,
+        and batch 4 < BANK_SIZE is refused at construction -- aborting the run
+        after the whole pre-calibration phase has been paid for.
+
+    Returns (ok, reason); ``reason`` is empty when ok.
+    """
+    try:
+        workers = int(workers or 1)
+        batch = int(batch or 1)
+    except (TypeError, ValueError):
+        return False, f"workers/batch are not integers: {workers!r}/{batch!r}"
+    if str(backend_id or "") != BATCHED_CALIBRATION_BACKEND:
+        return False, (f"backend {backend_id!r} is not "
+                       f"{BATCHED_CALIBRATION_BACKEND}: the precomputed "
+                       f"calibration path batches rows, and only that engine "
+                       f"does")
+    if workers != 1:
+        return False, (f"workers={workers}: the precomputed path generates in "
+                       f"one process")
+    if batch < BANK_SIZE:
+        return False, (f"batch={batch} < BANK_SIZE {BANK_SIZE}: the sealed "
+                       f"orchestrator requires all {BANK_SIZE} baseline "
+                       f"streams of a task to yield a bitwise-identical "
+                       f"prefill boundary, so the bank must fit in one batch")
+    return True, ""
+
+
 class PrecomputedBatchedBackend:
     """Backend injectable into the sealed calibration orchestrator.
 

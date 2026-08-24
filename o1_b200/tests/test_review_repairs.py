@@ -1303,6 +1303,43 @@ def run_extra(r: Runner) -> Runner:
             assert got["config_id"] == CALIBRATION_REFERENCE_ID, (why, got)
             assert got["rows_per_hour"] == 150.0, (why, got)
 
+        # FR-1/FR-2: selected AND verified AND measured, but the calibration
+        # path cannot RUN it.  Every B200_REPLICA stage is batch 1, so a
+        # launcher keyed on batch alone injects nothing and the calibration
+        # goes serial while this gate projected the replica rate: ~3.9 h
+        # projected against ~30.7 h actual, killed part-way through the
+        # corpus having paid for all of it.  B200_BATCHED_w1_b4 is a
+        # NON-conditional stage, so it is selectable, and batch 4 < BANK_SIZE
+        # is refused at construction -- aborting after the whole
+        # pre-calibration phase is paid for.
+        for cid, backend, workers, batch in (
+                ("B200_REPLICA_w8_b1", "B200_REPLICA", 8, 1),
+                ("B200_REPLICA_w2_b1", "B200_REPLICA", 2, 1),
+                ("B200_BATCHED_w1_b4", "B200_BATCHED", 1, 4)):
+            unrunnable = [bench[0],
+                          {"config_id": cid, "backend": backend,
+                           "workers": workers, "batch": batch,
+                           "completed_rows_per_hour": 1180.0}]
+            got = calibration_backend_choice(
+                {"benchmark": unrunnable,
+                 "equivalence": {cid: {"eligible_structurally": True}},
+                 "selected_backend": {"config_id": cid}})
+            assert got["config_id"] == CALIBRATION_REFERENCE_ID, (cid, got)
+            assert got["rows_per_hour"] == 150.0, (cid, got)
+            assert "cannot run it" in got["basis"], (cid, got["basis"])
+
+        # and the launcher refuses the same configurations, so the two
+        # cannot disagree even if one of them is changed in isolation
+        from o1_b200.runner.calibration_backend import supports_calibration
+        for backend, workers, batch, ok in (
+                ("B200_BATCHED", 1, 256, True), ("B200_BATCHED", 1, 8, True),
+                ("B200_BATCHED", 1, 4, False), ("B200_REPLICA", 8, 1, False),
+                ("B200_BATCHED", 2, 16, False),
+                ("REFERENCE_SERIAL", 1, 1, False)):
+            got_ok, why = supports_calibration(backend, workers, batch)
+            assert got_ok is ok, (backend, workers, batch, why)
+            assert ok or why, "a refusal must say why"
+
         # selected and verified, but never benchmarked -> no rate to trust
         got = calibration_backend_choice(
             ctx({fast: {"eligible_structurally": True}},
