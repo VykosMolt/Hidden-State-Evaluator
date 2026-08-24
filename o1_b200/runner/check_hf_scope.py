@@ -59,8 +59,17 @@ DETERMINISTIC_STATUSES = (401, 403, 404)
 
 
 def http_status(text: str) -> int | None:
-    m = _STATUS_RE.search(text)
-    return int(m.group(1)) if m else None
+    """The status of the LAST status line in ``text``.
+
+    Last, not first: a chained traceback can carry a hub-side 5xx retry
+    before the final 4xx, and first-wins made this module and the FL fork
+    (campaign/transient.py) reach OPPOSITE verdicts on the same bytes --
+    one retrying and reacquiring, the other writing a permanent refusal.
+    """
+    status = None
+    for m in _STATUS_RE.finditer(text or ""):
+        status = int(m.group(1))
+    return status
 
 
 def _helper_error(text: str, limit: int = 400) -> str:

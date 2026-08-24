@@ -1051,11 +1051,11 @@ def run_extra(r: Runner) -> Runner:
             ("def f():\n    for _ in range(3):\n        try:\n"
              "            print(t)\n        except NameError:\n"
              "            pass\n        t = 1\n", 0, 0),
-            # loop-else binding in BOTH clauses covers every way out
-            ("def f(xs, g):\n    for x in xs:\n        v = g(x)\n"
-             "        break\n    else:\n        v = None\n"
-             "    return v\n", 0, 0),
-            # ...an else that does not bind leaves the empty-iterable path
+            # a `break` before the binding really does raise; the guard
+            # must keep catching it (a "both clauses bind" rule did not)
+            ("def f(xs, g):\n    for x in xs:\n        if g(x):\n"
+             "            break\n        v = x\n    else:\n"
+             "        v = None\n    return v\n", 0, 1),
             ("def f(xs, g):\n    for x in xs:\n        v = g(x)\n"
              "    else:\n        pass\n    return v\n", 0, 1),
         )
@@ -1119,16 +1119,22 @@ def run_extra(r: Runner) -> Runner:
         in the marker and the driver keys on that."""
         from o1_b200.provider.runpod.zero_touch import _is_budget_dependent
 
-        # a plain ladder abort is a DEFECT: record it, never pay twice
+        # a plain abort is a DEFECT: record it, never pay twice
         assert not _is_budget_dependent("RUN_FL_LADDER")
         assert not _is_budget_dependent("COMPUTE_REMAINING_AUTHORIZED_TIME")
         assert not _is_budget_dependent("RUN_O1_CALIBRATION")
         assert not _is_budget_dependent("HARDWARE_GATE")
-        # ...but the same state, declared budget-dependent BY THE POD, is a
-        # function of this pod's allowance and must not condemn the deployment
+        # A state NAME containing a budget word proves NOTHING.  This
+        # assertion used to read `assert _is_budget_dependent(
+        # "CALIBRATION_AFFORDABILITY_CHECK")` -- encoding the name heuristic
+        # that silently overruled the pod, so a genuine defect at that state
+        # escaped its durable refusal and every rerun paid to reach it again.
+        assert not _is_budget_dependent("CALIBRATION_AFFORDABILITY_CHECK")
+        # ...only the pod's own declaration counts
         assert _is_budget_dependent("RUN_FL_LADDER_BUDGET_DEPENDENT")
         assert _is_budget_dependent("RUN_O1_CALIBRATION_BUDGET_DEPENDENT")
-        assert _is_budget_dependent("CALIBRATION_AFFORDABILITY_CHECK")
+        assert _is_budget_dependent(
+            "CALIBRATION_AFFORDABILITY_CHECK_BUDGET_DEPENDENT")
 
     r.check("a permanent refusal is recorded for defects but never for "
             "budget-dependent aborts the pod declares",
@@ -1168,6 +1174,12 @@ def run_extra(r: Runner) -> Runner:
             # SOFT_STOP at the entry to any state
             {"outcome": "ABORTED", "failed_state": "NON_O1_BENCHMARK",
              "failure": "BudgetRefusal('93.0% of authorized runtime used')"},
+            # the SAME state as the defect above, but a real budget refusal:
+            # the exception decides, never the state name
+            {"outcome": "ABORTED",
+             "failed_state": "CALIBRATION_AFFORDABILITY_CHECK",
+             "failure": "BudgetRefusal('projected calibration does not fit "
+                        "the remaining authorized runtime')"},
         )
         for status in budget_stops:
             marker = emit(status)
@@ -1179,6 +1191,14 @@ def run_extra(r: Runner) -> Runner:
                 f"replacement pod that resumes has changed the very input")
 
         defects = (
+            # THE F1 CASE: a genuine defect at a state whose NAME contains a
+            # budget word.  The driver used to overrule the pod here and skip
+            # the durable refusal, so every rerun paid to reach it again.
+            {"outcome": "ABORTED",
+             "failed_state": "CALIBRATION_AFFORDABILITY_CHECK",
+             "failure": "ProductionEntryError('no measured "
+                        "REFERENCE_SERIAL_w1_b1 throughput; the affordability "
+                        "gate cannot be projected from an unmeasured rate')"},
             {"outcome": "ABORTED", "failed_state": "ARTIFACT_VERIFY",
              "failure": "ProductionEntryError('checkpoint tree hash "
                         "mismatch')"},
@@ -1205,8 +1225,11 @@ def run_extra(r: Runner) -> Runner:
         fl = os.path.join(os.path.dirname(_ROOT), "foundation-learner-b200-v0")
         mod_path = os.path.join(fl, "foundation_learner", "campaign",
                                 "session_supervisor.py")
-        if not os.path.isfile(mod_path):
-            return                          # FL worktree absent in this checkout
+        assert os.path.isfile(mod_path), (
+            f"the FL worktree is absent ({mod_path}); this check cannot "
+            f"silently pass -- it is the only coverage of the O1 -> FL hop, "
+            f"and a green count that asserted nothing is how the same defect "
+            f"shape survived four review rounds")
         if fl not in sys.path:
             sys.path.insert(0, fl)
         from foundation_learner.campaign.session_supervisor import (
@@ -1214,10 +1237,16 @@ def run_extra(r: Runner) -> Runner:
 
         for state in ("CALIBRATION_BUDGET_DEPENDENT",
                       "NON_O1_BENCHMARK_BUDGET_DEPENDENT",
-                      "CALIBRATION_AFFORDABILITY_CHECK"):
+                      "CALIBRATION_AFFORDABILITY_CHECK_BUDGET_DEPENDENT"):
             tails = f"some output\nO1_PHASE_ABORTED_AT_{state}\n"
             assert o1_abort_is_budget_dependent(tails) == state, state
-        for state in ("ARTIFACT_VERIFY", "HARDWARE_GATE", "CALIBRATION"):
+        # A state NAME containing a budget word proves nothing: the
+        # affordability handler also aborts for genuine defects (an
+        # unmeasured throughput, a NaN rate).  Only the child's declared
+        # suffix counts -- an earlier version of THIS test asserted the
+        # opposite and pinned that defect in place.
+        for state in ("ARTIFACT_VERIFY", "HARDWARE_GATE", "CALIBRATION",
+                      "CALIBRATION_AFFORDABILITY_CHECK"):
             tails = f"O1_PHASE_ABORTED_AT_{state}\n"
             assert o1_abort_is_budget_dependent(tails) is None, state
         # prose must not be able to spoof a verdict

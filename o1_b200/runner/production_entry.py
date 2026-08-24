@@ -1134,8 +1134,11 @@ def _manifest_checkpoint_sha256(manifest_path: str, checkpoint_dir: str) -> str:
 #: budget.check_may_launch_work (SOFT_STOP) and by the affordability gate;
 #: the runtime_limit kill in calibration() raises ProductionEntryError with
 #: this exact wording.
-_BUDGET_FAILURE_MARKERS = ("BudgetRefusal", "authorized runtime (",
-                           "BudgetExhausted")
+#: "BudgetExhausted" was in this list and matches NOTHING in either tree --
+#: written from memory rather than from a sweep.  These two are verified:
+#: BudgetRefusal is raised only at budget.py:99 and budget.py:181, and
+#: "authorized runtime (" only by the runtime-limit kill in calibration().
+_BUDGET_FAILURE_MARKERS = ("BudgetRefusal", "authorized runtime (")
 
 
 def _abort_is_budget_dependent(status: dict) -> bool:

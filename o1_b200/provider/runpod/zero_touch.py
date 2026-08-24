@@ -60,26 +60,28 @@ from .redaction import redact, register_env_secrets
 #: session has changed the very input the refusal was a function of.
 #: Recording them durably meant an unattended driver needed a human to delete
 #: a file before it would ever run again.
-#: RUN_FL_LADDER and COMPUTE_REMAINING_AUTHORIZED_TIME are deliberately NOT
-#: listed.  Exempting them wholesale covered the two states with the LARGEST
-#: deterministic-failure surfaces -- a real ladder bug, a corrupt checkpoint,
-#: a missing pregen shard, an unset O1_SESSION_AUTHORIZED_SECONDS -- so those
-#: would have been paid for again on every re-run.  The POD knows which of
-#: its aborts are budget-dependent (it has the exception type) and says so by
-#: appending _BUDGET_DEPENDENT to its marker; the driver keys on that rather
-#: than guessing from a state name.
-BUDGET_DEPENDENT_ABORT_STATES = frozenset({
-    "AFFORDABILITY", "AFFORDABILITY_GATE", "BUDGET", "BUDGET_EXHAUSTED",
-})
+#: The suffix the POD appends when it knows its abort depends on this pod's
+#: allowance rather than on the deployment.  It is the ONLY signal.
+BUDGET_DEPENDENT_SUFFIX = "_BUDGET_DEPENDENT"
 
 
 def _is_budget_dependent(verdict: str) -> bool:
-    name = str(verdict or "").upper()
-    if name in BUDGET_DEPENDENT_ABORT_STATES:
-        return True
-    return any(tok in name for tok in
-               ("AFFORD", "BUDGET_DEPENDENT", "BUDGET", "ALLOWANCE",
-                "UNAFFORDABLE"))
+    """Whether the POD declared this abort budget-dependent.
+
+    Keyed on the pod's declaration alone.  Guessing from the state NAME --
+    a substring test for AFFORD/BUDGET/ALLOWANCE -- silently OVERRULED the
+    pod in the expensive direction: production_entry can abort at
+    CALIBRATION_AFFORDABILITY_CHECK for genuine deployment defects (an
+    unmeasured throughput, a NaN rate, a malformed serial record), the pod
+    correctly withheld the suffix, and the driver called it budget-dependent
+    anyway because the STATE NAME contains "AFFORD".  The durable
+    "do not pay for this again" marker was then never written, so every
+    rerun paid ~30-60 min of B300 to reach the same abort, unbounded.
+
+    Genuine budget refusals at that same state still carry the suffix: the
+    affordability gate raises BudgetRefusal, which production_entry matches.
+    """
+    return str(verdict or "").endswith(BUDGET_DEPENDENT_SUFFIX)
 
 
 class DeterministicPodFailure(RuntimeError):

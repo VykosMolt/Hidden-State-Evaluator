@@ -230,13 +230,16 @@ def _stmt_binds_definitely(n, name):
             return _binds_every_path(n.body, name)
         if isinstance(n, ast.For) and _always_iterates(n.iter):
             return _binds_every_path(n.body, name)
-        # `for ... else:` / `while ... else:` -- the else clause runs when
-        # the loop finished without break, the body when it ran.  Binding in
-        # BOTH covers every way out, so flagging it was a false positive that
-        # would have blocked ordinary code.
-        if n.orelse and _binds_every_path(n.body, name) \
-                and _binds_every_path(n.orelse, name):
-            return True
+        # `for ... else:` / `while ... else:` are deliberately NOT treated as
+        # definite, even when both clauses bind.  "Binds on every path
+        # through the body" is not "binds on every way OUT of the loop": a
+        # `break` before the binding exits with the name unbound, and this
+        # analysis has no notion of `break`.  A version that accepted the
+        # both-clauses-bind shape let a real UnboundLocalError through while
+        # STILL flagging the canonical search loop it was meant to accept --
+        # strictly worse in both directions.  Being conservative here costs
+        # at most a false positive on an idiom that does not occur in either
+        # tree; the alternative costs a paid pod.
         return False
     if isinstance(n, ast.Match):
         cases = getattr(n, "cases", [])
