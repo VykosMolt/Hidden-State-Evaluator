@@ -89,10 +89,27 @@ MIN_CUDA_VERSION = "13.0"
 # reacquisition.
 QUOTE_VALIDITY_SECONDS = 15 * 60
 
-# Budget (mirrors policies/BUDGET_POLICY; decimal).
-TOTAL_AUTHORIZED_USD = Decimal("45.00")
-MAX_COMPUTE_USD = Decimal("40.00")
-RESERVED_NONCOMPUTE_USD = Decimal("5.00")
+# ---------------------------------------------------------------------------
+# SMOKE-TEST POLICY, 2026-08-24.  NOT the calibration budget.
+#
+# Exists to put the stack on real silicon ONCE, cheaply, and answer what five
+# rounds of reading could not: whether sm_103 executes natively (the
+# cuobjdump evidence -- 59 sm_103a cubins, 0 PTX -- has never touched a
+# B300); whether podRentInterruptable actually works (that mutation has NEVER
+# been executed, its contract is pinned from a published spec with
+# introspection disabled, and it fails closed); whether RunPod pulls the
+# image by digest from GHCR anonymously; and what huggingface_hub really
+# prints on a 5 GB fetch, which rounds 4 and 5 both had to guess at.
+#
+# The operator terminates MANUALLY once the hardware gate reports.  No
+# calibration is expected and none is authorized; the affordability gate
+# will refuse on this allowance, which is itself the budget-dependent path
+# rounds 3-5 were spent fixing.  Restore 45.00/40.00/5.00 before any
+# scientific session.
+# ---------------------------------------------------------------------------
+TOTAL_AUTHORIZED_USD = Decimal("9.00")
+MAX_COMPUTE_USD = Decimal("8.00")
+RESERVED_NONCOMPUTE_USD = Decimal("1.00")
 
 SOFT_STOP_FRACTION = Decimal("0.95")
 
@@ -100,7 +117,14 @@ SOFT_STOP_FRACTION = Decimal("0.95")
 # buy at least this much runtime at the quoted all-in rate.  This replaces
 # the obsolete static per-hour price cap with a rule derived from the
 # committed budget, not from a guessed market price.
-MIN_VIABLE_SESSION_SECONDS = 2 * 3600
+# SMOKE-TEST VALUE.  This floor is a SCIENTIFIC-viability rule -- "do not pay
+# for a pod that cannot finish the calibration" -- not a money-safety one
+# (that is MAX_COMPUTE_USD, the watchdog and the provider terminateAfter).
+# A smoke test is not a short science run; it is a different kind of run, so
+# the floor is scoped to what this run needs: image pull, the 5 GB fetch and
+# the hardware gate, which the note below puts at 20-30 min.  Restore the
+# value 2 * 3600 before any scientific session.
+MIN_VIABLE_SESSION_SECONDS = 45 * 60
 
 # Preemption/reacquisition bounds: eviction of interruptible capacity is
 # normal infrastructure behavior.  Reacquisition re-runs the full quote,
@@ -108,7 +132,10 @@ MIN_VIABLE_SESSION_SECONDS = 2 * 3600
 # BOTH the hard dollar budget and this attempt ceiling.  Additionally, a
 # repeat failure with zero synced progress is treated as a container defect
 # (loud abort), never retried as an eviction.
-MAX_POD_ACQUISITIONS = 4
+# SMOKE-TEST VALUE: exactly ONE pod.  A smoke run must never reacquire -- an
+# eviction here is a RESULT, not something to pay to retry.  Restore the
+# value 4 before any scientific session.
+MAX_POD_ACQUISITIONS = 1
 #: The least remaining allowance worth creating a pod for: image pull (13.8
 #: GB) + checkpoint fetch (5 GB) + hash + hardware gate take ~20-30 min
 #: before any science can happen.  A pod with less than this is pure cost.
