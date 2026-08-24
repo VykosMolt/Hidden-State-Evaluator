@@ -335,7 +335,51 @@ def _oom_types() -> tuple:
     return tuple(types)
 
 
+#: Fixed per-stage overhead measured on a B300 (model load ~2.4 s plus
+#: harness setup); a deep-batch stage cannot cost less than this.
+STAGE_FIXED_OVERHEAD_SECONDS = 30.0
+
+
+def _stage_cost_estimate(entry, reference_seconds, results):
+    """Estimate THIS stage's cost, not the reference stage's.
+
+    The previous rule was ``max(reference_seconds, *measured)``: every
+    non-reference stage was estimated at the cost of REFERENCE_SERIAL, the
+    slowest configuration that exists, and the estimate could only ever grow.
+    On real hardware the reference is ~1.9 h over the 384-row corpus while a
+    b256 stage is ~30 s, so the cheap deep-batch configurations -- precisely
+    the ones that make the calibration affordable -- were always the first to
+    be skipped, and could never be reached no matter how much budget was left.
+
+    A stage's work is the same corpus divided by its parallelism, so scale
+    the measured reference by workers x batch.  Then correct that model by
+    the worst under-estimate observed so far, so a configuration that scales
+    badly makes the remaining estimates more conservative rather than less.
+    """
+    ref = float(reference_seconds or 0.0)
+    if ref <= 0:
+        return 0.0
+    workers = max(1, int(entry.get("workers") or 1))
+    batch = max(1, int(entry.get("batch") or 1))
+    predicted = ref / float(workers * batch) + STAGE_FIXED_OVERHEAD_SECONDS
+
+    # calibrate against reality: if an earlier stage cost more than this
+    # model predicted, inflate by the worst ratio seen
+    worst = 1.0
+    for r in results:
+        if r.get("skipped"):
+            continue
+        actual = float(r.get("total_stage_seconds") or 0.0)
+        w = max(1, int(r.get("workers") or 1))
+        b = max(1, int(r.get("batch") or 1))
+        model = ref / float(w * b) + STAGE_FIXED_OVERHEAD_SECONDS
+        if actual > 0 and model > 0:
+            worst = max(worst, actual / model)
+    return predicted * worst
+
+
 def run_benchmarks(corpus_dir: str, out_dir: str, *, mode: str,
+                   reference_measured: dict | None = None,
                    task_subset=None, device: str = "cpu",
                    max_stages: int | None = None,
                    artifact: dict | None = None,
@@ -381,10 +425,25 @@ def run_benchmarks(corpus_dir: str, out_dir: str, *, mode: str,
     cost_estimate = stage_cost_estimate_seconds
     for entry in stages:
         is_reference = entry["backend"] == "REFERENCE_SERIAL"
+        if is_reference and reference_measured:
+            # The equivalence phase ALREADY ran REFERENCE_SERIAL over this
+            # same corpus, with this same backend, immediately before this
+            # call.  Running it a second time here is the identical
+            # computation: on real hardware that is ~1.9 h of a ~5 h session
+            # paid twice, which by itself is the difference between the
+            # session fitting the authorised budget and not.  The equivalence
+            # phase compares ROWS; this stage supplies a THROUGHPUT baseline;
+            # one execution yields both, so reuse its measurement rather than
+            # repeat the work.
+            results.append({**reference_measured,
+                            "config_id": entry["config_id"],
+                            "backend": entry["backend"],
+                            "workers": entry.get("workers", 1),
+                            "batch": entry.get("batch"),
+                            "reused_equivalence_reference_pass": True})
+            continue
         if budget_left is not None and not is_reference:
-            measured = [float(r.get("total_stage_seconds") or 0.0)
-                        for r in results if not r.get("skipped")]
-            estimate = max([cost_estimate or 0.0] + measured)
+            estimate = _stage_cost_estimate(entry, cost_estimate, results)
             if estimate <= 0 or estimate > budget_left:
                 results.append({"config_id": entry["config_id"],
                                 "skipped": "precalibration cost rule",

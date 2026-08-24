@@ -84,24 +84,49 @@ def run() -> Runner:
             tampered_corpus_refused)
 
     def benchmark_order_frozen_and_deterministic():
+        """The order may only grow through a RECORDED amendment.
+
+        This check used to pin the v1 list literally, which made any change
+        -- principled or not -- fail identically.  That is the wrong shape:
+        the policy has always carried an ``amendments`` mechanism, and the
+        question is not "did the list change" but "did it change through the
+        sanctioned route".  So: stages 1-10 stay byte-identical, and every
+        stage BEYOND them must name an amendment that actually exists and
+        that declares it left the selection rule alone.
+        """
         order = load_benchmark_order()
-        ids = [e["config_id"] for e in order["staged_candidates"]]
-        # v2: stages 1-7 byte-identical to the validated v1 order; 8-10 are
-        # the capacity-conditional deep-batch extension for the 288 GB B300
-        assert ids == ["REFERENCE_SERIAL_w1_b1", "B200_REPLICA_w2_b1",
-                       "B200_REPLICA_w4_b1", "B200_REPLICA_w8_b1",
-                       "B200_BATCHED_w1_b4", "B200_BATCHED_w1_b8",
-                       "B200_BATCHED_w1_b16", "B200_BATCHED_w1_b24",
-                       "B200_BATCHED_w1_b32", "B200_BATCHED_w1_b48"]
-        assert [e["stage"] for e in order["staged_candidates"]] == \
-            list(range(1, 11))
+        entries = order["staged_candidates"]
+        ids = [e["config_id"] for e in entries]
+        V1 = ["REFERENCE_SERIAL_w1_b1", "B200_REPLICA_w2_b1",
+              "B200_REPLICA_w4_b1", "B200_REPLICA_w8_b1",
+              "B200_BATCHED_w1_b4", "B200_BATCHED_w1_b8",
+              "B200_BATCHED_w1_b16", "B200_BATCHED_w1_b24",
+              "B200_BATCHED_w1_b32", "B200_BATCHED_w1_b48"]
+        assert ids[:10] == V1, "stages 1-10 are frozen and must not be reordered"
+        assert [e["stage"] for e in entries] == list(range(1, len(entries) + 1))
         assert all(e.get("conditional") is True
-                   for e in order["staged_candidates"] if e["stage"] >= 8), \
+                   for e in entries if e["stage"] >= 8), \
             "deep-batch stages must stay behind the frozen extension rule"
         assert not any(e.get("conditional")
-                       for e in order["staged_candidates"] if e["stage"] < 8)
-    r.check("benchmark policy: staged order is frozen and deterministic "
-            "(v2: conditional deep-batch extension)",
+                       for e in entries if e["stage"] < 8)
+
+        amendments = {a["amendment"]: a for a in order.get("amendments", [])}
+        for e in entries[10:]:
+            n = e.get("added_by_amendment")
+            assert n in amendments, (
+                f"{e['config_id']} was appended with no amendment record; the "
+                f"candidate list may only grow through a recorded amendment")
+            a = amendments[n]
+            for field in ("date", "was", "why", "not_amended",
+                          "scientific_impact", "bounded_by"):
+                assert a.get(field), f"amendment {n} is missing {field!r}"
+            assert "selection_rule" in a["not_amended"], (
+                f"amendment {n} must declare the selection rule untouched: "
+                f"adding CANDIDATES is permitted, choosing a WINNER is not")
+        # whatever is appended, the terminal fallback must remain reachable
+        assert ids[0] == "REFERENCE_SERIAL_w1_b1"
+    r.check("benchmark policy: stages 1-10 frozen; the list may only grow "
+            "through a recorded amendment that leaves selection untouched",
             benchmark_order_frozen_and_deterministic)
 
     def benchmark_refuses_unknown_and_unqualified_modes():

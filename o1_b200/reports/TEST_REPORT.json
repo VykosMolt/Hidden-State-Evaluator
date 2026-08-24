@@ -130,7 +130,7 @@
         "HOSTILE O1 task inserted into the validation corpus is detected",
         "HOSTILE out-of-population validation task is refused",
         "HOSTILE tampered corpus file is refused by its sealed hash",
-        "benchmark policy: staged order is frozen and deterministic (v2: conditional deep-batch extension)",
+        "benchmark policy: stages 1-10 frozen; the list may only grow through a recorded amendment that leaves selection untouched",
         "benchmark harness refuses unknown modes and unqualified real-hardware runs",
         "HOSTILE ineligible-but-fastest backend can never win; selection is deterministic under input reordering",
         "selection with no eligible configuration refuses",
@@ -347,10 +347,13 @@
         "a session prefix in the durable destination scopes every key, so a fresh run cannot silently resume an old one",
         "an expired authorization still permits TERMINATION while refusing acquisition"
       ],
-      "failed": 0,
-      "failures": [],
+      "failed": 2,
+      "failures": [
+        "ARTIFACT_VERIFY consumes an hf:// artifact source by cross-checking the fetch report, never as a manifest path",
+        "the transfer manifests describe the committed tree (pod ARTIFACT_VERIFY would pass)"
+      ],
       "module": "test_launch_path",
-      "passed": 33
+      "passed": 31
     },
     {
       "checks": [
@@ -418,10 +421,12 @@
         "budget-dependence survives every hop from the pod's exception to the driver's refusal-marker decision",
         "the O1 -> FL hop re-reads the child's budget classification instead of dropping it"
       ],
-      "failed": 0,
-      "failures": [],
+      "failed": 1,
+      "failures": [
+        "every name a function reads is actually bound, as a global or as a local (NameError and UnboundLocalError), checker self-validated against known positives and negatives"
+      ],
       "module": "test_review_repairs",
-      "passed": 35
+      "passed": 34
     },
     {
       "checks": [
@@ -454,8 +459,8 @@
   ],
   "schema": "o1b200.test_report.v1",
   "scope_note": "Hardware-independent local validation only: synthetic runtime + non-O1 corpus + mocked provider/clock. No B200 hardware claim is made or implied.",
-  "total_failed": 0,
-  "total_passed": 291,
-  "utc": "2026-08-24T11:12:48Z",
-  "verdict": "ALL O1 B200 RUNNER TESTS PASSED"
+  "total_failed": 3,
+  "total_passed": 288,
+  "utc": "2026-08-24T12:20:45Z",
+  "verdict": "3 FAILURES"
 }

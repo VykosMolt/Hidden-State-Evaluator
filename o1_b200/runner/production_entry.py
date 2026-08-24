@@ -291,8 +291,16 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
         # stage) are charged to the budget up front: they are the slowest
         # configuration and were previously uncounted, so the phase could
         # exceed the declared bound by 2 x T_ref.
+        # ONE reference pass, not two.  The benchmark is now handed this
+        # pass's measurement (reference_measured=) instead of re-running
+        # REFERENCE_SERIAL over the same corpus with the same backend.  That
+        # duplication was ~1.9 h of a ~5 h session on real hardware -- on its
+        # own the difference between the authorised budget fitting and not
+        # (6.91 h / $54.55 duplicated vs 5.05 h / $39.85 shared, measured
+        # 2026-08-24, reports/B300_HARDWARE_EVIDENCE.json).  The 2x charge
+        # was honest accounting of real duplicated work; the work is gone.
         budget = PRECALIBRATION_BUDGET_FRACTION * remaining_at_start \
-            - 2.0 * ref_seconds
+            - ref_seconds
         if budget < 0:
             # the phase cannot fit even its two mandatory passes: say so now,
             # not after the benchmark's reference pass has also been paid
@@ -306,6 +314,19 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
             "budget_seconds": budget,
             "reference_pass_seconds": ref_seconds,
             "equivalence_spent_seconds": 0.0,
+            # handed to run_benchmarks so its REFERENCE_SERIAL stage reuses
+            # THIS pass instead of repeating the identical computation.
+            # ``ref`` is a local of this phase; the benchmark phase is a
+            # different function and cannot see it, so it travels in ctx.
+            "reference_measured": {
+                "total_stage_seconds": ref_seconds,
+                "reused_from": "precalibration equivalence reference pass",
+                **{k: v for k, v in (ref or {}).items()
+                   if k in ("n_rows", "completed_rows_per_second",
+                            "effective_seconds_per_row",
+                            "decode_tokens_per_second", "model_load_seconds",
+                            "peak_hbm_bytes", "integrity_failures",
+                            "oom_count")}},
         }
         comp = {"REFERENCE_SERIAL_w1_b1": {
             "eligible_structurally": True, "scientific_core_identical": True,
@@ -391,6 +412,7 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
         rep = run_benchmarks(
             corpus_dir, os.path.join(out_dir, "benchmark"),
             mode="real-hardware", artifact=artifact,
+            reference_measured=pre.get("reference_measured"),
             remaining_authorized_seconds=ctx["runtime_limit"] - clock(),
             stage_budget_seconds=max(
                 0.0, pre["budget_seconds"] - pre["equivalence_spent_seconds"]),

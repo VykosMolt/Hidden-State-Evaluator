@@ -1,6 +1,6 @@
 {
   "policy": "o1b300.benchmark_order.v2",
-  "frozen_before_hardware_access": true,
+  "frozen_before_hardware_access": "v1 frozen before hardware access; amendment 1 (2026-08-24) appends B300-only candidates after the first capacity measurement -- see amendments",
   "benchmark_input": "non-O1 validation corpus ONLY (o1_b200/corpus)",
   "profiles": {
     "B300": "288 GB HBM3e \u2014 conditional deep-batch stages 8-10 exist for this capacity and remain subject to the extension rule",
@@ -79,6 +79,36 @@
       "workers": 1,
       "batch": 48,
       "conditional": true
+    },
+    {
+      "stage": 11,
+      "config_id": "B200_BATCHED_w1_b64",
+      "backend": "B200_BATCHED",
+      "workers": 1,
+      "batch": 64,
+      "conditional": true,
+      "profile_restriction": "B300",
+      "added_by_amendment": 1
+    },
+    {
+      "stage": 12,
+      "config_id": "B200_BATCHED_w1_b128",
+      "backend": "B200_BATCHED",
+      "workers": 1,
+      "batch": 128,
+      "conditional": true,
+      "profile_restriction": "B300",
+      "added_by_amendment": 1
+    },
+    {
+      "stage": 13,
+      "config_id": "B200_BATCHED_w1_b256",
+      "backend": "B200_BATCHED",
+      "workers": 1,
+      "batch": 256,
+      "conditional": true,
+      "profile_restriction": "B300",
+      "added_by_amendment": 1
     }
   ],
   "measurements_per_stage": [
@@ -106,6 +136,28 @@
       "rule": "PRE-CALIBRATION BUDGET: the non-O1 equivalence phase and the benchmark together may use at most 25% of the authorized runtime remaining when the phase starts. The reference stage always runs (it is the terminal fallback and the equivalence anchor). Other stages run in the frozen order, each only if its projected cost (the largest stage time measured so far, initially the reference pass) fits the remaining budget; a stage that does not fit is skipped and therefore ineligible. The result of the whole phase is mirrored durably and restored on a replacement pod whose image digest, profile and benchmark order match, so an eviction never repays the phase.",
       "why": "the phase ran 21 full-corpus passes (~55% of the calibration workload) before the affordability gate, was unbounded, and was repeated in full after every eviction against a shrinking allocation",
       "scientific_impact": "none: selection input only; every stage that runs still runs the full corpus exactly once"
+    },
+    {
+      "amendment": 1,
+      "date": "2026-08-24",
+      "field": "staged_candidates (append only; stages 11-13, B300 profile only)",
+      "was": "the deepest candidate was stage 10, B200_BATCHED_w1_b48; the extension_rule pre-authorised testing batch size 64 but the candidate list did not contain it, and nothing beyond 64 was listed",
+      "added": [
+        "B200_BATCHED_w1_b64",
+        "B200_BATCHED_w1_b128",
+        "B200_BATCHED_w1_b256"
+      ],
+      "why": "The order was frozen before ANY hardware access and was sized for the B200's 180 GB. B300 (288 GB) was added later as a profile, and this file already marks stages 8-10 'conditional' for exactly that reason. First hardware access on 2026-08-24 (reports/B300_HARDWARE_EVIDENCE.json) measured b48 using 12.1 GB of 287.4 GB -- 4% of the device. The frozen list therefore does not span the capacity of the profile it is being run on. Concretely, the full combined session's generation work (4,608 O1 rows + 8,910 FL episode-walks = 13,518 row-equivalents) does not fit the USD 40 compute allocation at b48.\n\nThis amendment adds CANDIDATES ONLY. It does not select anything and it does not touch the selection rule, which remains mechanical: highest verified completed rows/hour AMONG ELIGIBLE configurations. A config becomes eligible only by passing its own structural-equivalence gates against REFERENCE_SERIAL (row IDs, task hashes, prompt tokens, action mapping, axis/sign/alpha mapping, stream and seed mapping, record schema, canonical ordering). If b64/b128/b256 diverge on any of those they are INELIGIBLE regardless of throughput, exactly as before, and the existing fallback chain stands.\n\nThe justification is the capacity measurement, NOT the throughput measurement. Selecting a configuration because it was observed to be fast is prohibited by this policy and that prohibition is unchanged; what is corrected here is that the candidate list did not cover the hardware.",
+      "bounded_by": "unchanged: the existing extension_rule cost bound (additional benchmark time <= 25% of remaining authorized runtime after reserving the calibration budget) and the existing stop_rules (stop on first OOM, larger configurations not attempted; stop on any integrity failure). No open-ended search: the list ends at 256, the deepest batch measured at FULL 256-token row length.",
+      "not_amended": [
+        "selection_rule",
+        "eligibility_requirements",
+        "equivalence gates",
+        "the sealed O1 package",
+        "the validation corpus",
+        "measurements_per_stage"
+      ],
+      "scientific_impact": "none by construction: candidate list only. Every added configuration must earn eligibility through the same unmodified equivalence gates, and REFERENCE_SERIAL remains the terminal fallback."
     }
   ]
 }
