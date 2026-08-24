@@ -9,11 +9,23 @@
       "ok": true
     },
     "b200_runner_and_adapter_suites": {
-      "detail": "235 checks, 0 failed (reused 2026-08-18T01:50:06Z)",
+      "detail": "ALL O1 B200 RUNNER TESTS PASSED  (291 checks, 370.3s wall, 10 job(s))",
       "ok": true
     },
     "base_package_suite": {
       "detail": "ALL O1 v2.1 CHECKS PASSED",
+      "ok": true
+    },
+    "bound_image_is_the_built_image": {
+      "detail": "bound digest matches the built image record",
+      "ok": true
+    },
+    "built_image_matches_fl_source": {
+      "detail": "FL source tree matches the image record",
+      "ok": true
+    },
+    "built_image_matches_o1_source": {
+      "detail": "source tree matches the image record",
       "ok": true
     },
     "container_image_built_and_asserted": {
@@ -21,7 +33,7 @@
       "ok": true
     },
     "dry_run_deployment_render": {
-      "detail": "profiles=['B300', 'B200'] 03512fbf7ec7f051",
+      "detail": "profiles=['B300', 'B200'] 4936548d7d5c036b",
       "ok": true
     },
     "openapi_schema_pin": {
@@ -34,6 +46,10 @@
     },
     "secret_scan_clean": {
       "detail": "no secrets found",
+      "ok": true
+    },
+    "transfer_manifests_fresh": {
+      "detail": "ALL ARTIFACTS VERIFIED",
       "ok": true
     }
   },
