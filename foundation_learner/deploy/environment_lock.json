@@ -19,7 +19,7 @@
     "image_name": "o1-b300-runner:v0.3.12",
     "pregen_corpus_baked": "NO \u2014 the ~480 MB artifacts_fl/pregen corpus is fetched on the pod by campaign/fetch_pregen.py and every shard is re-hashed against MANIFESTS/SHARD_SUMS.json before the ladder starts",
     "reference": "o1_b200/deploy/Dockerfile.b300 and o1_b200/provider/runpod/CONTAINER_IMAGE_RECORD.json (READ-ONLY reference; never modified by this campaign)",
-    "registry_digest_ref": "UNRESOLVED_UNTIL_PUSH (docker push prints repo@sha256:...)",
+    "registry_digest_ref": "ghcr.io/vykosmolt/o1-b300-runner@sha256:dc689d0d8b66feb7425322960c16adf88fe6b727bec5bb98251b77caafee84c4",
     "tag_history_note": "v0.3.4 was built twice locally with different content; v0.3.4/v0.3.5 were never pushed to a registry; each later tag is a single build",
     "venv": "/opt/venv"
   },
