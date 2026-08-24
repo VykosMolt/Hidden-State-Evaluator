@@ -15,7 +15,7 @@
     "result_destination": "private HF repo Vykos/o1-b200-results (SEPARATE from staging; pod write token fine-grained to results only)"
   },
   "image_digest_ref": "ghcr.io/vykosmolt/o1-b300-runner@sha256:24c19b7f2aaf900a0f3bc7044b7a92a85dce3401cbfc440df1c882b271db04ce",
-  "package_zip_sha256": "bf9b88f520de586feef8b6ca813c934374af4a2b9d85d84f3e3f96d06a7f4e10",
+  "package_zip_sha256": "c39dff64bd3b87356bd060265c8b5eff870a66672d65aace84d00a0d104e879e",
   "profile_preference": [
     "B300",
     "B200"

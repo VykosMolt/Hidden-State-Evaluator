@@ -13,22 +13,51 @@
             "endTime": "2026-08-25T00:00:00Z",
             "startTime": "2026-07-25T00:00:00Z"
           },
-          "recordCount": 0,
+          "recordCount": 3,
           "totals": {
             "cpuAmount": 0,
-            "diskAmount": 0,
-            "gpuAmount": 0,
-            "totalAmount": 0
+            "diskAmount": 0.0009259259095415473,
+            "gpuAmount": 1.6843133866786957,
+            "totalAmount": 1.6852393125882372
           },
-          "uniquePodCount": 0
+          "uniquePodCount": 3
         },
-        "records": []
+        "records": [
+          {
+            "cpuAmount": 0,
+            "diskAmount": 0.0009259259095415473,
+            "endTime": "2026-08-25T00:00:00Z",
+            "gpuAmount": 0.8845303654670715,
+            "podId": "02qa6d8ni12lkt",
+            "startTime": "2026-08-24T00:00:00Z",
+            "totalAmount": 0.8854562913766131
+          },
+          {
+            "cpuAmount": 0,
+            "diskAmount": 0,
+            "endTime": "2026-08-25T00:00:00Z",
+            "gpuAmount": 0.14228299260139465,
+            "podId": "fixdybsjepo7k8",
+            "startTime": "2026-08-24T00:00:00Z",
+            "totalAmount": 0.14228299260139465
+          },
+          {
+            "cpuAmount": 0,
+            "diskAmount": 0,
+            "endTime": "2026-08-25T00:00:00Z",
+            "gpuAmount": 0.6575000286102295,
+            "podId": "lvar1b2yj16o82",
+            "startTime": "2026-08-24T00:00:00Z",
+            "totalAmount": 0.6575000286102295
+          }
+        ]
       },
-      "retrieved_utc": "2026-08-24T08:42:33Z"
+      "retrieved_utc": "2026-08-24T11:13:00Z"
     },
     "compatible_datacenters": {
       "datacenters": [
         "EU-NL-1",
+        "EUR-IS-1",
         "US-WA-2"
       ]
     },
@@ -74,6 +103,7 @@
       "availability": "LOW",
       "datacenters": [
         "EU-NL-1",
+        "EUR-IS-1",
         "US-WA-2"
       ],
       "fallback_reason": null,
@@ -124,9 +154,9 @@
     "surfaces_ok": true
   },
   "qualifying_offer_now": true,
-  "report_sha256": "514a483b00c69dbdcb52875372c02ec70d24a4ff57bb9370c2357599445626c2",
+  "report_sha256": "74759d24db65437e0ea66dbaf704beadff2d88ac91d49405fa635af18dcb5c33",
   "schema": "o1b200.runpod_readonly_preflight.v1",
   "selected_profile": "B300",
-  "utc": "2026-08-24T08:42:26Z",
+  "utc": "2026-08-24T11:12:51Z",
   "verdict": "PASS"
 }
