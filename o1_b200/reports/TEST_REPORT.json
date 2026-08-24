@@ -442,12 +442,13 @@
         "a permanent refusal is recorded for defects but never for budget-dependent aborts the pod declares",
         "budget-dependence survives every hop from the pod's exception to the driver's refusal-marker decision",
         "the O1 -> FL hop re-reads the child's budget classification instead of dropping it",
+        "intervention/transport gates test the measurement within its frozen tolerance, not byte-identical generated text, and an unmeasured tolerance is never a pass",
         "the affordability gate projects from the backend the calibration will actually run on, and only when that configuration earned its own equivalence verdict"
       ],
       "failed": 0,
       "failures": [],
       "module": "test_review_repairs",
-      "passed": 36
+      "passed": 37
     },
     {
       "checks": [
@@ -481,7 +482,7 @@
   "schema": "o1b200.test_report.v1",
   "scope_note": "Hardware-independent local validation only: synthetic runtime + non-O1 corpus + mocked provider/clock. No B200 hardware claim is made or implied.",
   "total_failed": 0,
-  "total_passed": 309,
-  "utc": "2026-08-24T17:05:37Z",
+  "total_passed": 310,
+  "utc": "2026-08-24T18:31:39Z",
   "verdict": "ALL O1 B200 RUNNER TESTS PASSED"
 }

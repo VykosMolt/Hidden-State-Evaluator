@@ -63,7 +63,45 @@ def derive_gates(entry: dict, *, equivalence: dict | None,
     eq = equivalence
     measured = eq is not None
     structural = bool(measured and eq.get("eligible_structurally"))
-    core_identical = bool(measured and (eq.get("is_reference")
+    is_reference = bool(measured and eq.get("is_reference"))
+
+    # These three gates used to be wired to ``scientific_core_identical``,
+    # which compares every SCIENTIFIC_FIELD -- generated_token_ids and
+    # generated_text included.  On real B300 hardware that can never hold for
+    # a batched configuration: bf16 reductions run in a different order at
+    # batch N than at batch 1, one logit flips, and greedy decoding diverges
+    # from there.  Measured 2026-08-24: 7 of 8 rows produced different text
+    # while the run was otherwise correct.  A gate no configuration can pass
+    # is not a safety property, it is a dead end.
+    #
+    # Each gate now tests what its NAME says, against the tolerances this
+    # module has always carried and never consumed:
+    #   action_seed_mapping_exact -> the action/seed MAPPING is exact
+    #   intervention_pass         -> injected_rms agrees within tolerance
+    #   transport_pass            -> rho agrees within tolerance
+    # The tolerances travel in the report itself, so this cannot drift from
+    # the values compare_o1_backends actually applied.
+    numerical = (eq or {}).get("numerical") or {}
+    structural_detail = (eq or {}).get("structural") or {}
+
+    def _within(diff_key, tol_key):
+        if not measured:
+            return False
+        if is_reference:          # compared against itself
+            return True
+        diff, tol = numerical.get(diff_key), numerical.get(tol_key)
+        if diff is None or tol is None:
+            return False          # unmeasured is NOT a pass
+        return float(diff) <= float(tol)
+
+    mapping_exact = bool(measured and (
+        is_reference or structural_detail.get("identity_mapping_exact")))
+    intervention_ok = _within("max_rel_injected_rms_diff",
+                              "tolerance_injected_rms_rel")
+    transport_ok = _within("max_rel_transport_diff", "tolerance_transport_rel")
+    # still reported, no longer a gate: text identity is informative, and its
+    # absence is expected for any batched configuration on real hardware
+    core_identical = bool(measured and (is_reference
                                         or eq.get("scientific_core_identical")))
     total = int(device_total_memory or 0)
     reserved = int((entry.get("gpu") or {}).get("hbm_reserved_bytes", 0) or 0)
@@ -87,9 +125,13 @@ def derive_gates(entry: dict, *, equivalence: dict | None,
         "structural_pass": structural,
         "parser_verifier_pass": (measured
                                  and entry.get("integrity_failures", 1) == 0),
-        "action_seed_mapping_exact": core_identical,
-        "intervention_pass": core_identical,
-        "transport_pass": core_identical,
+        "action_seed_mapping_exact": mapping_exact,
+        "intervention_pass": intervention_ok,
+        "transport_pass": transport_ok,
+        "scientific_core_identical_reported": core_identical,
+        "max_rel_injected_rms_diff":
+            numerical.get("max_rel_injected_rms_diff"),
+        "max_rel_transport_diff": numerical.get("max_rel_transport_diff"),
         "resume_pass": entry.get(
             "resume_remaining_after_completion", -1) == 0,
         "no_missing_or_duplicate_rows": rows_ok,

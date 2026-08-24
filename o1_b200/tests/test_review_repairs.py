@@ -1362,6 +1362,85 @@ def run_extra(r: Runner) -> Runner:
                     f"a {broken['completed_rows_per_hour']!r} reference rate "
                     f"must not be projected from")
 
+    def v2_gates_test_what_their_names_say():
+        """Text identity is not the transport measurement.
+
+        action_seed_mapping_exact / intervention_pass / transport_pass were
+        all wired to scientific_core_identical, which compares every
+        SCIENTIFIC_FIELD including generated_token_ids and generated_text.
+        On real B300 hardware a batched configuration can never satisfy that:
+        bf16 reductions run in a different order at batch N than at batch 1,
+        one logit flips, and greedy decoding diverges.  Measured 2026-08-24:
+        7 of 8 rows differed in text.  Meanwhile the frozen numerical
+        tolerances that exist for exactly this were computed and never read.
+        NOTHING tested the old wiring, which is why rewiring it broke no test.
+        """
+        from o1_b200.runner.selection import derive_gates, is_eligible
+
+        def eq(*, inj, rho, tol=1e-6, mapping=True, core=False):
+            return {"eligible_structurally": True,
+                    "scientific_core_identical": core,
+                    "structural": {"identity_mapping_exact": mapping},
+                    "numerical": {"max_rel_injected_rms_diff": inj,
+                                  "max_rel_transport_diff": rho,
+                                  "tolerance_injected_rms_rel": tol,
+                                  "tolerance_transport_rel": tol}}
+
+        entry = {"config_id": "B200_BATCHED_w1_b256", "backend": "B200_BATCHED",
+                 "workers": 1, "batch": 256, "n_rows": 384,
+                 "completed_rows_per_second": 3.0, "integrity_failures": 0,
+                 "oom_count": 0, "resume_remaining_after_completion": 0,
+                 "throughput_stability_spread": 0.05,
+                 "gpu": {"hbm_reserved_bytes": 20 * 1024**3}}
+        common = dict(device_total_memory=287 * 1024**3, expected_rows=384,
+                      environment={"compile_state": "OFF",
+                                   "cuda_graph_state": "OFF",
+                                   "attention_backend": "eager"},
+                      corpus_config_verified=True)
+
+        # text DIFFERS (core=False) but the measurement agrees -> eligible
+        g = derive_gates(entry, equivalence=eq(inj=0.0, rho=1e-9), **common)
+        assert g["intervention_pass"] and g["transport_pass"], g
+        assert g["action_seed_mapping_exact"], g
+        assert g["scientific_core_identical_reported"] is False, g
+        ok, failures = is_eligible(g)
+        assert ok, failures
+
+        # the measurement DISAGREES -> ineligible, on the right gate
+        g = derive_gates(entry, equivalence=eq(inj=0.0, rho=1e-3), **common)
+        assert g["transport_pass"] is False and g["intervention_pass"] is True, g
+        g = derive_gates(entry, equivalence=eq(inj=1e-3, rho=0.0), **common)
+        assert g["intervention_pass"] is False and g["transport_pass"] is True, g
+
+        # UNMEASURED is not a pass -- the failure mode that would silently
+        # certify a configuration nobody compared
+        for missing in ({"max_rel_transport_diff": None},
+                        {"tolerance_transport_rel": None}):
+            e = eq(inj=0.0, rho=0.0); e["numerical"].update(missing)
+            g = derive_gates(entry, equivalence=e, **common)
+            assert g["transport_pass"] is False, (missing, g)
+        g = derive_gates(entry, equivalence=None, **common)
+        assert not any(g[k] for k in ("intervention_pass", "transport_pass",
+                                      "action_seed_mapping_exact")), g
+
+        # a broken action/seed mapping is still fatal, tolerances or not
+        g = derive_gates(entry, equivalence=eq(inj=0.0, rho=0.0, mapping=False),
+                         **common)
+        assert g["action_seed_mapping_exact"] is False, g
+        assert not is_eligible(g)[0]
+
+        # the reference is compared against itself and passes by construction
+        ref = {**entry, "config_id": "REFERENCE_SERIAL_w1_b1",
+               "backend": "REFERENCE_SERIAL", "batch": 1}
+        g = derive_gates(ref, equivalence={"eligible_structurally": True,
+                                           "is_reference": True}, **common)
+        assert g["intervention_pass"] and g["transport_pass"], g
+
+    r.check("intervention/transport gates test the measurement within its "
+            "frozen tolerance, not byte-identical generated text, and an "
+            "unmeasured tolerance is never a pass",
+            v2_gates_test_what_their_names_say)
+
     r.check("the affordability gate projects from the backend the "
             "calibration will actually run on, and only when that "
             "configuration earned its own equivalence verdict",
