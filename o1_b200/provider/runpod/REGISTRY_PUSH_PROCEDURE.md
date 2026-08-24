@@ -2,7 +2,7 @@
 
 The B300 production image is built locally as `o1-b300-runner:v0.3.11`
 (identity-recorded in `CONTAINER_IMAGE_RECORD.json`, local image id
-`sha256:2595c8ad535eded19ab184bbb03cc36fdca0ef7b9cd1534bcbd62f3b624abe3a`,
+`sha256:dc689d0d8b66feb7425322960c16adf88fe6b727bec5bb98251b77caafee84c4`,
 built by `scripts/build_b300_image.sh` from `Dockerfile.b300`). The registry
 digest is UNRESOLVED until the operator pushes; it was **not** pushed in the
 pre-rental task because:

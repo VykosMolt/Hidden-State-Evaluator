@@ -2,26 +2,25 @@
   "_fl_session_config_note": "EMPTY = O1-only session (the default). A pod-visible path here selects the COMBINED O1 -> Foundation Learner session; the FL package is baked into image v0.3.2+ at /opt/foundation_learner, and the named file must also be present on the pod (staged alongside the artifacts or mounted) - start_b300.sh refuses before any scientific work if either is absent. This value is DEPLOYMENT IDENTITY: it changes deployment_spec_sha256, so switching a session from O1-only to combined requires a FRESH rental authorization ceremony. Bound 2026-08-22 to the config baked with the FL source (image v0.3.11+); the first session is the COMBINED O1 -> FL session.",
   "_profile_preference_note": "Order in which the FROZEN accelerator profiles are tried. Both are covered by the rental authorization, so reordering adds no capability \u2014 it only expresses which part the operator wants FIRST. Set [\"B200\",\"B300\"] to prefer the B200 (e.g. when B300 demand makes it unobtainable); the session still falls back to the other profile and records the reason. Unknown profile names are refused. First paid session: B300 FIRST, B200 retained as the explicit fallback \u2014 operator decision 2026-08-23, superseding the earlier B200-first setting. The reason that setting existed is UNCHANGED and is accepted as a known risk: sm_100 is the directly-validated path, while the sm_103 claim still rests on cuobjdump fatbinary evidence (59 sm_103a cubins, 0 PTX) that has never been exercised on hardware. It is not blind: deploy/hardware_gate.py exercises the loaded kernels on the acquired GPU before any scientific work, and with no PTX embedded a bad load fails loudly rather than silently JIT-ing. The other half of the old rationale is simply stale \u2014 secure B300 moved from NONE to LOW availability (EU-NL-1, $7.89/h) at the 2026-08-23 preflight.",
   "_result_source_note": "REMOVED and derived: the archive lives at result_destination + 'results/o1_results.tar.gz'. Storing it separately let the session prefix move the publish path while the driver kept reading the old one, which turned a fully successful paid run into ABORTED_TERMINATED. zero_touch.result_archive_uri() is the one source.",
-  "_status": "SMOKE TEST 2026-08-24. Budget 9/8/1, MIN_VIABLE_SESSION_SECONDS 45 min, MAX_POD_ACQUISITIONS 1. NOT the calibration session: restore 45/40/5 + 2h floor + 4 acquisitions before any scientific run. image_digest_ref and package_zip_sha256 rebound to v0.3.13 below.",
+  "_status": "RESOLVED 2026-08-24: image_digest_ref bound to the v0.3.12 registry push (public GHCR package; anonymous pull by digest verified HTTP 200) and package_zip_sha256 bound to the v0.3.12 archive. zero_touch still requires the rental authorization ceremony before any pod is created.",
   "adapter_commit": "b19751972e9b7d950ee83cf5d3661c60b563b654",
   "artifact_source": "hf://Vykos/o1-b200-staging",
-  "budget_policy_sha256": "8a1ac227ff1febae57f0769e30c631a288610ad73b3618eb0890e4eaa3292a3c",
+  "budget_policy_sha256": "8ae82de9ff432f4fb8ad467eec967a661c2a14edf2eae6b70d19f7e42781cda7",
   "fl_session_config": "/opt/foundation_learner/foundation_learner/deploy/FL_SESSION_CONFIG.json",
   "identities": {
     "artifact_staging": "private HF repo Vykos/o1-b200-staging (see PRE_RENTAL_PREREQUISITES.md)",
     "base_scientific_package": "O1_oracle_reachability_v2.1.0 zip a8b0571cc67584b862db3e42fb015f47ae7d2887d7ce59605e3c273591fe7892",
-    "budget": "SMOKE TEST USD 9.00 / 8.00 / 1.00, ONE pod, manual termination at the hardware gate; no confirmation, no extension, no override, no auto-pay",
     "budget_policy": "USD 45.00 / 40.00 / 5.00, no extension, no override, no auto-pay, confirmation false",
-    "package": "O1_B300_RUNNER_v0.3.13_RUNPOD_PRERENTAL",
+    "package": "O1_B300_RUNNER_v0.3.12_RUNPOD_PRERENTAL",
     "result_destination": "private HF repo Vykos/o1-b200-results (SEPARATE from staging; pod write token fine-grained to results only)"
   },
-  "image_digest_ref": "ghcr.io/vykosmolt/o1-b300-runner@sha256:2595c8ad535eded19ab184bbb03cc36fdca0ef7b9cd1534bcbd62f3b624abe3a",
+  "image_digest_ref": "ghcr.io/vykosmolt/o1-b300-runner@sha256:dc689d0d8b66feb7425322960c16adf88fe6b727bec5bb98251b77caafee84c4",
   "package_zip_sha256": "bf9b88f520de586feef8b6ca813c934374af4a2b9d85d84f3e3f96d06a7f4e10",
   "profile_preference": [
     "B300",
     "B200"
   ],
-  "project": "O1_B300_SMOKE",
+  "project": "O1_B300_CALIBRATION",
   "result_destination": "hf://Vykos/o1-b200-results/O1_B300_CALIBRATION",
   "schema": "o1b300.runpod_session_config.v2"
 }

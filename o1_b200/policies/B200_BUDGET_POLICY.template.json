@@ -1,9 +1,9 @@
 {
   "policy": "o1b200.budget.v1",
-  "status": "SMOKE TEST 2026-08-24 \u2014 NOT the calibration budget. One pod, manual termination at the hardware gate. Restore 45/40/5 before any scientific session.",
-  "total_authorized_usd": 9.0,
-  "maximum_compute_spend_usd": 8.0,
-  "reserved_noncompute_usd": 1.0,
+  "status": "TEMPLATE — hourly rate and provider fields are unresolved; no spend is authorized by this file",
+  "total_authorized_usd": 45.00,
+  "maximum_compute_spend_usd": 40.00,
+  "reserved_noncompute_usd": 5.00,
   "confirmation_authorized": false,
   "automatic_extension_allowed": false,
   "operator_override_allowed": false,
@@ -11,7 +11,7 @@
   "runtime_limit_rule": "floor(maximum_compute_spend_usd / actual_hourly_rate * 3600) seconds",
   "watchdog": {
     "stop_launching_new_work_at_fraction": 0.95,
-    "immediate_termination_at_fraction": 1.0,
+    "immediate_termination_at_fraction": 1.00,
     "clock": "monotonic in-process + independent external watchdog interface",
     "no_automatic_extension": true,
     "no_confirmation_launch": true
