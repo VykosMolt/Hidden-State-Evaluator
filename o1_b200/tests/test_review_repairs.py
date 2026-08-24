@@ -1051,6 +1051,13 @@ def run_extra(r: Runner) -> Runner:
             ("def f():\n    for _ in range(3):\n        try:\n"
              "            print(t)\n        except NameError:\n"
              "            pass\n        t = 1\n", 0, 0),
+            # loop-else binding in BOTH clauses covers every way out
+            ("def f(xs, g):\n    for x in xs:\n        v = g(x)\n"
+             "        break\n    else:\n        v = None\n"
+             "    return v\n", 0, 0),
+            # ...an else that does not bind leaves the empty-iterable path
+            ("def f(xs, g):\n    for x in xs:\n        v = g(x)\n"
+             "    else:\n        pass\n    return v\n", 0, 1),
         )
         for src, want_g, want_l in fixtures:
             with tempfile.NamedTemporaryFile("w", suffix=".py",
@@ -1126,6 +1133,100 @@ def run_extra(r: Runner) -> Runner:
     r.check("a permanent refusal is recorded for defects but never for "
             "budget-dependent aborts the pod declares",
             u3_only_the_pod_may_declare_an_abort_budget_dependent)
+
+    # ---------- round 4: the classification channel, end to end ----------
+
+    def u4_budget_dependence_survives_every_hop_to_the_driver():
+        """Three rounds of review found the SAME defect shape three times: a
+        classification that exists on one side of a boundary and cannot cross
+        it.  Nothing tested the channel itself, so each fix was verified only
+        at the end it was written at.  This walks the whole thing:
+
+            production_entry status -> marker string
+                -> completion_verdict (the driver's own parser)
+                -> _is_budget_dependent (the refusal-marker decision)
+
+        A budget stop must NOT condemn the deployment; a genuine defect MUST.
+        """
+        from o1_b200.provider.runpod.zero_touch import (completion_verdict,
+                                                        _is_budget_dependent)
+        from o1_b200.runner.production_entry import _abort_is_budget_dependent
+
+        def emit(status):
+            """Exactly what production_entry.main() prints."""
+            state = str(status.get("failed_state") or status["outcome"])
+            if _abort_is_budget_dependent(status):
+                state += "_BUDGET_DEPENDENT"
+            return "ZERO_TOUCH_ABORTED_AT_" + state
+
+        budget_stops = (
+            # the RESUMABLE case: a replacement pod continues from row N
+            {"outcome": "ABORTED", "failed_state": "CALIBRATION",
+             "failure": "ProductionEntryError('authorized runtime (18250s) "
+                        "reached with 3200 rows committed; orchestrator "
+                        "killed and records mirrored')"},
+            # SOFT_STOP at the entry to any state
+            {"outcome": "ABORTED", "failed_state": "NON_O1_BENCHMARK",
+             "failure": "BudgetRefusal('93.0% of authorized runtime used')"},
+        )
+        for status in budget_stops:
+            marker = emit(status)
+            verdict = completion_verdict(marker + "\n")
+            assert verdict is not None and verdict != "COMPLETE", marker
+            assert _is_budget_dependent(verdict), (
+                f"{marker} must NOT write a durable refusal: it depends on "
+                f"this pod's allowance, and an operator who adds budget or a "
+                f"replacement pod that resumes has changed the very input")
+
+        defects = (
+            {"outcome": "ABORTED", "failed_state": "ARTIFACT_VERIFY",
+             "failure": "ProductionEntryError('checkpoint tree hash "
+                        "mismatch')"},
+            {"outcome": "ABORTED", "failed_state": "HARDWARE_GATE",
+             "failure": "AcceleratorError('kernel failed to load')"},
+        )
+        for status in defects:
+            marker = emit(status)
+            assert not marker.endswith("_BUDGET_DEPENDENT"), marker
+            assert not _is_budget_dependent(completion_verdict(marker + "\n")), (
+                f"{marker} MUST write a durable refusal: it repeats by "
+                f"construction and a rerun would pay for it again")
+
+    r.check("budget-dependence survives every hop from the pod's exception "
+            "to the driver's refusal-marker decision",
+            u4_budget_dependence_survives_every_hop_to_the_driver)
+
+    def u5_the_o1_to_fl_hop_carries_the_same_classification():
+        """The FL supervisor namespaces the O1 child's marker away, so the
+        classification has to be re-read there or it is lost -- which is
+        exactly how an O1 affordability refusal came to brick the deployment.
+        """
+        import importlib.util
+        fl = os.path.join(os.path.dirname(_ROOT), "foundation-learner-b200-v0")
+        mod_path = os.path.join(fl, "foundation_learner", "campaign",
+                                "session_supervisor.py")
+        if not os.path.isfile(mod_path):
+            return                          # FL worktree absent in this checkout
+        if fl not in sys.path:
+            sys.path.insert(0, fl)
+        from foundation_learner.campaign.session_supervisor import (
+            o1_abort_is_budget_dependent)
+
+        for state in ("CALIBRATION_BUDGET_DEPENDENT",
+                      "NON_O1_BENCHMARK_BUDGET_DEPENDENT",
+                      "CALIBRATION_AFFORDABILITY_CHECK"):
+            tails = f"some output\nO1_PHASE_ABORTED_AT_{state}\n"
+            assert o1_abort_is_budget_dependent(tails) == state, state
+        for state in ("ARTIFACT_VERIFY", "HARDWARE_GATE", "CALIBRATION"):
+            tails = f"O1_PHASE_ABORTED_AT_{state}\n"
+            assert o1_abort_is_budget_dependent(tails) is None, state
+        # prose must not be able to spoof a verdict
+        assert o1_abort_is_budget_dependent(
+            "note: O1_PHASE_ABORTED_AT_BUDGET was mentioned inline\n") is None
+
+    r.check("the O1 -> FL hop re-reads the child's budget classification "
+            "instead of dropping it",
+            u5_the_o1_to_fl_hop_carries_the_same_classification)
 
     return r
 

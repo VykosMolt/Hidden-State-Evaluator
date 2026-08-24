@@ -193,6 +193,28 @@ def _stale_image_binding(root: str, config: dict) -> str | None:
         return (f"image_digest_ref {bound[:72]!r} is not the built image "
                 f"{built[:72]!r}; the deployed pod would not contain the "
                 f"reviewed source")
+    # Digest agreement only proves the RECORD and the CONFIG were kept in
+    # step -- both are fields a human edits.  It does not prove the image was
+    # built from the source that is here now, which is the case the comment
+    # above actually names: edited, never rebuilt, both fields still agree,
+    # and the pod runs the old code.  Compare the recorded source trees.
+    try:
+        from .pre_rental_check import (_fl_source_tree_sha256,
+                                       _o1_source_tree_sha256)
+    except Exception:  # noqa: BLE001 - never block the driver on the checker
+        return None
+    for label, recorded_key, live in (
+            ("o1_b200", "o1_b200_source_sha256",
+             _o1_source_tree_sha256(root)),
+            ("foundation_learner", "foundation_learner_source_sha256",
+             _fl_source_tree_sha256())):
+        recorded = str(record.get(recorded_key, ""))
+        if recorded.startswith("ABSENT_BY_REQUEST") or not live:
+            continue            # deliberately O1-only, or tree not present
+        if not recorded or recorded != live:
+            return (f"the bound image was built from a different {label} "
+                    f"source tree (recorded {recorded[:16]!r}, live "
+                    f"{live[:16]!r}); rebuild and re-push before spending")
     return None
 
 

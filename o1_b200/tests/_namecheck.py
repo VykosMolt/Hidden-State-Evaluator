@@ -13,6 +13,14 @@ Two blind spots are covered deliberately:
     UnboundLocalError -- the same "only crashes on the real path" class --
     is invisible to the global check and needs its own pass.
 
+KNOWN GAP, stated so nobody mistakes this for a proof: a nested function
+that closes over a CONDITIONALLY bound enclosing local -- ``if c: v = 1``
+then ``def inner(): return v`` -- is not flagged, because the name is a free
+variable in the inner scope rather than a global or a local of it.  Both
+trees were swept for that shape and no live instance was found, but the
+check does not cover it.  `del x` then read, and an augmented assignment
+before the first binding, are also missed.
+
 `unbound_locals` is deliberately conservative: a read inside a loop that also
 binds the name is not flagged, because the binding feeds the next iteration.
 It is validated against synthetic positives and negatives by its callers.
@@ -216,11 +224,20 @@ def _stmt_binds_definitely(n, name):
         return success_ok and handlers_ok
     if isinstance(n, (ast.With, ast.AsyncWith)):
         return _binds_every_path(n.body, name)
-    if isinstance(n, ast.For) and _always_iterates(n.iter):
-        return _binds_every_path(n.body, name)
-    if isinstance(n, ast.While) and _is_true_literal(n.test):
-        # `while True:` always enters its body
-        return _binds_every_path(n.body, name)
+    if isinstance(n, (ast.For, ast.AsyncFor, ast.While)):
+        if isinstance(n, ast.While) and _is_true_literal(n.test):
+            # `while True:` always enters its body
+            return _binds_every_path(n.body, name)
+        if isinstance(n, ast.For) and _always_iterates(n.iter):
+            return _binds_every_path(n.body, name)
+        # `for ... else:` / `while ... else:` -- the else clause runs when
+        # the loop finished without break, the body when it ran.  Binding in
+        # BOTH covers every way out, so flagging it was a false positive that
+        # would have blocked ordinary code.
+        if n.orelse and _binds_every_path(n.body, name) \
+                and _binds_every_path(n.orelse, name):
+            return True
+        return False
     if isinstance(n, ast.Match):
         cases = getattr(n, "cases", [])
         if cases and any(_is_wildcard_case(c) for c in cases):

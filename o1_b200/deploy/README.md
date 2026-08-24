@@ -12,7 +12,7 @@ recorded. No spend is authorized by this directory.
 
 | file | purpose |
 |---|---|
-| `Dockerfile.b300` | reproducible image: CUDA 13.0 runtime (cuDNN 9.20.0.48, NCCL 2.29.7, triton 3.7.1), Python 3.14, pinned deps, sealed package + runner + axis package + cohort manifests baked in (checkpoint mounted, never baked); built by `scripts/build_b300_image.sh` as `o1-b300-runner:v0.3.11`, rebuilt local image id `sha256:142025d00c1042f747232b017de0a3f685dc9ab7763b6b688553d9bbea71783c` (registry digest unresolved until pushed) |
+| `Dockerfile.b300` | reproducible image: CUDA 13.0 runtime (cuDNN 9.20.0.48, NCCL 2.29.7, triton 3.7.1), Python 3.14, pinned deps, sealed package + runner + axis package + cohort manifests baked in (checkpoint mounted, never baked); built by `scripts/build_b300_image.sh` as `o1-b300-runner:v0.3.11`, rebuilt local image id `sha256:1be7f336940b8b5a069c727b399738f3dcf64a3cd06d353b6c989a7a18ae03c0` (registry digest unresolved until pushed) |
 | `requirements.b300.lock` + `WHEELS_B300.sha256` | exact pins (`torch==2.12.1+cu130`, `numpy==2.4.4`, `transformers==4.54.1` EXACT) plus a frozen local wheel set hash, asserted at build AND at runtime |
 | `start_b300.sh` | entrypoint -> `runner/production_entry.py`: env validation → artifact verification → hardware gate before anything scientific |
 | `hardware_gate.py` | enforces identity/CC/HBM/BF16/driver/arch and runs representative real workloads (BF16 GEMM, Ouro-RLTT forward/generation, backward+optimizer, O1 intervention hook + transport capture, checkpoint save/load) before anything scientific |

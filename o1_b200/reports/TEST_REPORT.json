@@ -414,12 +414,14 @@
         "NEW#11. a duplicated profile preference is refused",
         "every name a function reads is actually bound, as a global or as a local (NameError and UnboundLocalError), checker self-validated against known positives and negatives",
         "the leftover sweep terminates only this session's pods and never a foreign one",
-        "a permanent refusal is recorded for defects but never for budget-dependent aborts the pod declares"
+        "a permanent refusal is recorded for defects but never for budget-dependent aborts the pod declares",
+        "budget-dependence survives every hop from the pod's exception to the driver's refusal-marker decision",
+        "the O1 -> FL hop re-reads the child's budget classification instead of dropping it"
       ],
       "failed": 0,
       "failures": [],
       "module": "test_review_repairs",
-      "passed": 33
+      "passed": 35
     },
     {
       "checks": [
@@ -453,7 +455,7 @@
   "schema": "o1b200.test_report.v1",
   "scope_note": "Hardware-independent local validation only: synthetic runtime + non-O1 corpus + mocked provider/clock. No B200 hardware claim is made or implied.",
   "total_failed": 0,
-  "total_passed": 289,
-  "utc": "2026-08-23T22:58:03Z",
+  "total_passed": 291,
+  "utc": "2026-08-24T00:03:38Z",
   "verdict": "ALL O1 B200 RUNNER TESTS PASSED"
 }

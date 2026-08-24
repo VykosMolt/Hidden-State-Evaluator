@@ -1129,6 +1129,21 @@ def _manifest_checkpoint_sha256(manifest_path: str, checkpoint_dir: str) -> str:
         f"the run cannot be bound to a verified model artifact")
 
 
+#: Substrings of the recorded failure that identify a budget/time stop
+#: rather than a deployment defect.  BudgetRefusal is raised by
+#: budget.check_may_launch_work (SOFT_STOP) and by the affordability gate;
+#: the runtime_limit kill in calibration() raises ProductionEntryError with
+#: this exact wording.
+_BUDGET_FAILURE_MARKERS = ("BudgetRefusal", "authorized runtime (",
+                           "BudgetExhausted")
+
+
+def _abort_is_budget_dependent(status: dict) -> bool:
+    """Whether this abort depends on the pod's allowance, not the code."""
+    failure = str(status.get("failure") or "")
+    return any(tok in failure for tok in _BUDGET_FAILURE_MARKERS)
+
+
 def main() -> int:
     out_dir = os.environ.get("O1_B200_OUT", "/outputs")
     os.makedirs(out_dir, exist_ok=True)
@@ -1158,8 +1173,18 @@ def main() -> int:
     if status["outcome"] == "COMPLETE":
         print("ZERO_TOUCH_COMPLETE")
     else:
-        print("ZERO_TOUCH_ABORTED_AT_" + str(
-            status.get("failed_state") or status["outcome"]))
+        state = str(status.get("failed_state") or status["outcome"])
+        # A budget stop is a function of THIS pod's allowance, not of the
+        # deployment.  Only this process knows which it was -- it holds the
+        # exception -- and the state NAME does not say: 12 of the 13 states
+        # it can abort at carry no budget token, so "authorized runtime
+        # reached with N rows committed" (the RESUMABLE case: a replacement
+        # pod continues from row N) was recorded by the driver as a
+        # PERMANENT, deployment-wide refusal.  The driver already decodes
+        # this suffix; the pod simply never spoke it.
+        if _abort_is_budget_dependent(status):
+            state += "_BUDGET_DEPENDENT"
+        print("ZERO_TOUCH_ABORTED_AT_" + state)
     return 0 if status["outcome"] == "COMPLETE" else 1
 
 
