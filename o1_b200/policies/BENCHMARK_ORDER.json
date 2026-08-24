@@ -158,6 +158,27 @@
         "measurements_per_stage"
       ],
       "scientific_impact": "none by construction: candidate list only. Every added configuration must earn eligibility through the same unmodified equivalence gates, and REFERENCE_SERIAL remains the terminal fallback."
+    },
+    {
+      "amendment": 3,
+      "date": "2026-08-24",
+      "field": "PRECALIBRATION_BUDGET_FRACTION, and the per-stage cost estimate used by the pre-calibration cost rule",
+      "was": "Amendment 2 bounded the equivalence phase and the benchmark TOGETHER to 25% of the authorized runtime remaining when the phase starts, while also requiring that the reference stage always runs. On real hardware those two clauses cannot both hold: the reference pass is ~37% of the session (~1.9 h of ~5.1 h over the 384-row corpus), so the implemented expression 0.25 * remaining - t_reference is negative and clamps to zero. Separately, and independently fatal, each stage's cost was estimated as max(t_reference, largest stage measured so far): every non-reference stage was estimated at the cost of REFERENCE_SERIAL, the SLOWEST configuration that exists, so the cheapest deep-batch stages were always the first to be skipped and could never be reached however much budget remained.",
+      "now": "The fraction bounds only the DISCRETIONARY stages, computed on the runtime remaining AFTER the mandatory reference pass: budget = 0.50 * max(0, remaining - t_reference). A fraction cannot bound mandatory work, because the reference always runs. Each stage's cost is estimated per configuration as t_reference / (workers * batch) plus a fixed overhead, corrected upward by the worst under-estimate observed so far, which is the model the benchmark phase already used. Both phases now share one estimator; their disagreement was the defect.",
+      "why": "Measured on real B300 hardware 2026-08-24 (reports/B300_HARDWARE_EVIDENCE.json). Under the previous rule NO non-reference stage runs at any budget: every batched configuration is recorded 'eligible_structurally: false, skipped: precalibration cost rule' WITHOUT EVER BEING TESTED. With the shared estimator, at the current reference extrapolation, 10 of the 12 non-reference stages are tested (B200_REPLICA_w2_b1 and B200_BATCHED_w1_b4 are still skipped untested) and b256 is among those tested.",
+      "bounded_by": "The reference pass is paid once (shared with the benchmark rather than repeated). The halving rule reserves half of the REMAINING budget per accepted stage, which is not the same as bounding the phase to half the budget: because stage costs fall geometrically down the frozen order while the threshold only halves per acceptance, the equivalence phase converges to ~84% of the shared budget at the nominal reference, leaving the benchmark phase ~16%. A stage that does not fit is still skipped, still recorded, and still ineligible, so the phase fails closed; but the 50/50 split this fraction appears to promise is NOT delivered, and a configuration that passes equivalence but is never benchmarked cannot be selected.",
+      "not_amended": [
+        "selection_rule",
+        "eligibility_requirements",
+        "structural equivalence gates (row IDs, task hashes, prompt tokens, action mapping, axis/sign/alpha mapping, stream/seed mapping, record schema, canonical ordering)",
+        "the frozen stage order and the identity of stages 1-10",
+        "the validation corpus",
+        "the affordability gate",
+        "the rule that the reference stage always runs and is the terminal fallback"
+      ],
+      "scientific_impact": "None to the science. This changes only which configurations get the CHANCE to earn an equivalence verdict, and every stage that runs still runs the full corpus exactly once and must still pass every gate unchanged. A configuration without its own equivalence verdict remains ineligible, even when it is the fastest.",
+      "robustness": "NOT robust to a slower reference pass, and not monotone. Replaying the rule against the real estimator at multiples of the extrapolated reference: 1.0x -> 10/12 stages, b256 tested; 1.5x -> 7/12, tested; 2.0x -> 5/12, b256 NOT tested; 2.15x -> 4/12, tested; 2.7x -> 0/12. An earlier draft of this amendment claimed the result 'remains true even if the reference pass proves 2.15x slower'; that was a single lucky sample point, not a property, and it is withdrawn. The reference pass duration is not yet measured on hardware.",
+      "does_not_affect_calibration_cost": "IMPORTANT, and contrary to an earlier draft of this amendment: selecting a batched backend does NOT make the calibration cheaper. The sealed v2.1 orchestrator constructs RealBackend directly (o1_packages/O1_oracle_reachability_v2.1.0_source/o1_v210/run_o1_v2_orchestrator.py:505,674), exposes no backend/worker/batch CLI argument, and calls generate() one task at a time. The calibration therefore runs at the REFERENCE_SERIAL rate whichever configuration this policy selects; affordability() projects from the serial rate for exactly this reason. The selected backend governs the non-O1 benchmark and the precommit record only. The withdrawn claim that this buys a '~50x cheaper' calibration was false."
     }
   ]
 }

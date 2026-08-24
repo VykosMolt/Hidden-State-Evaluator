@@ -42,7 +42,8 @@ from .persistence import atomic_write_text
 from .precommit_template import finalize, load_template, resolve
 from .provider_adapter import LocalProviderAdapter
 from .runbuild import O1_MANIFEST_PATHS
-from .benchmark_o1_b200 import _oom_types, load_benchmark_order
+from .benchmark_o1_b200 import (_oom_types, _stage_cost_estimate,
+                                load_benchmark_order)
 from .identity import domain_sha256, sha256_file
 from .selection import benchmark_candidates, derive_gates, select_backend
 
@@ -53,7 +54,29 @@ from . import sealed_import
 #: BENCHMARK_ORDER amendment 2: the pre-calibration phase (equivalence +
 #: benchmark) may use at most this fraction of the runtime remaining when
 #: it starts; stages run in the frozen order until the budget is spent.
-PRECALIBRATION_BUDGET_FRACTION = 0.25
+#: Fraction of the runtime remaining AFTER the mandatory reference pass that
+#: the DISCRETIONARY benchmark stages may use.
+#:
+#: Was 0.25 of the whole remaining runtime, with the reference subtracted
+#: from it.  On real hardware the reference pass is ~37% of the session
+#: (1.86 h of 5.07 h over the 384-row corpus), so that expression was
+#: negative and clamped to zero: NO non-reference stage could run, no batched
+#: configuration could earn an equivalence verdict, REFERENCE_SERIAL was
+#: selected by default, and the calibration it implies (~22 h) was then
+#: refused by the affordability gate.  The session could not succeed.
+#:
+#: A fraction cannot bound mandatory work -- the reference always runs.  It
+#: now bounds what is optional, as a share of what is actually left.
+#:
+#: 0.50 is what reaches the deep-batch stages.  NOTE that this does NOT buy a
+#: cheaper calibration: the sealed v2.1 orchestrator builds RealBackend itself
+#: and generates one task at a time, so the calibration runs at the
+#: REFERENCE_SERIAL rate whichever configuration is selected (see
+#: ``affordability`` below, which projects from the serial rate for exactly
+#: that reason).  The selected backend governs the non-O1 benchmark and the
+#: precommit record only.  An earlier revision of this comment claimed a ~50x
+#: cheaper calibration; that was false and is withdrawn.
+PRECALIBRATION_BUDGET_FRACTION = 0.50
 
 ROOT = sealed_import.WORKTREE_ROOT
 CHECKPOINT_DIR = os.environ.get("O1_CHECKPOINT_DIR",
@@ -299,16 +322,21 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
         # (6.91 h / $54.55 duplicated vs 5.05 h / $39.85 shared, measured
         # 2026-08-24, reports/B300_HARDWARE_EVIDENCE.json).  The 2x charge
         # was honest accounting of real duplicated work; the work is gone.
-        budget = PRECALIBRATION_BUDGET_FRACTION * remaining_at_start \
-            - ref_seconds
-        if budget < 0:
-            # the phase cannot fit even its two mandatory passes: say so now,
-            # not after the benchmark's reference pass has also been paid
+        budget = PRECALIBRATION_BUDGET_FRACTION * max(
+            0.0, remaining_at_start - ref_seconds)
+        if budget <= 0.0:
+            # ``budget`` is clamped at zero on the line above, so the old
+            # ``budget < 0`` test could never fire and this overrun was never
+            # recorded.  The live condition is that the mandatory reference
+            # pass consumed the whole remaining runtime: nothing discretionary
+            # is left, no further stage can run, so no batched configuration
+            # can earn an equivalence verdict and REFERENCE_SERIAL becomes the
+            # only possible outcome.  Say so here, not after the benchmark
+            # phase has also been paid for.
             ctx["precalibration_overrun"] = {
                 "reference_pass_seconds": ref_seconds,
-                "declared_budget_seconds":
-                    PRECALIBRATION_BUDGET_FRACTION * remaining_at_start}
-            budget = 0.0
+                "remaining_at_start_seconds": remaining_at_start,
+                "discretionary_seconds": 0.0}
         ctx["precalibration"] = {
             "remaining_at_start_seconds": remaining_at_start,
             "budget_seconds": budget,
@@ -333,7 +361,20 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
             "is_reference": True}}
         clean_so_far = True
         spent = 0.0
-        estimate = ref_seconds
+        # Per-stage cost model, SHARED with the benchmark phase.  This used to
+        # be a scalar seeded at ``ref_seconds`` and grown with max(): every
+        # non-reference stage was estimated at the cost of REFERENCE_SERIAL,
+        # the slowest configuration that exists.  On real hardware the
+        # reference is ~1.9 h over the 384-row corpus while a b256 stage is
+        # ~30 s, so the rule below skipped EVERY batched stage untested, no
+        # configuration could earn an equivalence verdict, REFERENCE_SERIAL
+        # was selected by default, and its ~22 h calibration was then refused
+        # by the affordability gate -- after the session had already paid for
+        # the reference pass.  benchmark_o1_b200._stage_cost_estimate was
+        # fixed for the benchmark phase; this phase, which is the one that
+        # assigns eligibility, kept the broken rule.  The two phases must not
+        # disagree about what a stage costs.
+        eq_results = []
         oom_types = _oom_types()
         for entry in stages:
             cid = entry["config_id"]
@@ -348,6 +389,7 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
                 continue
             # the benchmark still needs its own pass per stage, so an
             # equivalence pass may use at most half of what is left
+            estimate = _stage_cost_estimate(entry, ref_seconds, eq_results)
             if estimate > 0.5 * (budget - spent):
                 comp[cid] = {"eligible_structurally": False,
                              "skipped": "precalibration cost rule",
@@ -378,13 +420,15 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
                 continue
             stage_seconds = clock() - t_stage
             spent += stage_seconds
-            estimate = max(estimate, stage_seconds)
+            eq_results.append({"total_stage_seconds": stage_seconds,
+                               "workers": int(entry.get("workers", 1)),
+                               "batch": int(entry.get("batch", 1))})
             comp[cid] = compare_rows(ref["rows"], cand["rows"])
             comp[cid]["stage_seconds"] = stage_seconds
             if not comp[cid].get("eligible_structurally"):
                 clean_so_far = False
         ctx["precalibration"]["equivalence_spent_seconds"] = spent
-        ctx["precalibration"]["stage_cost_estimate_seconds"] = estimate
+        ctx["precalibration"]["stage_cost_estimate_seconds"] = ref_seconds
         # the reference defines structural eligibility by construction; a
         # failed non-reference stage is recorded as ineligible, never raised
         ctx["equivalence"] = comp
