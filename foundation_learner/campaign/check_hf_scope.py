@@ -22,7 +22,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import subprocess
 import sys
 
 from .hf_transfer import child_env

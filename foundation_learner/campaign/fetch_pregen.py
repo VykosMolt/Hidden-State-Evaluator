@@ -25,7 +25,6 @@ import hashlib
 import json
 import os
 import shutil
-import subprocess
 import sys
 
 from .hf_transfer import child_env
@@ -172,6 +171,13 @@ def _helper_error(text: str, limit: int = 400) -> str:
     return lines[-1][:limit] if lines else "(helper produced no output)"
 
 
+#: Aggregate wall-clock budget for the whole pregen fetch, retries
+#: included.  The corpus is ~480 MB; 7,200 s was not a stall
+#: detector, it was two hours of a ~5 h paid session spent on one
+#: hung connection -- and then the replacement pod could do it again.
+PREGEN_FETCH_TIMEOUT_SECONDS = 1800.0
+
+
 def _run_helper(args: list[str], timeout: float) -> dict:
     from .transient import run_helper_with_retry
 
@@ -187,7 +193,8 @@ def _run_helper(args: list[str], timeout: float) -> dict:
 
 
 def fetch(source_uri: str, pregen_root: str = DEFAULT_PREGEN_ROOT,
-          timeout: float = 7200.0, runner=None) -> dict:
+          timeout: float = PREGEN_FETCH_TIMEOUT_SECONDS,
+          runner=None) -> dict:
     """Materialise and verify the pregen corpus at ``pregen_root``."""
     if os.path.exists(pregen_root) and not os.path.isdir(pregen_root):
         raise PregenFetchError(

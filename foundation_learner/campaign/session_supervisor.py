@@ -1584,14 +1584,14 @@ def _namespace_o1_markers(text: str) -> str:
 
 
 def _session_marker(status: Mapping[str, Any]) -> str:
-    if status.get("transient"):
-        return "REFUSED (transient): session aborted for a transient cause"
     """The combined session's completion witness for the off-pod driver.
 
     Both literals are written here verbatim (not assembled) for the same
     reason O1 writes its own that way: the marker the driver looks for and
     the marker the pod emits cannot drift apart.
     """
+    if status.get("transient"):
+        return "REFUSED (transient): session aborted for a transient cause"
     if status.get("outcome") == "COMPLETE":
         return "ZERO_TOUCH_COMPLETE"
     state = str(status.get("failed_state") or status.get("outcome")

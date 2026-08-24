@@ -32,7 +32,16 @@ DETERMINISTIC_STATUSES = (401, 403, 404)
 #: Attempts per step, with exponential backoff capped at 30 s.
 ATTEMPTS = 4
 
-_STATUS_RE = re.compile(r"\b(4\d{2}|5\d{2})\b")
+#: The status must be read from an HTTP status LINE, never from any 3-digit
+#: number in the text.  A bare \b(4|5)\d\d\b matches the line number in a
+#: traceback frame -- `File ".../_http.py", line 409, in hf_raise_for_status`
+#: -- which appears BEFORE the exception line.  That silently inverted this
+#: module: a genuine 401 read as 409 (retried, then reported transient, so a
+#: bad token became repeated paid acquisitions) and a genuine 5xx could read
+#: as 404 (permanent, deployment-wide lockout).  Both are exactly what this
+#: file exists to prevent.  Verbatim the O1 rule in
+#: o1_b200/runner/check_hf_scope.py, which had it right.
+_STATUS_RE = re.compile(r"\b([45]\d\d)\s+(?:Client|Server)\s+Error\b")
 
 
 class TransientStepError(RuntimeError):
@@ -40,8 +49,15 @@ class TransientStepError(RuntimeError):
 
 
 def http_status(text: str) -> int | None:
-    m = _STATUS_RE.search(text or "")
-    return int(m.group(1)) if m else None
+    """The HTTP status of the LAST status line in ``text``, if any.
+
+    Last, not first: a retried helper can print several, and the final one
+    is the outcome that matters.
+    """
+    status = None
+    for m in _STATUS_RE.finditer(text or ""):
+        status = int(m.group(1))
+    return status
 
 
 def run_helper_with_retry(args: list[str], timeout: float, *,
