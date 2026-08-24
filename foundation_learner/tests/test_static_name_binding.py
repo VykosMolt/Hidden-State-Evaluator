@@ -76,12 +76,12 @@ _SELF_TEST_FIXTURES = (
     ("import os\ndef f():\n    return os.sep\n", 0, 0),
     ("def f(xs):\n    return [y for y in xs]\n", 0, 0),
     ("def f():\n    return len([1])\n", 0, 0),
-    # loop-else: binding in BOTH the body and the else covers every way out
-    ("def f(xs, g):\n    for x in xs:\n        v = g(x)\n        break\n"
-     "    else:\n        v = None\n    return v\n", 0, 0),
-    ("def f(g):\n    while g():\n        v = 1\n        break\n"
-     "    else:\n        v = 2\n    return v\n", 0, 0),
-    # ...but an else that does NOT bind leaves the empty-iterable path open
+    # loop-else is conservatively treated as NOT definite, even when both
+    # clauses bind: a `break` before the binding exits with the name unbound
+    # and this analysis has no notion of `break`.  A version that accepted
+    # the both-clauses-bind shape let THIS real UnboundLocalError through:
+    ("def f(xs, g):\n    for x in xs:\n        if g(x):\n            break\n"
+     "        v = x\n    else:\n        v = None\n    return v\n", 0, 1),
     ("def f(xs, g):\n    for x in xs:\n        v = g(x)\n    else:\n"
      "        pass\n    return v\n", 0, 1),
 )

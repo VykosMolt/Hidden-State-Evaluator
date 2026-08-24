@@ -1540,33 +1540,32 @@ def _as_text(raw) -> str:
     return str(raw)
 
 
-#: Tokens that mark an O1 abort as a function of THIS pod's allowance or
-#: measured throughput rather than of the deployment.  Deliberately a LOCAL
-#: copy of the driver's rule: the campaign package must not import from the
-#: O1 package (contract 13 isolation), and duplicating four tokens is a much
-#: smaller risk than the coupling.
-_O1_BUDGET_DEPENDENT_TOKENS = ("AFFORD", "BUDGET", "ALLOWANCE", "UNAFFORDABLE")
+#: The suffix the O1 child appends when IT knows its abort depends on the
+#: pod's allowance.  It is the only signal: guessing from the state name
+#: overruled the child in the expensive direction, because
+#: CALIBRATION_AFFORDABILITY_CHECK contains "AFFORD" and that state also
+#: aborts for genuine deployment defects (an unmeasured throughput, a NaN
+#: rate).  Those then escaped the durable refusal they deserve and every
+#: rerun paid to reach the same abort again.
+O1_BUDGET_DEPENDENT_SUFFIX = "_BUDGET_DEPENDENT"
 
 _O1_ABORT_RE = re.compile(r"^[ \t]*O1_PHASE_ABORTED_AT_([A-Z0-9_]+)[ \t\r]*$",
                           re.MULTILINE)
 
 
 def o1_abort_is_budget_dependent(tails: str) -> str | None:
-    """The O1 child's abort state when that abort was budget-dependent.
+    """The O1 child's abort state when THE CHILD declared it budget-dependent.
 
-    The O1 child KNOWS its affordability gate refused -- it prints
-    ZERO_TOUCH_ABORTED_AT_CALIBRATION_AFFORDABILITY_CHECK -- but this
-    supervisor namespaces that marker away and then reports its own
-    ABORTED_AT_O1_HALT_OR_COMPLETE, which carries no budget token.  The
-    driver therefore recorded a PERMANENT, deployment-wide refusal for a
-    plain "not enough time left on this pod" outcome, and the operator had
-    to delete a file before any future run.  The classification has to
-    cross the O1 -> FL hop explicitly; nothing else carries it.
+    This supervisor namespaces the child's marker away and reports its own
+    ABORTED_AT_O1_HALT_OR_COMPLETE, which carries no classification at all,
+    so the child's verdict has to be re-read here or it is lost -- that is
+    how an ordinary "this pod ran short of time" came to write a permanent,
+    deployment-wide refusal.  Re-read it; never re-derive it.
     """
     verdict = None
     for m in _O1_ABORT_RE.finditer(tails or ""):
         verdict = m.group(1)            # last marker line wins
-    if verdict and any(tok in verdict for tok in _O1_BUDGET_DEPENDENT_TOKENS):
+    if verdict and verdict.endswith(O1_BUDGET_DEPENDENT_SUFFIX):
         return verdict
     return None
 
