@@ -33,13 +33,13 @@
     "container_reference": {
       "kind": "file",
       "path": "/home/moloch/ouro_worktrees/o1-v2-b200-runner/o1_b200/deploy/Dockerfile.b300",
-      "sha256": "3f000a4f2a96f64afd247eeb96d6505f7b0192ee18f9695e3fabcacc1cac73d6",
+      "sha256": "967724f6c9289973fa8cba37d4fc326e069704046791e851c4ad44011faed9ef",
       "transfer_out_of_band": false
     },
     "deploy_scripts": {
       "kind": "tree",
       "path": "/home/moloch/ouro_worktrees/o1-v2-b200-runner/o1_b200/deploy",
-      "sha256": "b7d32f3db33bb142606f52ff073197f1ec6941ca0032e9fc758f89fcf75b97e7",
+      "sha256": "038bdc83fa8cb3157ca955d06abc53019f8f5ed68cdc3413cd98b441d65dc03e",
       "transfer_out_of_band": false
     },
     "freeze_manifest": {
@@ -69,13 +69,13 @@
     "policies": {
       "kind": "tree",
       "path": "/home/moloch/ouro_worktrees/o1-v2-b200-runner/o1_b200/policies",
-      "sha256": "0213817a9a3a852275332d8d944393dfd59b1564fa67ba9bbe6129d495f9cba8",
+      "sha256": "12213538c3eb17359b28dbce9d3d6f990bdf76b8848c021b357e25ad89684579",
       "transfer_out_of_band": false
     },
     "runner_source": {
       "kind": "tree",
       "path": "/home/moloch/ouro_worktrees/o1-v2-b200-runner/o1_b200/runner",
-      "sha256": "c6a25e09ddda3b662189847151c3a1d5d545d65053f100955771aa07228aa959",
+      "sha256": "d03ddd33ebf3892a3ea521acf3a40dd6994b31374b693a682a20f93a6db10e32",
       "transfer_out_of_band": false
     },
     "tokenizer_binding": {

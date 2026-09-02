@@ -66,7 +66,9 @@ RUN rm -rf /wheels
 # runner + sealed package + policies + corpus + manifests (hash-verified at
 # runtime by sealed_import.py and deploy/verify_artifacts.py)
 WORKDIR /opt/o1_b200
-COPY o1_b200 /opt/o1_b200/o1_b200
+# The sealed package and the frozen O1 artifacts (~2.8 GB) change far less
+# often than the runner source, so they are copied FIRST: a source-only
+# change then rebuilds and re-uploads only the small layers below them.
 COPY o1_packages/O1_oracle_reachability_v2.1.0_source \
      /opt/o1_b200/o1_packages/O1_oracle_reachability_v2.1.0_source
 COPY o1_packages/O1_oracle_reachability_v2.1.0_verified.zip \
@@ -81,6 +83,7 @@ COPY o1_runs/O1_V2_AXIS_BANK_REDESIGN/calibration_seed_matrix.json \
      o1_runs/O1_V2_AXIS_BANK_REDESIGN/CALIBRATION_PRECOMMIT.json \
      o1_runs/O1_V2_AXIS_BANK_REDESIGN/FREEZE_MANIFEST.precalibration.json \
      /opt/o1_b200/o1_runs/O1_V2_AXIS_BANK_REDESIGN/
+COPY o1_b200 /opt/o1_b200/o1_b200
 
 # Foundation Learner source, staged into build_ctx by scripts/build_b300_image.sh
 # (it lives in a separate worktree, outside this build context).  Without it a

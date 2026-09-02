@@ -38,14 +38,22 @@ from .runbuild import build_validation_bundle
 # Frozen numerical tolerances for level B (relative).  These are REPORTING
 # thresholds for the local synthetic runtime; the future B200 report uses the
 # same fields and must state its own frozen tolerances before the run.
-# 1e-4 relative, decided 2026-09-02 (BENCHMARK_ORDER amendment 3).  1e-6 was
-# never achievable for a batched configuration: bf16 reductions run in a
-# different order at batch N than at batch 1.  The measured fp32 batch-shape
-# sensitivity is 2.4e-5 against an effect size of ~2.4, so 1e-4 accepts drift
-# four orders of magnitude below the effect while still rejecting a changed
-# measurement.
+# Decided 2026-09-02 (BENCHMARK_ORDER amendments 3 and 4).
+#
+# injected_rms: the intervention is deterministic (alpha x axis), realised on
+# hardware to ~1e-5 relative; 1e-4 requires the batched engine to apply
+# exactly the requested perturbation.
+#
+# transport (rho = downstream_delta_rms / injected_rms): a bf16 quantity whose
+# noise share is ~60% (2026-08-24: bf16 inflates rho by 50-75% against fp32)
+# and which selects nothing -- alpha selection and the endpoint never read it
+# (2026-08-28 review).  Serial and batched runs realise DIFFERENT bf16 rounding
+# at the prefill boundary, so their rho differ by the noise-realisation
+# statistics (~1-3% over 2048 dims), not by engine faults.  10% is a
+# gross-error bound: a wrong hook layer or a missing intervention moves rho by
+# order unity.  The measured drift is reported either way.
 TOL_INJECTED_RMS_REL = 1e-4
-TOL_TRANSPORT_REL = 1e-4
+TOL_TRANSPORT_REL = 0.10
 
 STOCHASTIC_FIELDS = ("generated_token_ids", "finish_reason", "generated_text")
 

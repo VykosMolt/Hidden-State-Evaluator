@@ -1,4 +1,4 @@
-# O1_B300_RUNNER v0.3.20
+# O1_B300_RUNNER v0.3.22
 
 Status: **B300 PREEMPTIBLE SOFTWARE COMPLETE / HARDWARE UNVALIDATED**
 
@@ -65,8 +65,8 @@ COMPLETE. 21-point failure injection: all-terminal. Master pre-rental
 readiness: PASS. Live GET-only preflight: PASS, with B300 and B200 both
 showing Low stock (B300 $7.89/h, B200 $6.79/h secure spot; Secure-filtered
 minimum bids equal to those figures). Container image
-`o1-b300-runner:v0.3.20`, local id
-`sha256:5d88164862142833049b5488fdfb79717c5fd4edfeefb9b2baf79789685185ec`,
+`o1-b300-runner:v0.3.22`, local id
+`sha256:c8a7604894b0060c3cf14136f82ac024525c61906a006c969c4b589d50f1bc4c`,
 registry digest UNRESOLVED until the operator pushes.
 
 ## Base identity
@@ -74,3 +74,12 @@ registry digest UNRESOLVED until the operator pushes.
 See `BASE_VERIFICATION_REPORT.md`: source commit `6db215f`, package zip
 `a8b0571c…`, sealed calibration precommit `e819aeeb…` (externally verified),
 axis package `8c3b34a3…`, checkpoint tree `a701f7a7…`.
+
+## Precision note (2026-09-02)
+
+The sealed generator runs in bfloat16 and the run keeps it. The transport
+diagnostic `rho` is inflated by bf16 boundary quantisation (+50-75% against
+fp32, measured 2026-08-24) and must be read as a diagnostic: alpha selection
+and the endpoint never consume it. The equivalence gate requires the exact
+injected perturbation (1e-4) and bounds `rho` drift at 10% as a gross-error
+check. See `policies/BENCHMARK_ORDER.json` amendments 3 and 4.

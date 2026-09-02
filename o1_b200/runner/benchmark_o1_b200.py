@@ -434,6 +434,15 @@ def run_benchmarks(corpus_dir: str, out_dir: str, *, mode: str,
     cost_estimate = stage_cost_estimate_seconds
     for entry in stages:
         is_reference = entry["backend"] == "REFERENCE_SERIAL"
+        if entry.get("skipped_by_amendment") and mode == "real-hardware":
+            # BENCHMARK_ORDER amendment 5: on the accelerator, a configuration
+            # whose calibration could never pass the affordability gate is
+            # not measured (its verdict could not be used).  The local
+            # synthetic rehearsal still exercises every backend.
+            results.append({"config_id": entry["config_id"],
+                            "skipped": f"BENCHMARK_ORDER amendment "
+                                       f"{entry['skipped_by_amendment']}"})
+            continue
         if is_reference and reference_measured:
             # The equivalence phase ALREADY ran REFERENCE_SERIAL over this
             # same corpus, with this same backend, immediately before this
