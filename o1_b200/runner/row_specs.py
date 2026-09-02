@@ -124,31 +124,45 @@ def _mk(exec_index: int, task: dict, *, bank, arm, direction_id, sign, alpha,
     )
 
 
+def _stream_seeds(master_seed: int, task: dict) -> dict[int, int]:
+    return {i: derive_stream_seed(master_seed, task["task_id"], i)
+            for i in range(BANK_SIZE)}
+
+
+def _baseline_rows(idx: int, task: dict, seeds: dict, arm: str,
+                   binding_key: str, binding: str) -> list[RowSpec]:
+    """One unsteered row per stream 0..7 (``baseline`` or ``zero_alpha``)."""
+    return [_mk(idx + i, task, bank=None, arm=arm, direction_id=None,
+                sign=None, alpha=0.0, stream_index=i, seed=seeds[i],
+                binding_key=binding_key, binding_sha256=binding)
+            for i in range(BANK_SIZE)]
+
+
+def _signed_rows(idx: int, task: dict, seeds: dict, rank: int, bank: str,
+                 alpha: float, binding_key: str, binding: str) -> list[RowSpec]:
+    """The eight signed actions at one alpha, cyclic Latin-square streams."""
+    rows = []
+    for k, (d, s) in enumerate(SIGNED_ACTIONS):
+        stream = (action_index(d, s) + rank) % BANK_SIZE
+        rows.append(_mk(idx + k, task, bank=bank, arm=bank, direction_id=d,
+                        sign=s, alpha=float(alpha), stream_index=stream,
+                        seed=seeds[stream], binding_key=binding_key,
+                        binding_sha256=binding))
+    return rows
+
+
 def calibration_rowspecs(tasks: list[dict], alpha_grid: list[float],
                          master_seed: int, precommit_sha256: str) -> list[RowSpec]:
     """Canonical enumeration of the sealed calibration design (96*48 rows)."""
+    key = "calibration_precommit_sha256"
     specs: list[RowSpec] = []
-    idx = 0
     for g, task in enumerate(tasks):
-        rank = g % BANK_SIZE
-        seeds = {i: derive_stream_seed(master_seed, task["task_id"], i)
-                 for i in range(BANK_SIZE)}
-        for i in range(BANK_SIZE):
-            specs.append(_mk(idx, task, bank=None, arm="baseline",
-                             direction_id=None, sign=None, alpha=0.0,
-                             stream_index=i, seed=seeds[i],
-                             binding_key="calibration_precommit_sha256",
-                             binding_sha256=precommit_sha256))
-            idx += 1
+        seeds = _stream_seeds(master_seed, task)
+        specs += _baseline_rows(len(specs), task, seeds, "baseline", key,
+                                precommit_sha256)
         for alpha in alpha_grid:
-            for d, s in SIGNED_ACTIONS:
-                stream = (action_index(d, s) + rank) % BANK_SIZE
-                specs.append(_mk(idx, task, bank="structured", arm="structured",
-                                 direction_id=d, sign=s, alpha=float(alpha),
-                                 stream_index=stream, seed=seeds[stream],
-                                 binding_key="calibration_precommit_sha256",
-                                 binding_sha256=precommit_sha256))
-                idx += 1
+            specs += _signed_rows(len(specs), task, seeds, g % BANK_SIZE,
+                                  "structured", alpha, key, precommit_sha256)
     _assert_unique(specs)
     return specs
 
@@ -160,42 +174,19 @@ def validation_rowspecs(tasks: list[dict], config: dict) -> list[RowSpec]:
              "alpha_structured": float, "alpha_random": float,
              "arms": [...]}  — sealed by the corpus manifest hash.
     """
-    master = int(config["master_seed"])
+    key = "validation_corpus_sha256"
     binding = str(config["binding_sha256"])
     arms = list(config["arms"])
     specs: list[RowSpec] = []
-    idx = 0
     for g, task in enumerate(tasks):
-        rank = g % BANK_SIZE
-        seeds = {i: derive_stream_seed(master, task["task_id"], i)
-                 for i in range(BANK_SIZE)}
+        seeds = _stream_seeds(int(config["master_seed"]), task)
         for arm in arms:
-            if arm == "baseline":
-                for i in range(BANK_SIZE):
-                    specs.append(_mk(idx, task, bank=None, arm="baseline",
-                                     direction_id=None, sign=None, alpha=0.0,
-                                     stream_index=i, seed=seeds[i],
-                                     binding_key="validation_corpus_sha256",
-                                     binding_sha256=binding))
-                    idx += 1
-            elif arm == "zero_alpha":
-                for i in range(BANK_SIZE):
-                    specs.append(_mk(idx, task, bank=None, arm="zero_alpha",
-                                     direction_id=None, sign=None, alpha=0.0,
-                                     stream_index=i, seed=seeds[i],
-                                     binding_key="validation_corpus_sha256",
-                                     binding_sha256=binding))
-                    idx += 1
+            if arm in ("baseline", "zero_alpha"):
+                specs += _baseline_rows(len(specs), task, seeds, arm, key,
+                                        binding)
             elif arm in ("structured", "random"):
-                alpha = float(config[f"alpha_{arm}"])
-                for d, s in SIGNED_ACTIONS:
-                    stream = (action_index(d, s) + rank) % BANK_SIZE
-                    specs.append(_mk(idx, task, bank=arm, arm=arm,
-                                     direction_id=d, sign=s, alpha=alpha,
-                                     stream_index=stream, seed=seeds[stream],
-                                     binding_key="validation_corpus_sha256",
-                                     binding_sha256=binding))
-                    idx += 1
+                specs += _signed_rows(len(specs), task, seeds, g % BANK_SIZE,
+                                      arm, config[f"alpha_{arm}"], key, binding)
             else:
                 raise RowSpecError(f"unknown arm {arm!r}")
     _assert_unique(specs)
@@ -205,31 +196,16 @@ def validation_rowspecs(tasks: list[dict], config: dict) -> list[RowSpec]:
 def validation_sweep_rowspecs(tasks: list[dict], config: dict) -> list[RowSpec]:
     """Calibration-shaped enumeration over the validation corpus: every alpha
     of the sealed grid is exercised (structured bank), plus baselines."""
-    master = int(config["master_seed"])
+    key = "validation_corpus_sha256"
     binding = str(config["binding_sha256"])
-    grid = [float(a) for a in config["alpha_grid"]]
     specs: list[RowSpec] = []
-    idx = 0
     for g, task in enumerate(tasks):
-        rank = g % BANK_SIZE
-        seeds = {i: derive_stream_seed(master, task["task_id"], i)
-                 for i in range(BANK_SIZE)}
-        for i in range(BANK_SIZE):
-            specs.append(_mk(idx, task, bank=None, arm="baseline",
-                             direction_id=None, sign=None, alpha=0.0,
-                             stream_index=i, seed=seeds[i],
-                             binding_key="validation_corpus_sha256",
-                             binding_sha256=binding))
-            idx += 1
-        for alpha in grid:
-            for d, s in SIGNED_ACTIONS:
-                stream = (action_index(d, s) + rank) % BANK_SIZE
-                specs.append(_mk(idx, task, bank="structured", arm="structured",
-                                 direction_id=d, sign=s, alpha=alpha,
-                                 stream_index=stream, seed=seeds[stream],
-                                 binding_key="validation_corpus_sha256",
-                                 binding_sha256=binding))
-                idx += 1
+        seeds = _stream_seeds(int(config["master_seed"]), task)
+        specs += _baseline_rows(len(specs), task, seeds, "baseline", key,
+                                binding)
+        for alpha in config["alpha_grid"]:
+            specs += _signed_rows(len(specs), task, seeds, g % BANK_SIZE,
+                                  "structured", alpha, key, binding)
     _assert_unique(specs)
     return specs
 

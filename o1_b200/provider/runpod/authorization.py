@@ -25,6 +25,7 @@ shipped template contains UNRESOLVED fields and fails validation by design.
 """
 from __future__ import annotations
 
+import calendar
 import json
 import os
 import time
@@ -111,7 +112,6 @@ class LiveMutationAuthorization:
             expires = time.strptime(doc["expires_utc"], "%Y-%m-%dT%H:%M:%SZ")
         except (ValueError, TypeError):
             raise AuthorizationError("expires_utc is not a valid UTC timestamp")
-        import calendar
         if calendar.timegm(expires) <= now():
             raise AuthorizationError("authorization has expired")
         if doc["allow_create_pod"] is not True:
@@ -223,7 +223,6 @@ class LiveMutationAuthorization:
         """
         if os.environ.get(ENV_FLAG) != ENV_FLAG_VALUE:
             raise AuthorizationError(f"{ENV_FLAG} unset mid-run")
-        import calendar
         expires = calendar.timegm(
             time.strptime(self._doc["expires_utc"], "%Y-%m-%dT%H:%M:%SZ"))
         if expires <= self._now() and not releasing:

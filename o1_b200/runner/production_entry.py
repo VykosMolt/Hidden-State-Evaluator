@@ -26,6 +26,7 @@ Fails closed on any absent/unresolved required value.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -70,17 +71,26 @@ from . import sealed_import
 #: A fraction cannot bound mandatory work -- the reference always runs.  It
 #: now bounds what is optional, as a share of what is actually left.
 #:
-#: 0.50 is what reaches the deep-batch stages.  NOTE that this does NOT buy a
-#: cheaper calibration: the sealed v2.1 orchestrator builds RealBackend itself
-#: and generates one task at a time, so the calibration runs at the
-#: REFERENCE_SERIAL rate whichever configuration is selected (see
-#: ``affordability`` below, which projects from the serial rate for exactly
-#: that reason).  The selected backend governs the non-O1 benchmark and the
-#: precommit record only.  An earlier revision of this comment claimed a ~50x
-#: cheaper calibration; that was false and is withdrawn.
+#: 0.50 is what reaches the deep-batch stages.  The selected configuration
+#: then runs the calibration itself through runner/calibration_backend.py
+#: (the precomputed batched backend injected into the sealed orchestrator),
+#: so the phase decides the calibration rate, not only the precommit record.
 PRECALIBRATION_BUDGET_FRACTION = 0.50
 
+#: BENCHMARK_ORDER amendment 3 (2026-09-02): the equivalence / benchmark
+#: phase runs a FROZEN 4-task subset of the validation corpus (128 rows: two
+#: deterministic shapes, one stochastic-commit and one stochastic-eos task)
+#: instead of all 12 tasks (384 rows).  The serial reference pass is
+#: latency-bound (~35 s/row) and was 3.7 h of a 6.5 h session; 128 rows
+#: still exercise every arm and every batch shape up to b128 on the same
+#: rows.  Recorded in the precalibration record and the precommit.
+REFERENCE_TASK_SUBSET: tuple[str, ...] = (
+    "b200val-000-commit_a", "b200val-004-malformed_eos",
+    "b200val-008-stoch_commit", "b200val-010-stoch_eos",
+)
+
 ROOT = sealed_import.WORKTREE_ROOT
+RUN_ROOT = os.path.join(ROOT, "o1_runs", "O1_V2_AXIS_BANK_REDESIGN")
 CHECKPOINT_DIR = os.environ.get("O1_CHECKPOINT_DIR",
                                 "/artifacts/ouro_rltt_local")
 O1_ROWS_TOTAL = 4608
@@ -446,7 +456,8 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
         # candidates it is compared against.
         ref_measured = benchmark_config(
             ref_entry, corpus_dir, os.path.join(out_dir, "eq_ref"),
-            artifact, return_rows=True)
+            artifact, task_subset=list(REFERENCE_TASK_SUBSET),
+            return_rows=True)
         ref = {"rows": ref_measured.pop("rows"),
                "config_id": ref_entry["config_id"]}
         ref_seconds = max(1.0, clock() - phase_t0)
@@ -487,6 +498,7 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
         ctx["precalibration"] = {
             "remaining_at_start_seconds": remaining_at_start,
             "budget_seconds": budget,
+            "reference_task_subset": list(REFERENCE_TASK_SUBSET),
             "reference_pass_seconds": ref_seconds,
             "equivalence_spent_seconds": 0.0,
             # handed to run_benchmarks so its REFERENCE_SERIAL stage reuses
@@ -603,6 +615,7 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
         rep = run_benchmarks(
             corpus_dir, os.path.join(out_dir, "benchmark"),
             mode="real-hardware", artifact=artifact,
+            task_subset=list(REFERENCE_TASK_SUBSET),
             reference_measured=pre.get("reference_measured"),
             remaining_authorized_seconds=ctx["runtime_limit"] - clock(),
             stage_budget_seconds=max(
@@ -614,9 +627,8 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
         atomic_write_text(
             os.path.join(out_dir, "BENCHMARK_REPORT.real.json"),
             json.dumps(rep, indent=2, sort_keys=True, default=str) + "\n")
-        ctx["benchmark_sha256"] = __import__("hashlib").sha256(
-            open(os.path.join(out_dir, "BENCHMARK_REPORT.real.json"),
-                 "rb").read()).hexdigest()
+        ctx["benchmark_sha256"] = sha256_file(
+            os.path.join(out_dir, "BENCHMARK_REPORT.real.json"))
         return {"benchmarked": len(ctx["benchmark_raw"])}
 
     def _derive_gates(entry: dict, ctx) -> dict:
@@ -718,8 +730,7 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
         rep = json.loads(payload["benchmark_report_text"])
         ctx["benchmark_raw"] = [r for r in rep["results"]
                                 if not r.get("skipped")]
-        ctx["benchmark_sha256"] = __import__("hashlib").sha256(
-            open(report_path, "rb").read()).hexdigest()
+        ctx["benchmark_sha256"] = sha256_file(report_path)
         ctx["precalibration"] = payload.get("precalibration")
         ctx["precalibration_restored"] = True
         ctx["precalibration_source"] = {
@@ -735,7 +746,7 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
     def precommit_build(ctx):
         import torch
         template = load_template()
-        gate_sha = __import__("hashlib").sha256(json.dumps(
+        gate_sha = hashlib.sha256(json.dumps(
             ctx["hardware_gate"], sort_keys=True, default=str
         ).encode()).hexdigest()
         resolved = resolve(template, {
@@ -790,7 +801,6 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
         # hardware facts, and a fixed key would silently replace an earlier
         # pod's commitment after partial results exist, destroying the
         # chain of pre-registrations across an evicted session.
-        from .identity import sha256_file
         digest = sha256_file(ctx["precommit_path"])
         key = f"commitments/hardware/{digest[:16]}.json"
         existing = set(store.list_prefix("commitments/hardware"))
@@ -854,12 +864,13 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
         The file is re-serialized, so it is not byte-identical; identity is
         established field-by-field, not by bytes.
         """
+        import copy
         import torch
-        run_root = os.path.join(ROOT, "o1_runs", "O1_V2_AXIS_BANK_REDESIGN")
         with open(os.path.join(
-                run_root, "FREEZE_MANIFEST.precalibration.json"),
+                RUN_ROOT, "FREEZE_MANIFEST.precalibration.json"),
                 encoding="utf-8") as fh:
-            manifest = json.load(fh)
+            original = json.load(fh)
+        manifest = copy.deepcopy(original)
         sealed_torch = manifest["code"]["torch"]
         manifest["code"]["torch"] = torch.__version__
         manifest["code"]["runtime_version_note"] = (
@@ -870,10 +881,6 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
             f"manifest")
         # prove the claim rather than assert it: nothing outside those two
         # fields may differ from the sealed manifest
-        with open(os.path.join(
-                run_root, "FREEZE_MANIFEST.precalibration.json"),
-                encoding="utf-8") as fh:
-            original = json.load(fh)
         changed = _diff_paths(original, manifest)
         allowed = {"code.torch", "code.runtime_version_note"}
         if set(changed) - allowed:
@@ -885,7 +892,7 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
         return path
 
     def _build_pod_artifact_map(path: str) -> str:
-        run_root = os.path.join(ROOT, "o1_runs", "O1_V2_AXIS_BANK_REDESIGN")
+        run_root = RUN_ROOT
         sealed = sealed_import.SEALED_DIR
         atomic_write_text(path, json.dumps({
             "artifact_hashes.parser":
@@ -987,7 +994,7 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
                     f"({exc}); without it a reacquisition on a different "
                     f"architecture could not be refused, and the sealed "
                     f"dataset would be unverifiable") from None
-        run_root = os.path.join(ROOT, "o1_runs", "O1_V2_AXIS_BANK_REDESIGN")
+        run_root = RUN_ROOT
         # 2. replacement manifest (deployed torch) + pod artifact map +
         #    regenerated sealed-format precommit bound to them
         manifest_path = _build_replacement_manifest(
@@ -1211,7 +1218,6 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
         # the sealed orchestrator already verifies each row (parser,
         # truth-table verifier, token/text binding); here we recount and
         # hash the final artifact for the transfer manifest
-        from .identity import sha256_file
         path = ctx["calibration_records_path"]
         n = _existing_row_count(path)
         if n != O1_ROWS_TOTAL:
@@ -1221,7 +1227,6 @@ def build_production_handlers(out_dir: str, provider: LocalProviderAdapter,
         return {"verified_rows": n, "records_sha256": ctx["records_sha256"]}
 
     def result_transfer(ctx):
-        from .identity import sha256_file
         archive = os.path.join(out_dir, "o1_results.tar.gz")
         import tarfile
         with tarfile.open(archive, "w:gz") as tar:
@@ -1385,8 +1390,9 @@ def _manifest_checkpoint_sha256(manifest_path: str, checkpoint_dir: str) -> str:
 #: this exact wording.
 #: "BudgetExhausted" was in this list and matches NOTHING in either tree --
 #: written from memory rather than from a sweep.  These two are verified:
-#: BudgetRefusal is raised only at budget.py:99 and budget.py:181, and
-#: "authorized runtime (" only by the runtime-limit kill in calibration().
+#: BudgetRefusal is raised only by BudgetWatchdog.check_may_launch_work and
+#: affordability_gate; "authorized runtime (" only by the runtime-limit kill
+#: in calibration().
 _BUDGET_FAILURE_MARKERS = ("BudgetRefusal", "authorized runtime (")
 
 

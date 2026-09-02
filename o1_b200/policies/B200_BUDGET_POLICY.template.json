@@ -1,9 +1,9 @@
 {
   "policy": "o1b200.budget.v1",
-  "status": "TEMPLATE — hourly rate and provider fields are unresolved; no spend is authorized by this file",
-  "total_authorized_usd": 45.00,
-  "maximum_compute_spend_usd": 40.00,
-  "reserved_noncompute_usd": 5.00,
+  "status": "TEMPLATE \u2014 hourly rate and provider fields are unresolved; no spend is authorized by this file",
+  "total_authorized_usd": 35.0,
+  "maximum_compute_spend_usd": 30.0,
+  "reserved_noncompute_usd": 5.0,
   "confirmation_authorized": false,
   "automatic_extension_allowed": false,
   "operator_override_allowed": false,
@@ -11,7 +11,7 @@
   "runtime_limit_rule": "floor(maximum_compute_spend_usd / actual_hourly_rate * 3600) seconds",
   "watchdog": {
     "stop_launching_new_work_at_fraction": 0.95,
-    "immediate_termination_at_fraction": 1.00,
+    "immediate_termination_at_fraction": 1.0,
     "clock": "monotonic in-process + independent external watchdog interface",
     "no_automatic_extension": true,
     "no_confirmation_launch": true
@@ -24,5 +24,25 @@
     "computed_maximum_runtime_seconds": "UNRESOLVED",
     "billing_start_reference": "UNRESOLVED",
     "termination_mechanism": "UNRESOLVED"
-  }
+  },
+  "amendments": [
+    {
+      "amendment": 1,
+      "date": "2026-08-28",
+      "field": "total_authorized_usd 45.00 -> 60.00, maximum_compute_spend_usd 40.00 -> 55.00",
+      "reserved_noncompute_usd": "UNCHANGED at 5.00",
+      "why": "The COMBINED O1 -> Foundation Learner session does not fit 40.00 at the rates measured on real B300 hardware 2026-08-24 (reports/B300_HARDWARE_EVIDENCE.json): reference pass 3.68 h + calibration 0.86 h + FL 1.60 h + overhead 0.32 h = 6.46 h = USD 50.97 at 7.89/h. The three non-reference terms are irreducible and the reference corpus is NOT subsettable on the production path (production_entry calls benchmark_config/run_backend without task_subset), so the only levers were dropping the FL phase or raising the cap. Operator decision 2026-08-28: raise the cap and keep the combined session.",
+      "headroom": "55.00 against a 50.97 estimate = 4.03 margin (~7.9%)",
+      "unchanged": "no automatic extension, no operator override, no auto-reload, confirmation not authorized, watchdog fractions 0.95/1.00, affordability gate expression"
+    },
+    {
+      "amendment": 2,
+      "date": "2026-09-02",
+      "field": "total_authorized_usd 60.00 -> 35.00, maximum_compute_spend_usd 55.00 -> 30.00",
+      "reserved_noncompute_usd": "UNCHANGED at 5.00",
+      "why": "Amendment 1 sized the cap for a 384-row serial reference pass (3.68 h of a 6.46 h session at B300 rates). BENCHMARK_ORDER amendment 3 freezes a 128-row equivalence subset instead (~0.7 h), the calibration runs batched through the precomputed backend (0.7-0.9 h measured at b128/b192), and the FL ladder sizes itself to what remains by the frozen affordability rule with the sealed evaluation reserved up front. Projected on a B200 at 6.79/h: overhead 0.25 h + reference 0.7 h + benchmark 0.4 h + calibration ~0.9 h + FL ~1.9 h = ~4.2 h = USD 28.5 against the 30.00 allocation (4.42 h). Operator decision 2026-09-02: fit the session under USD 40 total.",
+      "headroom": "30.00 against a ~28.5 estimate on B200; on B300 (7.89/h, 3.80 h) the FL ladder receives ~1.3 h and drops lower-priority rungs by the affordability rule",
+      "unchanged": "no automatic extension, no operator override, no auto-reload, confirmation not authorized, watchdog fractions 0.95/1.00, affordability gate expression"
+    }
+  ]
 }

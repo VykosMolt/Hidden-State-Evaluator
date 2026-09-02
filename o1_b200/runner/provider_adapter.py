@@ -1,7 +1,7 @@
 """Provider adapter boundary.
 
-The provider has NOT been chosen; no cloud API is guessed here.  This module
-defines the strict interface every future adapter must implement, plus:
+The strict interface the zero-touch state machine drives, plus the two
+non-billing implementations:
 
   * MockProviderAdapter — fully scriptable, used by all local tests and the
     dress rehearsal; can inject failure at every operation;
@@ -9,11 +9,8 @@ defines the strict interface every future adapter must implement, plus:
     machine, the billing rate is 0.0, uploads are file copies, launch runs a
     callable.  It exists to exercise the zero-touch state machine end to end.
 
-A PRODUCTION provider adapter is a DELIBERATE FUTURE HARDWARE-ACCESS
-DEPENDENCY: it may only be implemented once a provider is selected and its
-current API contract is in hand, and it must be tested before any instance is
-started (runbook step 2).  Nothing in this package performs a real provider
-API call, and instantiating the production placeholder raises.
+The production adapter is ``provider/runpod/adapter.RunpodV2Adapter``; nothing
+in THIS module performs a provider API call.
 """
 from __future__ import annotations
 
@@ -69,21 +66,6 @@ class ProviderAdapter(abc.ABC):
     @abc.abstractmethod
     def confirm_terminated(self, instance_ref: str) -> bool:
         """Independently confirm the instance is terminated (billing off)."""
-
-
-class ProductionProviderAdapter(ProviderAdapter):
-    """Placeholder that refuses to exist until a provider is selected."""
-
-    def __init__(self, *_a, **_kw):
-        raise ProviderError(
-            "No production provider adapter exists: the provider has not "
-            "been selected. Implementing one is a declared future "
-            "hardware-access dependency (see B200_ACCESS_RUNBOOK.md step 2).")
-
-    quote_instance = validate_single_gpu = start_instance = None  # type: ignore
-    get_instance_status = get_billing_rate = upload_artifacts = None  # type: ignore
-    launch_job = download_results = terminate_instance = None  # type: ignore
-    confirm_terminated = None  # type: ignore
 
 
 class MockProviderAdapter(ProviderAdapter):

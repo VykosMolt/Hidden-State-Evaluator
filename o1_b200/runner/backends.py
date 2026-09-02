@@ -99,11 +99,9 @@ def prompt_token_ids_for(tokenizer, task: dict) -> list[int]:
 
 
 def rho_for(spec: RowSpec, gen: dict, h_base: np.ndarray) -> float | None:
-    boundary = np.asarray(gen["_prefill_l4_47"])
-    if boundary.ndim == 2 and boundary.shape[0] == 1:
-        boundary = boundary[0]
     if spec.arm == "baseline":
         return None
+    boundary = _boundary_of(gen)
     if spec.arm == "zero_alpha":
         return downstream_delta_rms(boundary, h_base, 0.0, is_zero_alpha=True)
     return downstream_delta_rms(boundary, h_base, float(gen["injected_rms"]))
@@ -225,22 +223,24 @@ def _commit(store: RowStore, bundle: RunBundle, spec: RowSpec, gen: dict,
 # ==========================================================================
 
 
-class ReferenceSerialBackend(Backend):
-    backend_id = "REFERENCE_SERIAL"
+class _StoreBackend(Backend):
+    """RowStore plumbing shared by the three backends."""
 
     def __init__(self):
         super().__init__()
-        self.model = None
-        self.tokenizer = None
-        self.store = None
         self.config = None
         self.bundle = None
+        self.store = None
         self.env_sha = None
+
+    def _check_config(self, runtime_config: RuntimeConfig) -> None:
+        """Backend-specific config checks (hook)."""
 
     def initialize(self, runtime_config: RuntimeConfig, bundle: RunBundle) -> None:
         runtime_config.validate()
         if runtime_config.backend_id != self.backend_id:
             raise BackendError("config backend_id mismatch")
+        self._check_config(runtime_config)
         self.config = runtime_config
         self.bundle = bundle
         self.env_sha = runtime_environment_sha256(
@@ -251,14 +251,13 @@ class ReferenceSerialBackend(Backend):
             make_verifier(bundle))
         self._initialized = True
 
-    def load_model(self, model_artifact: dict) -> None:
+    def _check_model_artifact(self, model_artifact: dict) -> None:
         want = self.bundle.artifact_ids["model_artifact_sha256"]
         got = model_artifact_sha256(model_artifact)
         if got != want:
             raise BackendError(
                 f"model artifact hashes {got[:16]}... but the run identity "
                 f"pins {want[:16]}...")
-        self.model, self.tokenizer = load_model_artifact(model_artifact)
 
     def validate_artifacts(self) -> dict:
         out = {"specs": len(self.bundle.specs)}
@@ -273,14 +272,6 @@ class ReferenceSerialBackend(Backend):
             out[f"axes.{name}"] = list(arr.shape)
         return out
 
-    def execute_rows(self, row_specs: list) -> dict:
-        self.store.log("EXECUTE_ROWS", backend=self.backend_id,
-                       n_specs=len(row_specs))
-        return run_serial_core(
-            row_specs, self.bundle, self.store, self.model, self.tokenizer,
-            backend_id=self.backend_id, worker_id="w0",
-            environment_sha256=self.env_sha)
-
     def checkpoint(self) -> dict:
         return {"completed": len(self.store.load_completed())}
 
@@ -293,9 +284,34 @@ class ReferenceSerialBackend(Backend):
     def finalize_records(self) -> dict:
         return self.store.finalize(self.bundle.specs)
 
+
+class _InProcessBackend(_StoreBackend):
+    """Backends that hold the model in this process."""
+
+    def __init__(self):
+        super().__init__()
+        self.model = None
+        self.tokenizer = None
+
+    def load_model(self, model_artifact: dict) -> None:
+        self._check_model_artifact(model_artifact)
+        self.model, self.tokenizer = load_model_artifact(model_artifact)
+
     def shutdown(self) -> None:
         self.model = None
         self.tokenizer = None
+
+
+class ReferenceSerialBackend(_InProcessBackend):
+    backend_id = "REFERENCE_SERIAL"
+
+    def execute_rows(self, row_specs: list) -> dict:
+        self.store.log("EXECUTE_ROWS", backend=self.backend_id,
+                       n_specs=len(row_specs))
+        return run_serial_core(
+            row_specs, self.bundle, self.store, self.model, self.tokenizer,
+            backend_id=self.backend_id, worker_id="w0",
+            environment_sha256=self.env_sha)
 
 
 # ==========================================================================
@@ -359,43 +375,21 @@ def _worker_main(payload, queue):
         raise
 
 
-class ReplicaBackend(Backend):
+class ReplicaBackend(_StoreBackend):
     backend_id = "B200_REPLICA"
 
     def __init__(self):
         super().__init__()
-        self.config = None
-        self.bundle = None
-        self.store = None
-        self.env_sha = None
         self.model_artifact = None
         self.crash_plan: dict[str, int] = {}   # worker_id -> crash_after (tests)
 
-    def initialize(self, runtime_config: RuntimeConfig, bundle: RunBundle) -> None:
-        runtime_config.validate()
-        if runtime_config.backend_id != self.backend_id:
-            raise BackendError("config backend_id mismatch")
+    def _check_config(self, runtime_config: RuntimeConfig) -> None:
         if runtime_config.worker_count < 1:
             raise BackendError("worker_count must be >= 1")
-        self.config = runtime_config
-        self.bundle = bundle
-        self.env_sha = runtime_environment_sha256(
-            {"device": runtime_config.device})
-        self.store = RowStore(
-            runtime_config.run_dir,
-            bundle.resume_identity(runtime_config, self.env_sha),
-            make_verifier(bundle))
-        self._initialized = True
 
     def load_model(self, model_artifact: dict) -> None:
-        want = self.bundle.artifact_ids["model_artifact_sha256"]
-        got = model_artifact_sha256(model_artifact)
-        if got != want:
-            raise BackendError("model artifact identity mismatch")
-        self.model_artifact = dict(model_artifact)
-
-    def validate_artifacts(self) -> dict:
-        return ReferenceSerialBackend.validate_artifacts(self)
+        self._check_model_artifact(model_artifact)
+        self.model_artifact = dict(model_artifact)   # workers load their own
 
     def partition(self, row_specs: list) -> list[list]:
         """Deterministic, size-balanced, task-affine allocation.
@@ -491,18 +485,6 @@ class ReplicaBackend(Backend):
                         "hbm_peak_reserved_bytes_sum": summed,
                         "cuda": any(g.get("cuda") for g in per_worker.values())}}
 
-    def checkpoint(self) -> dict:
-        return {"completed": len(self.store.load_completed())}
-
-    def resume(self) -> dict:
-        done = self.store.load_completed()
-        remaining = [s for s in self.bundle.specs if s.row_id not in done]
-        return {"completed": len(done), "remaining": len(remaining),
-                "remaining_specs": remaining}
-
-    def finalize_records(self) -> dict:
-        return self.store.finalize(self.bundle.specs)
-
     def shutdown(self) -> None:
         self.model_artifact = None
 
@@ -512,44 +494,16 @@ class ReplicaBackend(Backend):
 # ==========================================================================
 
 
-class BatchedBackend(Backend):
+class BatchedBackend(_InProcessBackend):
     backend_id = "B200_BATCHED"
 
     def __init__(self):
         super().__init__()
-        self.model = None
-        self.tokenizer = None
-        self.store = None
-        self.config = None
-        self.bundle = None
-        self.env_sha = None
         self._batch_counter = 0
 
-    def initialize(self, runtime_config: RuntimeConfig, bundle: RunBundle) -> None:
-        runtime_config.validate()
-        if runtime_config.backend_id != self.backend_id:
-            raise BackendError("config backend_id mismatch")
+    def _check_config(self, runtime_config: RuntimeConfig) -> None:
         if runtime_config.batch_size < 1:
             raise BackendError("batch_size must be >= 1")
-        self.config = runtime_config
-        self.bundle = bundle
-        self.env_sha = runtime_environment_sha256(
-            {"device": runtime_config.device})
-        self.store = RowStore(
-            runtime_config.run_dir,
-            bundle.resume_identity(runtime_config, self.env_sha),
-            make_verifier(bundle))
-        self._initialized = True
-
-    def load_model(self, model_artifact: dict) -> None:
-        want = self.bundle.artifact_ids["model_artifact_sha256"]
-        got = model_artifact_sha256(model_artifact)
-        if got != want:
-            raise BackendError("model artifact identity mismatch")
-        self.model, self.tokenizer = load_model_artifact(model_artifact)
-
-    def validate_artifacts(self) -> dict:
-        return ReferenceSerialBackend.validate_artifacts(self)
 
     def _next_batch_id(self) -> str:
         self._batch_counter += 1
@@ -662,21 +616,6 @@ class BatchedBackend(Backend):
             n += len(chunk)
         return {"n_generated": len(missing_base) + n}
 
-    def checkpoint(self) -> dict:
-        return {"completed": len(self.store.load_completed())}
-
-    def resume(self) -> dict:
-        done = self.store.load_completed()
-        remaining = [s for s in self.bundle.specs if s.row_id not in done]
-        return {"completed": len(done), "remaining": len(remaining),
-                "remaining_specs": remaining}
-
-    def finalize_records(self) -> dict:
-        return self.store.finalize(self.bundle.specs)
-
-    def shutdown(self) -> None:
-        self.model = None
-        self.tokenizer = None
 
 
 BACKENDS = {

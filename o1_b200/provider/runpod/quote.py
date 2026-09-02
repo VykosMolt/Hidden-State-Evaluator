@@ -21,7 +21,7 @@ from .identityutil import canonical_sha256, utcnow_iso
 from .models import GpuTypeModel, SchemaIncompatibility
 from .policy import (
     CLOUD, GPU_COUNT, MIN_CUDA_VERSION, PolicyViolation, PRODUCT,
-    PROFILE_PREFERENCE, PURCHASE_MODE, QUOTE_VALIDITY_SECONDS,
+    PROFILE_PREFERENCE, PROFILES_BY_KEY, PURCHASE_MODE, QUOTE_VALIDITY_SECONDS,
     AcceleratorProfile, assert_no_forbidden_substitute,
 )
 
@@ -94,7 +94,7 @@ def resolve_preference(preference=None) -> tuple:
     """
     if not preference:
         return PROFILE_PREFERENCE
-    known = {p.key: p for p in PROFILE_PREFERENCE}
+    known = PROFILES_BY_KEY
     unknown = [k for k in preference if k not in known]
     if unknown:
         raise PolicyViolation(

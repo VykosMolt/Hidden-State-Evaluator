@@ -95,8 +95,13 @@ def run() -> Runner:
             neither_profile_available)
 
     def unaffordable_rate_refused():
+        # The viability ceiling is DERIVED, not static:
+        # MAX_COMPUTE_USD / MIN_VIABLE_SESSION_SECONDS(2 h).  Budget
+        # amendment 2 (2026-09-02) set it to 30/2 = USD 15/h; the 30.00
+        # probe below is above that ceiling.  If the budget moves again,
+        # this number must move with it.
         sc = Scenario()
-        sc.gpus = [_b300(price_secure=25.00)]
+        sc.gpus = [_b300(price_secure=30.00)]
         with MockRunpodServer(sc) as srv:
             try:
                 _adapter(srv).quote_instance()
@@ -407,24 +412,24 @@ def run() -> Runner:
         from o1_b200.provider.runpod.billing import (
             projected_session_cost, session_fits_policy)
         assert hard_compute_seconds("7.89") == int(
-            Decimal("40.00") / Decimal("7.89") * 3600)
-        session_fits_policy("4.00", 35999)                    # 39.9989 < 40
-        session_fits_policy("4.00", 36000)                    # exactly 40.00
+            Decimal("30.00") / Decimal("7.89") * 3600)
+        session_fits_policy("4.00", 26999)                    # 29.9989 < 30
+        session_fits_policy("4.00", 27000)                    # exactly 30.00
         try:
-            session_fits_policy("4.00", 36001)                # 40.0011 > 40
+            session_fits_policy("4.00", 27001)                # 30.0011 > 30
         except BudgetViolation:
             pass
         else:
-            raise AssertionError("cost above USD 40 accepted")
+            raise AssertionError("cost above USD 30 accepted")
         try:
-            hard_compute_seconds("45.01")
+            hard_compute_seconds("60.01")
         except BudgetViolation:
             pass
         else:
-            raise AssertionError("rate above USD 45 accepted")
+            raise AssertionError("rate above USD 60 accepted")
         assert str(projected_session_cost("5.49", 3600)) == "5.4900"
     r.check("27. budget arithmetic is decimal with boundary tests at/below/"
-            "above USD 40 and USD 45", budget_boundaries)
+            "above USD 55 and USD 60", budget_boundaries)
 
     def hf_result_uri_parsing():
         from o1_b200.provider.runpod.adapter import (

@@ -63,6 +63,20 @@ class HardwareGateError(RuntimeError):
     pass
 
 
+def nvml_driver_version() -> str | None:
+    """Driver version straight from NVML, or None when NVML is unavailable."""
+    try:
+        import ctypes
+        lib = ctypes.CDLL("libnvidia-ml.so.1")
+        lib.nvmlInit_v2()
+        buf = ctypes.create_string_buffer(80)
+        lib.nvmlSystemGetDriverVersion(buf, 80)
+        lib.nvmlShutdown()
+        return buf.value.decode().strip() or None
+    except Exception:  # noqa: BLE001 - callers decide how to fall back
+        return None
+
+
 def gather_facts(torch_mod=None) -> dict:
     """Collect device/runtime facts from the live torch runtime."""
     import torch as _t
@@ -71,17 +85,7 @@ def gather_facts(torch_mod=None) -> dict:
         return {"cuda_available": False}
     props = torch_mod.cuda.get_device_properties(0)
     free_b, total_b = torch_mod.cuda.mem_get_info(0)
-    driver = None
-    try:
-        import ctypes
-        lib = ctypes.CDLL("libnvidia-ml.so.1")
-        lib.nvmlInit_v2()
-        buf = ctypes.create_string_buffer(80)
-        lib.nvmlSystemGetDriverVersion(buf, 80)
-        driver = buf.value.decode()
-        lib.nvmlShutdown()
-    except Exception:  # noqa: BLE001 - driver string is best-effort here
-        pass
+    driver = nvml_driver_version()
     return {
         "cuda_available": True,
         "device_count": torch_mod.cuda.device_count(),

@@ -527,7 +527,6 @@ def run() -> Runner:
 
     def the_recorded_fl_digest_matches_the_tree_the_image_would_get():
         """Nothing used to check this, so the record could describe no commit."""
-        import hashlib
         rec_path = os.path.join(_ROOT, "o1_b200", "provider", "runpod",
                                 "CONTAINER_IMAGE_RECORD.json")
         with open(rec_path, encoding="utf-8") as fh:
@@ -539,35 +538,9 @@ def run() -> Runner:
                            "foundation-learner-b200-v0", "foundation_learner")
         if not os.path.isdir(src):
             return                      # FL worktree not present in this checkout
-        # same rule as scripts/build_b300_image.sh: files + symlinks, C sort,
-        # minus the two files that RECORD the digest / image id
-        # SHA256SUMS is excluded for the same reason one step removed: it
-        # COVERS environment_lock.json, so a lock sync changes the sums,
-        # which would change this digest, which changes the image id the
-        # lock records -- a cycle with no fixed point.  No coverage is lost:
-        # every file SHA256SUMS lists is hashed individually below.
-        self_referential = {"deploy/environment_lock.json",
-                            "deploy/INTEGRATION.md",
-                            "SHA256SUMS"}
-        names = []
-        for base, dirs, files in os.walk(src):
-            dirs[:] = [x for x in dirs
-                       if x not in ("reports", "__pycache__")]
-            for n in files:
-                if n.endswith(".pyc"):
-                    continue
-                rel = os.path.relpath(os.path.join(base, n), src)
-                if rel in self_referential:
-                    continue
-                names.append(rel)
-        digests = []
-        for rel in sorted(names):
-            h = hashlib.sha256()
-            with open(os.path.join(src, rel), "rb") as fh:
-                for chunk in iter(lambda: fh.read(1 << 20), b""):
-                    h.update(chunk)
-            digests.append(f"{h.hexdigest()}  ./{rel}\n")
-        outer = hashlib.sha256("".join(digests).encode()).hexdigest()
+        # the ONE implementation of the build script's rule
+        from o1_b200.provider.runpod.pre_rental_check import _fl_source_tree_sha256
+        outer = _fl_source_tree_sha256(src)
         assert outer == recorded, (
             f"the image record's foundation_learner_source_sha256 "
             f"({recorded[:16]}…) does not describe the FL tree the build "

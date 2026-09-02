@@ -36,6 +36,7 @@ else
   # the pregen corpus is fetched and hash-verified on the pod instead.
   tar -C "$(dirname "$FL_SRC")" -cf - \
       --exclude="reports" --exclude="__pycache__" --exclude="*.pyc" \
+      --exclude=".pytest_cache" --exclude=".ruff_cache" --exclude=".mypy_cache" \
       "$(basename "$FL_SRC")" | tar -C build_ctx -xf -
   if [[ ! -x build_ctx/foundation_learner/deploy/fl_b200_entry.sh ]]; then
     echo "REFUSED: staged FL source has no executable deploy/fl_b200_entry.sh" >&2

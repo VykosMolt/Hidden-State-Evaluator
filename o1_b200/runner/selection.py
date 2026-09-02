@@ -22,7 +22,7 @@ REQUIRED_GATES = (
     "scientific_config_unchanged",
 )
 
-MIN_FREE_HBM_FRACTION = 0.15
+from ..deploy.hardware_gate import MIN_FREE_HBM_FRACTION  # noqa: E402
 MAX_THROUGHPUT_SPREAD = 0.25
 #: The frozen policy names REFERENCE_SERIAL the terminal fallback.  A
 #: fallback that can itself be refused on a PERFORMANCE gate is not a

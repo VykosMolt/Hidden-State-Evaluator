@@ -16,6 +16,7 @@ import shutil
 
 from .backend_interface import RuntimeConfig
 from .backends import BACKENDS
+from ..provider.runpod.policy import MAX_COMPUTE_USD
 from .budget import BudgetWatchdog, affordability_gate, compute_runtime_limit_seconds
 from .compare_o1_backends import compare_rows, run_backend
 from .env_report import load_template as load_env_template, unresolved_fields
@@ -67,7 +68,7 @@ def build_handlers(corpus_dir: str, work_dir: str, provider: MockProviderAdapter
         provider.validate_single_gpu()
         ctx["hourly_rate"] = quote["hourly_rate_usd"]
         ctx["runtime_limit"] = compute_runtime_limit_seconds(
-            40.00, quote["hourly_rate_usd"])
+            float(MAX_COMPUTE_USD), quote["hourly_rate_usd"])
         ctx["instance_ref"] = provider.start_instance()
         ctx["dress_rehearsal"] = True
         return {"instance": ctx["instance_ref"],
@@ -318,7 +319,8 @@ def run_rehearsal(corpus_dir: str, out_dir: str, *, subset: list[str],
     handlers = build_handlers(corpus_dir, out_dir, provider, clock,
                               subset=subset, fail_at=fail_at,
                               benchmark_stages=benchmark_stages)
-    wd = BudgetWatchdog(compute_runtime_limit_seconds(40.0, 2.99), clock=clock)
+    wd = BudgetWatchdog(compute_runtime_limit_seconds(float(MAX_COMPUTE_USD), 2.99),
+                        clock=clock)
     machine = ZeroTouchStateMachine(provider, out_dir, handlers,
                                     watchdog=wd, clock=clock)
     status = machine.run()

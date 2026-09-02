@@ -38,8 +38,14 @@ from .runbuild import build_validation_bundle
 # Frozen numerical tolerances for level B (relative).  These are REPORTING
 # thresholds for the local synthetic runtime; the future B200 report uses the
 # same fields and must state its own frozen tolerances before the run.
-TOL_INJECTED_RMS_REL = 1e-6
-TOL_TRANSPORT_REL = 1e-6
+# 1e-4 relative, decided 2026-09-02 (BENCHMARK_ORDER amendment 3).  1e-6 was
+# never achievable for a batched configuration: bf16 reductions run in a
+# different order at batch N than at batch 1.  The measured fp32 batch-shape
+# sensitivity is 2.4e-5 against an effect size of ~2.4, so 1e-4 accepts drift
+# four orders of magnitude below the effect while still rejecting a changed
+# measurement.
+TOL_INJECTED_RMS_REL = 1e-4
+TOL_TRANSPORT_REL = 1e-4
 
 STOCHASTIC_FIELDS = ("generated_token_ids", "finish_reason", "generated_text")
 

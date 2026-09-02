@@ -1,6 +1,6 @@
 """Hard budget binding with decimal arithmetic.
 
-hard_compute_seconds = floor(40.00 / accepted_total_hourly_rate * 3600)
+hard_compute_seconds = floor(30.00 / accepted_total_hourly_rate * 3600)
 
 The monotonic watchdog is authoritative; live billing data is supplementary
 (it may lag).  95%: stop launching work, preserve/transfer records, begin

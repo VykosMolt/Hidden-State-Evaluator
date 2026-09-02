@@ -32,14 +32,14 @@
     },
     "container_reference": {
       "kind": "file",
-      "path": "/home/moloch/ouro_worktrees/o1-v2-b200-runner/o1_b200/deploy/Dockerfile",
-      "sha256": "f51ce0a8af27f916840e33794a6dd17b0566b5979b2ba36e93eac3dd9e94a00c",
+      "path": "/home/moloch/ouro_worktrees/o1-v2-b200-runner/o1_b200/deploy/Dockerfile.b300",
+      "sha256": "3f000a4f2a96f64afd247eeb96d6505f7b0192ee18f9695e3fabcacc1cac73d6",
       "transfer_out_of_band": false
     },
     "deploy_scripts": {
       "kind": "tree",
       "path": "/home/moloch/ouro_worktrees/o1-v2-b200-runner/o1_b200/deploy",
-      "sha256": "2024feb7506475aad440d4cfa11274cccc6d69c6f044b9cb7343d01317ea2417",
+      "sha256": "b7d32f3db33bb142606f52ff073197f1ec6941ca0032e9fc758f89fcf75b97e7",
       "transfer_out_of_band": false
     },
     "freeze_manifest": {
@@ -69,13 +69,13 @@
     "policies": {
       "kind": "tree",
       "path": "/home/moloch/ouro_worktrees/o1-v2-b200-runner/o1_b200/policies",
-      "sha256": "3b158dfbc1bb480a5d784427a4b66ee0fa29c6357e16ed4eae0f9c8afe607858",
+      "sha256": "0213817a9a3a852275332d8d944393dfd59b1564fa67ba9bbe6129d495f9cba8",
       "transfer_out_of_band": false
     },
     "runner_source": {
       "kind": "tree",
       "path": "/home/moloch/ouro_worktrees/o1-v2-b200-runner/o1_b200/runner",
-      "sha256": "cbaf9476df271df0df97bf185d1172c099e07c1a1746f650c484ea24acb2e9a7",
+      "sha256": "c6a25e09ddda3b662189847151c3a1d5d545d65053f100955771aa07228aa959",
       "transfer_out_of_band": false
     },
     "tokenizer_binding": {

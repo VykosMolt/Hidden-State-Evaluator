@@ -137,6 +137,21 @@
     },
     {
       "checks": [
+        "the deterministic materialization passes G25",
+        "substituted cohort refused",
+        "HOSTILE a substituted eligible subset is refused",
+        "permuted stratum ranks refused",
+        "HOSTILE permuted stratum ranks are refused",
+        "manifest without stratum ranks refused",
+        "a manifest lacking sealed_rank_within_stratum is refused"
+      ],
+      "failed": 0,
+      "failures": [],
+      "module": "test_confirmatory_cohort_gate",
+      "passed": 7
+    },
+    {
+      "checks": [
         "equivalence matrix: replica w2/w3 + batched b1..b32 + compaction are structurally exact and scientific-core identical to serial",
         "worker crash mid-run: safe restart completes with no missing and no duplicate rows",
         "interruption + resume reproduces the uninterrupted run exactly",
@@ -170,7 +185,7 @@
     },
     {
       "checks": [
-        "budget policy loads with the frozen USD 45/40/5 values",
+        "budget policy loads with the frozen USD 35/30/5 values",
         "HOSTILE tampered budget ceiling is refused",
         "HOSTILE operator-override enablement is refused",
         "runtime limit = floor(40 USD / rate * 3600); zero rate refused",
@@ -251,7 +266,7 @@
         "24. delayed billing never extends the run; the monotonic watchdog is authoritative",
         "25. session spend carries across eviction/reacquisition; a fresh pod can never reset the budget",
         "26. API key never appears in logs or exception strings",
-        "27. budget arithmetic is decimal with boundary tests at/below/above USD 40 and USD 45",
+        "27. budget arithmetic is decimal with boundary tests at/below/above USD 55 and USD 60",
         "28. hf:// result-destination URIs parse strictly; malformed refused"
       ],
       "failed": 0,
@@ -372,10 +387,12 @@
         "a session prefix in the durable destination scopes every key, so a fresh run cannot silently resume an old one",
         "an expired authorization still permits TERMINATION while refusing acquisition"
       ],
-      "failed": 0,
-      "failures": [],
+      "failed": 1,
+      "failures": [
+        "the image record's FL digest describes the FL tree the build would actually stage"
+      ],
       "module": "test_launch_path",
-      "passed": 33
+      "passed": 32
     },
     {
       "checks": [
@@ -481,8 +498,8 @@
   ],
   "schema": "o1b200.test_report.v1",
   "scope_note": "Hardware-independent local validation only: synthetic runtime + non-O1 corpus + mocked provider/clock. No B200 hardware claim is made or implied.",
-  "total_failed": 0,
-  "total_passed": 310,
-  "utc": "2026-08-24T18:48:35Z",
-  "verdict": "ALL O1 B200 RUNNER TESTS PASSED"
+  "total_failed": 1,
+  "total_passed": 316,
+  "utc": "2026-09-02T10:41:56Z",
+  "verdict": "1 FAILURES"
 }

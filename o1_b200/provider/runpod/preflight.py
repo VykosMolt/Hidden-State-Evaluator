@@ -48,7 +48,7 @@ def run_preflight(*, base_url: str = "https://api.runpod.io",
     def step(name, fn):
         try:
             checks[name] = json.loads(redact(json.dumps(fn(), default=str)))
-        except (ApiHttpError, TransportError, Exception) as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             checks[name] = {"error": redact(str(exc))}
             failures.append(name)
 

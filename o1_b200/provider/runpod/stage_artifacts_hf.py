@@ -128,7 +128,6 @@ def result_roundtrip(results_repo: str) -> int:
     through the pod's upload path, re-downloads it through the driver's
     download path (hf:// scheme), and hash-compares.
     """
-    import hashlib
     import tarfile
     from huggingface_hub import HfApi, hf_hub_download
     api = HfApi()

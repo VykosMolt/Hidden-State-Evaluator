@@ -256,7 +256,6 @@ def benchmark_config(entry: dict, corpus_dir: str, out_dir: str,
     ru0 = resource.getrusage(resource.RUSAGE_SELF)
     integrity_failures = 0
     ooms = 0
-    wall_load = time.time()
     exec_report = {}
     try:
         # ONE call, as production makes it; stability comes from the
@@ -266,7 +265,6 @@ def benchmark_config(entry: dict, corpus_dir: str, out_dir: str,
         ooms += 1
         raise
     t_exec = time.monotonic()
-    wall_exec = time.time()
     try:
         fin = backend.finalize_records()
     except Exception:  # noqa: BLE001 - integrity failure is a result

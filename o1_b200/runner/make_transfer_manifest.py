@@ -68,7 +68,7 @@ def main() -> int:
         "deploy_scripts": {
             "path": os.path.join(root, "o1_b200", "deploy"), "kind": "tree"},
         "container_reference": {
-            "path": os.path.join(root, "o1_b200", "deploy", "Dockerfile"),
+            "path": os.path.join(root, "o1_b200", "deploy", "Dockerfile.b300"),
             "kind": "file"},
     }
     out_path = os.path.join(root, "o1_b200", "deploy", "TRANSFER_MANIFEST.json")

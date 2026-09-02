@@ -111,10 +111,8 @@ class PodLifecycleController:
             # must terminate it rather than leave a billable orphan whose
             # id the caller never received.
             self._event("ARMING_FAILED", pod_id=pod.id, error=str(exc)[:300])
-            try:
-                self.terminate_and_confirm(pod.id)
-            finally:
-                raise
+            self.terminate_and_confirm(pod.id)
+            raise
 
     def _arm_and_return(self, pod) -> str:
         # arm the independent watchdog IMMEDIATELY, before waiting on startup.

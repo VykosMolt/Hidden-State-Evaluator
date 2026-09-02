@@ -28,10 +28,10 @@ def run() -> Runner:
 
     def policy_frozen():
         p = load_policy()
-        assert p["total_authorized_usd"] == 45.00
-        assert p["maximum_compute_spend_usd"] == 40.00
+        assert p["total_authorized_usd"] == 35.00
+        assert p["maximum_compute_spend_usd"] == 30.00
         assert p["confirmation_authorized"] is False
-    r.check("budget policy loads with the frozen USD 45/40/5 values",
+    r.check("budget policy loads with the frozen USD 35/30/5 values",
             policy_frozen)
 
     def policy_tamper_detected():

@@ -948,7 +948,7 @@ def run_session(*, authorization_path: str, out_dir: str,
             return sweep_leftovers(exc, adapter, controller, auth,
                                    "ABORTED_AUTHORIZATION_EXHAUSTED",
                                    slots_before=slots_before_attempt)
-        except (LifecycleError, Exception) as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             step("SESSION_FAILURE", exc)
             if pod_id is not None:
                 confirmed = controller.terminate_and_confirm(pod_id)

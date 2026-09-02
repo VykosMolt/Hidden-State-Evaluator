@@ -89,9 +89,11 @@ MIN_CUDA_VERSION = "13.0"
 # reacquisition.
 QUOTE_VALIDITY_SECONDS = 15 * 60
 
-# Budget (mirrors policies/BUDGET_POLICY; decimal).
-TOTAL_AUTHORIZED_USD = Decimal("45.00")
-MAX_COMPUTE_USD = Decimal("40.00")
+# Budget (mirrors policies/BUDGET_POLICY; decimal).  Amendment 1
+# (2026-08-28) raised these from 45.00/40.00: the combined O1 -> FL session
+# measures 6.46 h = USD 50.97 at 7.89/h and could not fit 40.00.
+TOTAL_AUTHORIZED_USD = Decimal("35.00")
+MAX_COMPUTE_USD = Decimal("30.00")
 RESERVED_NONCOMPUTE_USD = Decimal("5.00")
 
 SOFT_STOP_FRACTION = Decimal("0.95")

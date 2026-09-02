@@ -1,9 +1,12 @@
 """Budget controls: monotonic watchdog + affordability gate (mock-testable).
 
-USD 45.00 total / USD 40.00 compute ceiling, frozen in
-policies/B200_BUDGET_POLICY.template.json.  Nothing here spends money or
-talks to a provider; the clock and rate are injected so every rule is locally
-testable with a mocked clock and mocked provider.
+USD 35.00 total / USD 30.00 compute ceiling, frozen in
+policies/B200_BUDGET_POLICY.template.json and mirrored by provider/runpod/policy.py
+(amendment 2, 2026-09-02: the 128-row equivalence subset lets the COMBINED
+O1 -> Foundation Learner session fit under USD 40; see the policy file's
+``amendments`` block).  Nothing here
+spends money or talks to a provider; the clock and rate are injected so every
+rule is locally testable with a mocked clock and mocked provider.
 """
 from __future__ import annotations
 
@@ -12,6 +15,10 @@ import math
 import os
 import time
 from typing import Callable
+
+from ..provider.runpod.policy import (
+    MAX_COMPUTE_USD, RESERVED_NONCOMPUTE_USD, TOTAL_AUTHORIZED_USD,
+)
 
 
 POLICY_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
@@ -29,10 +36,10 @@ class BudgetRefusal(BudgetError):
 def load_policy(path: str | None = None) -> dict:
     with open(os.path.abspath(path or POLICY_PATH), encoding="utf-8") as fh:
         policy = json.load(fh)
-    for key, want in (("total_authorized_usd", 45.00),
-                      ("maximum_compute_spend_usd", 40.00),
-                      ("reserved_noncompute_usd", 5.00)):
-        if float(policy[key]) != want:
+    for key, want in (("total_authorized_usd", TOTAL_AUTHORIZED_USD),
+                      ("maximum_compute_spend_usd", MAX_COMPUTE_USD),
+                      ("reserved_noncompute_usd", RESERVED_NONCOMPUTE_USD)):
+        if float(policy[key]) != float(want):
             raise BudgetError(f"budget policy {key} altered from frozen {want}")
     for key in ("confirmation_authorized", "automatic_extension_allowed",
                 "operator_override_allowed", "auto_reload_allowed"):

@@ -71,12 +71,11 @@ class LocalDurableStore(DurableStore):
         os.makedirs(root, exist_ok=True)
 
     def _p(self, rel: str) -> str:
-        p = os.path.normpath(os.path.join(self.root, rel))
-        if not p.startswith(os.path.abspath(self.root) + os.sep) \
-                and p != os.path.abspath(self.root):
-            p2 = os.path.abspath(p)
-            if not p2.startswith(os.path.abspath(self.root) + os.sep):
-                raise DurabilityError(f"path escape refused: {rel!r}")
+        """Absolute path of ``rel`` under the store root; refuses escapes."""
+        root = os.path.abspath(self.root)
+        p = os.path.abspath(os.path.join(root, rel))
+        if p != root and not p.startswith(root + os.sep):
+            raise DurabilityError(f"path escape refused: {rel!r}")
         return p
 
     def push_file(self, local_path: str, remote_rel: str) -> dict:
@@ -403,8 +402,7 @@ class CheckpointDurability:
         try:
             digest = sha256_file(snapshot)
             rows = None
-            if snapshot.endswith(".jsonl.mirror_snapshot") or \
-                    archive_path.endswith(".jsonl"):
+            if archive_path.endswith(".jsonl"):
                 with open(snapshot, encoding="utf-8") as fh:
                     rows = sum(1 for ln in fh if ln.strip())
             manifest = {"archive": name, "sha256": digest, **meta}

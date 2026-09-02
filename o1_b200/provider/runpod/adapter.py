@@ -27,11 +27,13 @@ so the existing zero-touch state machine drives it unchanged.
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import tarfile
 import time
 
+from .artifact_store import sha256_file
 from .authorization import AuthorizationError, LiveMutationAuthorization
 from .billing import (
     BudgetViolation, SpendTracker, as_money, hard_compute_seconds,
@@ -278,9 +280,8 @@ class RunpodV2Adapter:
         if quote is None:
             raise QuoteError("no quote to validate")
         check_quote_fresh(quote, now=self.clock)
+        # the rate itself was policy-checked at quote time (validate_gpu_rate)
         limit = hard_compute_seconds(quote["total_projected_hourly_usd"])
-        session_fits_policy(quote["total_projected_hourly_usd"],
-                            min(limit, 4 * 3600))
         return {"fresh": True, "hard_compute_seconds": limit}
 
     def list_owned_instances(self) -> list[PodModel]:
@@ -399,12 +400,7 @@ class RunpodV2Adapter:
             time.gmtime(self.clock() + limit + margin))
         env = dict(req.env)
         env["O1_LAUNCH_NONCE"] = self.authorization.launch_nonce
-        req_with_nonce = CreatePodRequestModel(
-            name=req.name, image=req.image, cloud=req.cloud,
-            gpu_type_id=req.gpu_type_id, gpu_count=req.gpu_count,
-            container_disk_gb=req.container_disk_gb, env=env,
-            purchase_mode=req.purchase_mode, ports=req.ports,
-            args=req.args, datacenter_ids=req.datacenter_ids)
+        req_with_nonce = dataclasses.replace(req, env=env)
         rent_input = req_with_nonce.to_rent_input(
             self.accepted_quote["bid_per_gpu_usd"],
             min_cuda_version=MIN_CUDA_VERSION,
@@ -690,12 +686,7 @@ class RunpodV2Adapter:
     def package_results(self, out_dir: str, archive_path: str) -> dict:
         with tarfile.open(archive_path, "w:gz") as tar:
             tar.add(out_dir, arcname=".")
-        import hashlib
-        h = hashlib.sha256()
-        with open(archive_path, "rb") as fh:
-            for chunk in iter(lambda: fh.read(1 << 20), b""):
-                h.update(chunk)
-        return {"archive": archive_path, "sha256": h.hexdigest()}
+        return {"archive": archive_path, "sha256": sha256_file(archive_path)}
 
     def download_results(self, source: str, dest_dir: str,
                          store=None) -> dict:

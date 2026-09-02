@@ -31,6 +31,7 @@ import subprocess
 import sys
 import time
 
+from .check_hf_scope import ScopeError, parse_repo
 from .hf_transfer import child_env
 
 #: destination under the artifacts root -> staging path-in-repo.  Mirrors
@@ -62,14 +63,16 @@ class ArtifactFetchError(RuntimeError):
 
 
 def parse_hf_source(uri: str) -> str:
-    if not uri.startswith("hf://"):
+    """``hf://ns/repo[/prefix]`` -> ``ns/repo``; anything else is refused."""
+    try:
+        repo = parse_repo(uri)
+    except ScopeError as exc:
+        raise ArtifactFetchError(str(exc)) from None
+    if repo is None:
         raise ArtifactFetchError(
             f"artifact source {uri!r} is not an hf:// staging URI; the pod "
             f"has no other ingestion path")
-    parts = uri[len("hf://"):].strip("/").split("/")
-    if len(parts) < 2 or not all(parts[:2]):
-        raise ArtifactFetchError(f"malformed staging URI {uri!r}")
-    return "/".join(parts[:2])
+    return repo
 
 
 FETCH_ATTEMPTS = 4

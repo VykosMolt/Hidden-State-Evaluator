@@ -1,4 +1,4 @@
-# O1_B300_RUNNER v0.3.11
+# O1_B300_RUNNER v0.3.20
 
 Status: **B300 PREEMPTIBLE SOFTWARE COMPLETE / HARDWARE UNVALIDATED**
 
@@ -39,7 +39,7 @@ design is frozen and untouched (see `docs/ARCHITECTURE.md`).
   acquisition + pinned REST v2 lifecycle), zero-touch state machine,
   templates.
 - `policies/` — frozen benchmark order, frozen backend-selection rule, budget
-  policy template (USD 45/40/5), environment-report template, calibration-
+  policy template (USD 60/55/5), environment-report template, calibration-
   precommit template.
 - `deploy/` — `Dockerfile.b300`, pinned lock (`requirements.b300.lock`,
   `transformers==4.54.1` exact) + frozen local wheel set
@@ -65,8 +65,8 @@ COMPLETE. 21-point failure injection: all-terminal. Master pre-rental
 readiness: PASS. Live GET-only preflight: PASS, with B300 and B200 both
 showing Low stock (B300 $7.89/h, B200 $6.79/h secure spot; Secure-filtered
 minimum bids equal to those figures). Container image
-`o1-b300-runner:v0.3.11`, local id
-`sha256:b50a64c733fd4531aa12d43b33587e0acd942d447ec5d0dad7e3cb4e0de431d3`,
+`o1-b300-runner:v0.3.20`, local id
+`sha256:5d88164862142833049b5488fdfb79717c5fd4edfeefb9b2baf79789685185ec`,
 registry digest UNRESOLVED until the operator pushes.
 
 ## Base identity

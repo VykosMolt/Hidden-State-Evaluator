@@ -105,9 +105,6 @@ def collect_pod_report(container_image_digest: str = "UNKNOWN",
     enforces the sealed expectations (transformers 4.54.1, eager attention,
     deterministic flags, CUBLAS workspace, BF16, compile/cuda-graph OFF).
     """
-    import platform as _platform
-    import sys as _sys
-
     import numpy
     import torch
     import transformers
@@ -133,8 +130,8 @@ def collect_pod_report(container_image_digest: str = "UNKNOWN",
         "pytorch_version": torch.__version__,
         "transformers_version": transformers.__version__,
         "numpy_version": numpy.__version__,
-        "python_version": _sys.version.split()[0],
-        "linux_kernel": _platform.release(),
+        "python_version": sys.version.split()[0],
+        "linux_kernel": platform.release(),
         "container_image_digest": container_image_digest,
         # observed on the loaded model by the hardware gate, never asserted;
         # without an observation the field is UNOBSERVED and validation
@@ -176,18 +173,10 @@ def _driver_version() -> str:
     """Identity field: NVML first, nvidia-smi second, never a placeholder
     (a placeholder would be hashed into environment_digest_sha256 and pass
     validation; validate_b200_report now refuses UNKNOWN/empty)."""
-    try:
-        import ctypes
-        lib = ctypes.CDLL("libnvidia-ml.so.1")
-        lib.nvmlInit_v2()
-        buf = ctypes.create_string_buffer(80)
-        lib.nvmlSystemGetDriverVersion(buf, 80)
-        out = buf.value.decode()
-        lib.nvmlShutdown()
-        if out.strip():
-            return out.strip()
-    except Exception:  # noqa: BLE001 - fall through to nvidia-smi
-        pass
+    from ..deploy.hardware_gate import nvml_driver_version
+    driver = nvml_driver_version()
+    if driver:
+        return driver
     try:
         import subprocess
         out = subprocess.run(

@@ -67,7 +67,7 @@
       "host_path": "/home/moloch/ouro_worktrees/o1-v2-b200-runner/o1_b200/policies",
       "kind": "tree",
       "path": "/opt/o1_b200/o1_b200/policies",
-      "sha256": "3b158dfbc1bb480a5d784427a4b66ee0fa29c6357e16ed4eae0f9c8afe607858",
+      "sha256": "0213817a9a3a852275332d8d944393dfd59b1564fa67ba9bbe6129d495f9cba8",
       "transfer_out_of_band": false
     },
     "tokenizer_binding": {

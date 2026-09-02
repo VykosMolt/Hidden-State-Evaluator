@@ -42,8 +42,11 @@ _SOURCE_HASH_SKIP_FILES = frozenset({
 
 
 #: The FL worktree is a sibling checkout; the image stages it in at build.
+#: Both tuples mirror the tar excludes in scripts/build_b300_image.sh.
 _FL_SOURCE_SELF_REFERENTIAL = ("deploy/environment_lock.json",
                                "deploy/INTEGRATION.md", "SHA256SUMS")
+_FL_SOURCE_SKIP_DIRS = ("reports", "__pycache__", ".pytest_cache",
+                        ".ruff_cache", ".mypy_cache")
 
 
 def _fl_source_tree_sha256(src: str | None = None) -> str:
@@ -59,7 +62,7 @@ def _fl_source_tree_sha256(src: str | None = None) -> str:
         return ""
     names = []
     for base, dirs, files in os.walk(src):
-        dirs[:] = [d for d in dirs if d not in ("reports", "__pycache__")]
+        dirs[:] = [d for d in dirs if d not in _FL_SOURCE_SKIP_DIRS]
         for n in files:
             if n.endswith(".pyc"):
                 continue

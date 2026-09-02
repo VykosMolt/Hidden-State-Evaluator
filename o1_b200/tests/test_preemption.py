@@ -402,17 +402,22 @@ def run() -> Runner:
             "instead of reacquiring", unconfirmed_termination_stops_reacquisition)
 
     def a_fresh_process_reads_the_durable_ledger_before_creating():
-        """session_spend_usd() returned "0" for a fresh process; with USD 38
-        already on the ledger the pre-create budget gate passed and a pod
-        was created that _arm_spend then refused.  The ledger is keyed to
-        the AUTHORIZATION file, so a rerun with another --out cannot reset
-        it either."""
+        """session_spend_usd() returned "0" for a fresh process; with the
+        allocation nearly spent on the ledger the pre-create budget gate
+        passed and a pod was created that _arm_spend then refused.  The
+        ledger is keyed to the AUTHORIZATION file, so a rerun with another
+        --out cannot reset it either.
+
+        The seeded carryover must EXHAUST the compute allocation or this
+        test silently stops testing anything.  Budget amendment 2
+        (2026-09-02) set that allocation to 30.00; 29.50 leaves the
+        identical USD 0.50 remainder."""
         from o1_b200.provider.runpod.authorization import LiveMutationAuthorization
         d = fresh_dir("pre_ledger_first")
         config, auth_path = _setup(d, max_pod_creations=4)
         with open(auth_path + ".consumed_nonces.spend", "w", encoding="utf-8") as fh:
             json.dump({"schema": "o1b300.spend_ledger.v1",
-                       "carryover_usd": "39.50"}, fh)
+                       "carryover_usd": "29.50"}, fh)
         sc = Scenario()
         sc.log_text = "ZERO_TOUCH_COMPLETE\n"
         status, sc = _run(os.path.join(d, "other_out"), sc, config, auth_path)

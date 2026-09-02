@@ -200,6 +200,13 @@
       ],
       "scientific_impact": "The rows are claimed to be identical to what the serial backend would have produced, and that claim rests ENTIRELY on the structural-equivalence verdict the injected configuration earned. It is not assumed anywhere: without a verdict the calibration falls back to serial.",
       "known_scope_limit": "The equivalence corpus is built with shape='confirmatory', which exercises alpha 0.04 and zero only. The calibration sweeps alpha in [0.005, 0.01, 0.02, 0.04, 0.08] over both signs, so 8 of the 10 signed alphas it uses lie OUTSIDE the certified range -- including the smallest, where rho = RMS(delta_h)/injected_rms is most sensitive to any numerical difference. row_specs.validation_sweep_rowspecs exists for the calibration-shaped enumeration and is not currently used by the equivalence phase. This is a disclosed scope limit, not a measured defect: the zero_alpha arm's bitwise cross-batch boundary assertion (o1_transport_v2) is a required gate and does exercise the batch-composition independence the precomputed path depends on."
+    },
+    {
+      "amendment": 3,
+      "date": "2026-09-02",
+      "rule": "EQUIVALENCE SUBSET AND TOLERANCE: the reference pass and every benchmark/equivalence stage run the FROZEN 4-task subset production_entry.REFERENCE_TASK_SUBSET (b200val-000-commit_a, -004-malformed_eos, -008-stoch_commit, -010-stoch_eos; 128 rows, all four arms per task) instead of the 12-task corpus. The numerical equivalence tolerances (compare_o1_backends.TOL_INJECTED_RMS_REL / TOL_TRANSPORT_REL) are 1e-4 relative.",
+      "why": "The serial reference is latency-bound (~35 s/row on a B300) and the 384-row pass alone was 3.7 h of a 6.5 h session. 128 rows on the same rows exercise every arm and every batch shape up to b128 (b256 cannot be certified on 128 rows and is therefore ineligible). 1e-6 was never achievable for a batched configuration (bf16 reduction order differs by batch shape); the measured fp32 batch-shape sensitivity is 2.4e-5 against an effect size of ~2.4.",
+      "scientific_impact": "selection evidence only: the calibration itself still runs all 4,608 rows; a batched configuration is certified on 128 rather than 384 matched rows, at a tolerance four orders of magnitude below the effect size"
     }
   ]
 }

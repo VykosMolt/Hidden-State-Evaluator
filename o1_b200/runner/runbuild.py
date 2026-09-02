@@ -26,7 +26,7 @@ sealed_import.ensure_sealed_path()
 from run_o1_v2_orchestrator import load_axis_tensor  # noqa: E402 (sealed)
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-WORKTREE_ROOT = os.path.abspath(os.path.join(_HERE, "..", ".."))
+WORKTREE_ROOT = sealed_import.WORKTREE_ROOT
 AXIS_DIR = os.path.join(WORKTREE_ROOT, "o1_runs", "O1_V2_AXIS_BANK_REDESIGN",
                         "AXIS_PACKAGE_V2")
 AXIS_PACKAGE_TREE_SHA256 = (

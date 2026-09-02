@@ -63,7 +63,7 @@ LAUNCH_VARIABLE_ENV_NAMES = (
 #: provenance would let an authorized launch read and publish anywhere.)
 IDENTITY_ENV_NAMES = tuple(n for n in ENV_NAMES
                            if n not in LAUNCH_VARIABLE_ENV_NAMES)
-START_ARGS = ("/opt/o1_b200/o1_b200/deploy/start_b300.sh")
+START_ARGS = "/opt/o1_b200/o1_b200/deploy/start_b300.sh"
 
 DEPLOYMENT_SCHEMA = "o1b300.runpod_deployment_spec.v2"
 

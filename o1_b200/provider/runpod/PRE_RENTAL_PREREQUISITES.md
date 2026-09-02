@@ -110,7 +110,7 @@ actually refused.
 
 ### Budget derivation
 
-The committed budget is unchanged: USD 45.00 total authorized / 40.00 max
+The committed budget (amendment 1, 2026-08-28): USD 60.00 total authorized / 55.00 max
 compute / 5.00 reserved non-compute. A quote is refused only when the $40
 compute allocation cannot buy at least `MIN_VIABLE_SESSION_SECONDS` (2 h) —
 an effective ceiling near $20.00/h. At the live rates above that is ~5.07 h
@@ -133,18 +133,18 @@ pod's commitment is never overwritten.
 ## 2. Remote image publication
 
 Follow `REGISTRY_PUSH_PROCEDURE.md` (3 commands + one visibility click).
-The B300 image is already built locally as `o1-b300-runner:v0.3.11`, local
-image id `sha256:b50a64c733fd4531aa12d43b33587e0acd942d447ec5d0dad7e3cb4e0de431d3`
+The B300 image is already built locally as `o1-b300-runner:v0.3.20`, local
+image id `sha256:5d88164862142833049b5488fdfb79717c5fd4edfeefb9b2baf79789685185ec`
 (rebuilt after the adversarial-review fixes);
 the registry digest is UNRESOLVED until the operator pushes. After pushing,
 use the printed REMOTE manifest digest — the immutable reference
 `ghcr.io/vykosmolt/o1-b300-runner@sha256:<remote-manifest-digest>` — in
 `RUNPOD_SESSION_CONFIG.json` (`image_digest_ref`). Do NOT rely on the
-`v0.3.11` tag after pushing; mutable tags are refused by the adapter.
+`v0.3.20` tag after pushing; mutable tags are refused by the adapter.
 Cross-check that GHCR reports the same digest the push returned:
 
 ```sh
-docker buildx imagetools inspect ghcr.io/vykosmolt/o1-b300-runner:v0.3.11 \
+docker buildx imagetools inspect ghcr.io/vykosmolt/o1-b300-runner:v0.3.20 \
   | grep Digest        # must equal the digest printed by docker push
 ```
 

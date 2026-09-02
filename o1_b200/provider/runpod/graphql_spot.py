@@ -41,12 +41,11 @@ import urllib.request
 from .models import SchemaIncompatibility
 from .redaction import redact
 from .transport import (
-    AmbiguousMutation, CredentialIsolationError, ReadOnlyViolation,
+    USER_AGENT, AmbiguousMutation, CredentialIsolationError, ReadOnlyViolation,
     TransportError, resolve_credential,
 )
 
 PRODUCTION_GRAPHQL_URL = "https://api.runpod.io/graphql"
-USER_AGENT = "o1-b300-runner/0.3 (pre-rental; read-only unless authorized)"
 REQUEST_TIMEOUT_SECONDS = 30.0
 MAX_QUERY_RETRIES = 5
 BACKOFF_BASE_SECONDS = 1.0

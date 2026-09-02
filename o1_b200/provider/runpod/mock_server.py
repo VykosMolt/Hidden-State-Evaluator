@@ -370,7 +370,7 @@ class _Handler(BaseHTTPRequestHandler):
                     for p in s.pods.values()]
             self._reply(200, {"data": {"myself": {"pods": pods}}})
             return
-        self._reply(200, {"errors": [{"message": f"unsupported operation"}]})
+        self._reply(200, {"errors": [{"message": "unsupported operation"}]})
 
     def _graphql_rent(self, rent: dict):
         s = self.scenario
