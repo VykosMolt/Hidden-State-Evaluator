@@ -91,6 +91,7 @@ loop and REUSES W2's components rather than copying them:
 from __future__ import annotations
 
 import math
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Sequence
@@ -578,8 +579,6 @@ def run_fast_state_arm(
     backbone parameters (e.g. ``training.peft_modes.apply_mode(...).parameters``);
     when omitted, only the fast-state module trains.
     """
-    import os
-
     os.makedirs(out_dir, exist_ok=True)
     prepared: list[EpisodeSegments] = []
     for episode in episodes:

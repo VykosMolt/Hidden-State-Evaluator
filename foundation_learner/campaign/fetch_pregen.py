@@ -30,7 +30,7 @@ import sys
 from .hf_transfer import child_env
 from .o1_isolation import MODE_READ, MODE_WRITE, guard_path
 from .redaction import redact
-from .transient import TransientStepError
+from .transient import TransientStepError, helper_error as _helper_error
 
 DEFAULT_PREGEN_ROOT = "/workspace/foundation_learner/artifacts_fl/pregen"
 DEFAULT_REMOTE_PREFIX = "artifacts_fl/pregen"
@@ -158,17 +158,6 @@ def verify_tree(root: str, *, waive_package_anchor: bool = False) -> dict:
             f"{len(mismatched)} corrupt {mismatched[:4]}")
     return {"shards_verified": len(shards), "sealed_shards": sealed,
             "anchored": sorted(anchors)}
-
-
-def _helper_error(text: str, limit: int = 400) -> str:
-    """The last meaningful line, not a raw tail.
-
-    A Python traceback ends with the exception line — the one thing the
-    operator needs ("Invalid user token", "401 Unauthorized").  Slicing the
-    last N characters instead lands mid-frame and prints source fragments.
-    """
-    lines = [ln.strip() for ln in text.strip().splitlines() if ln.strip()]
-    return lines[-1][:limit] if lines else "(helper produced no output)"
 
 
 #: Aggregate wall-clock budget for the whole pregen fetch, retries

@@ -164,7 +164,6 @@ class StabilityMonitor:
         grads_finite: bool = True,
     ) -> list[StabilityEvent]:
         cfg = self.config
-        new: list[StabilityEvent] = []
         before = len(self.events)
 
         if not _finite(loss):
@@ -276,8 +275,7 @@ class StabilityMonitor:
                         f"{total_time:.0f}s",
                         tokens_per_second=float(rate),
                     )
-        new = self.events[before:]
-        return new
+        return self.events[before:]
 
     def observe_fast_state_norm(self, step: int, norm: float) -> list[StabilityEvent]:
         before = len(self.events)

@@ -108,7 +108,8 @@ requires improvement on the sealed whole-family holdout.
 
 (1) macro-AULC over interaction indices 0–6, family-macro;
 (2) ΔAULC vs FL1; (3) ΔAULC vs FL2; (4) R_0; (5) R_K; (6) improvement slope;
-(7) interactions-to-threshold (0.5); (8) related-task transfer (R_4);
+(7) interactions-to-threshold (0.5); (8) within-rule fresh-instance
+generalization (R_4) [renamed by Amendment 17; NOT transfer];
 (9) whole-family transfer; (10) context-reset persistence; (11) A→B→A
 retention/interference; (12) poisoned-feedback robustness; (13) surface-remap
 robustness; (14) FL4/FL6 value ranking, calibration, top-choice regret vs
@@ -284,3 +285,252 @@ any experiment ran; no outcome data existed when it was written.
     registry digest reference remains unresolved until the operator's
     registry push (mirroring the O1 record); it joins the declared
     mechanical unresolved set.
+
+## 17. Amendment 17 — post-review repairs (2026-08-28, PRE-RUN, sealed set still unopened)
+
+Three independent scientific reviews of the frozen design (two adversarial
+model reviews plus the maintainer's own pass) were run before any accelerator
+use. **No outcome data existed when this section was written**; `STATUS` was
+`PRE_RENTAL_BUILD` and the sealed shards were unopened. Findings are repaired
+in code and/or recorded here as claim-scope constraints.
+
+### 1. The sealed opening evaluates EVERY core arm, not only the promoted one
+
+**The defect.** Section 6 makes the principal claim "improvement on the sealed
+whole-family holdout", and section 7 designates metrics (2) ΔAULC vs FL1 and
+(3) ΔAULC vs FL2. But `campaign/stage_definitions.sealed_eval_work` evaluated
+only the promoted arm, so **those two metrics did not exist on the sealed
+set**. A positive FL3 trajectory there is fully compatible with base-model
+in-context learning, because FL0's context-only baseline was measured on
+DEVELOPMENT only. The single-use opening would have been spent producing a
+number that cannot support the preregistered principal claim.
+
+**The repair.** `SEALED_EVAL_ARMS = (FL0, FL1, FL2, FL3)`. Every arm walks the
+**same** sealed episode set inside the **same** single opening, which is what
+makes the contrasts paired rather than two independent samples. Every arm is fully LOADED and its checkpoint binding verified *before* the
+seal is touched — a dry run that is then discarded — because file existence
+alone is not enough: `load_checkpoint` sha256-verifies a multi-GB payload,
+`_assert_checkpoint_binding` raises on arm-config drift, and `bundle_factory`
+can OOM. Those failures are DETERMINISTIC, so inside the opening they would
+recur on the retry and exhaust both permanent attempts, losing the sealed set
+for good. `resolve_answer_parser()` is forced in the same preflight, because
+it now raises rather than falling back and `run_episodes` resolves it lazily. Inside the opening there is no fallback to the base model for a
+trained arm: evaluating the base and labelling it FL1 would fabricate the
+contrast, so it refuses instead.
+
+**Amendment 12.7 is unchanged and not weakened.** The promoted arm is still
+never *replaced* by the untrained base — that was the R-C4 defect. FL0 is now
+evaluated **in addition**, as the comparator.
+
+**Paired contrasts are computed on the INTERSECTION** of episodes scoreable in
+every arm of the contrast, with the per-arm exclusion counts reported. This is
+frozen here because it must be: `clustered_sample_from_records` silently drops
+an episode whose AULC is `None` (an aborted or online-budget-exceeded episode)
+and `paired_clustered_bootstrap` then REFUSES arms whose episode-id sequences
+differ. Prompt length depends on each arm's own generated history, so FL0 —
+the untrained base, expected by 13.3 to ramble past the token allowance — will
+drop a different set from FL3. Unhandled, that turns the designated PRIMARY
+into "unavailable" *after* the single-use opening is spent; choosing the
+handling then would be an unpreregistered post-hoc decision.
+
+Cost: `STAGE_EVAL_MULTIPLIER["SEALED_EVAL"] = 4` and
+`STAGE_BUNDLE_LOADS["SEALED_EVAL"] = 8` (one load per arm in the preflight dry
+run, one in the opening), both tied to `len(SEALED_EVAL_ARMS)` by import-time
+checks that raise — not `assert`, which `python -O` strips.
+
+### 2. The frozen decision rule (this section did not previously exist)
+
+Section 11 listed fourteen conclusion labels with **no criteria**, and section
+6 required "improvement" without defining it. That left the final labelling
+step as post-hoc judgment over ~18 metrics × several index restrictions. The
+rule below is frozen now, before any data.
+
+**PRIMARY (one, designated):** ΔAULC(FL3 − FL1) on the **{4,5,6}-restricted**
+sealed contrast. Indices {4,5,6} are the post-feedback fresh items: immune to
+the binary answer-flip shortcut (13.2) and to index-0 answer-format effects.
+FL1 is the static-capability control at matched compute.
+
+**"Improvement" in section 6 means all three of:** the primary point estimate
+is > 0; the conditional 95% family-clustered interval excludes 0; and the sign
+is the same in **at least 2 of the 3** sealed families.
+
+**The achievable-inference floor, stated explicitly.** With F = 3 sealed
+families, any family-level distribution-free test bottoms out at one-sided
+p = 0.5³ = **0.125**. No configuration of results can reach p < 0.05 by a
+family-level test. Every interval is **conditional on these three named
+families** and is never a population-level unseen-family claim. This is a
+property of the design, not of the outcome, and it is why the sealed test is
+descriptive of three named families by construction.
+
+**Everything else in section 7 is SECONDARY and DESCRIPTIVE.** No secondary is
+an inferential test, so no multiplicity adjustment is claimed for them; a
+secondary may motivate future work and may never carry the headline. The
+`excludes_zero` boolean emitted by `analysis/report.py` is a descriptive
+interval property, NOT a decision, and must not be reported as one for any
+comparison other than the designated primary.
+
+**Named contrasts.** All are ΔAULC on the {4,5,6} restriction, on the paired
+intersection, with conditional 95% family-clustered intervals:
+`P = FL3−FL1` (the PRIMARY), `S1 = FL3−FL0`, `S2 = FL2−FL1`, `S3 = FL1−FL0`.
+"Meets" means the three-clause improvement rule above applied to that contrast.
+
+**Label precedence.** Several conditions can hold at once, so labels are
+evaluated in the order listed and the FIRST match is the headline; any others
+that also hold are reported as additional findings, never as the headline.
+
+**Criteria for the previously-undefined labels:**
+
+1. `INCONCLUSIVE_UNDER_COMPUTE_BUDGET` — the sealed stage did not run, or any
+   arm required by the contrast being reported is absent, or the paired
+   intersection is empty. Checked FIRST: nothing below is meaningful otherwise.
+2. `WHOLE_FAMILY_TRANSFER_GAIN` — `P` is met. Always written "on the three
+   sealed holdout families". If item 3's grid-spread annotation applies, it is
+   stated alongside; it annotates, it does not veto.
+3. `HISTORY_IMITATION_GAIN` — `S2` is met and its point estimate is ≥ `P`'s,
+   i.e. undifferentiated history imitation accounts for the gain.
+4. `STATIC_CAPABILITY_GAIN_ONLY` — `S3` is met but `P` is not.
+5. `CONTEXT_ONLY_ADAPTATION` — `S1` is NOT met (the trained promoted arm does
+   not separate from the untrained base) while the raw R curve nevertheless
+   rises for FL0, i.e. the trajectory is context-driven rather than trained.
+6. `NO_META_LEARNING_SIGNAL` — none of `P`, `S1`, `S2`, `S3` is met.
+
+`WITHIN_EPISODE_LEARNING_GAIN` is **NOT ASSIGNABLE in this campaign** and is
+withdrawn from the vocabulary for Pilot 0. It requires the reset-vs-history
+contrast, and `context_reset` is produced only for FL0 and FL5 — no stage
+generates a reset condition for FL3, on development or sealed. Claiming it
+would require adding that condition to the trained-arm evaluation, which is a
+change to the campaign, not to this document.
+
+### 3. Learning-rate selection asymmetry (declared, not repaired)
+
+`campaign/dev_selector.GRID_ARM = "FL3"`: the two-point learning-rate grid runs
+on **FL3 only** and the winner is imposed on FL1 and FL2. The comparison is
+FLOP-matched but **not tuning-matched**, and the direction of the bias
+systematically favours the treatment arm on the headline contrast. Declared as
+a claim-scope constraint: **a FL3 − FL1 margin smaller than FL3's own grid
+spread is not interpretable as an arm effect**, and the grid spread is reported
+next to the primary.
+
+### 4. Format acquisition gets a DIAGNOSTIC, not a correction
+
+A rising R_0..R_6 curve can be produced with zero rule learning by the model
+acquiring the strict `ANSWER:` grammar from the scaffolding and its own earlier
+attempts — section 13.3 already expects the base model to fail that grammar
+frequently. `FORMAT_NONCOMPLIANT` only flags cells below 0.5, so a cell moving
+0.6 → 0.95 passes clean. Accuracy **among format-compliant attempts** is
+therefore reported per index alongside AULC, and the `answer_line_rate` curve
+is printed next to the R curve.
+
+**It is a diagnostic and must not be read as a format-corrected accuracy.**
+Compliance is a post-treatment variable that the arm affects and that episode
+difficulty affects jointly with correctness, so conditioning on it opens a
+collider path: it substitutes a selection bias of unknown sign for the format
+channel rather than removing it, and the bias favours whichever arm is least
+compliant — which is expected to be FL0, shrinking the trained-vs-base
+contrast. It is read ONLY jointly with `answer_line_rate` and never as an arm
+comparison. The comparable format-robust quantity remains the headline itself,
+which already scores a non-compliant attempt as incorrect (fixed denominator,
+no collider).
+
+### 5. Metric 8 renamed
+
+"related-task transfer (R_4)" → **"within-rule fresh-instance generalization
+(R_4)"**. The related item is the same latent rule at the same difficulty,
+drawn from an identical item distribution to R_5's queries — no family branches
+on `KIND_RELATED`. It is not transfer in any sense, and the old name invites
+double-counting it with metric 9.
+
+### 6. "Sealed" is PROCEDURAL, not cryptographic
+
+`K_seal = sha256("FL_V0_SEALED_KEY\0" + split_manifest_sha256)` derives from a
+**public, recomputable** digest, as `data/shards.py` and `campaign/sealed_gate.py`
+both state unprompted. The integrity that is real comes from the write-ahead
+intent record, the hash-chained append-only single-use ledger, and
+`campaign/promotion.py` structurally refusing sealed evidence. Write-ups must
+describe the protection as procedural and must not imply cryptographic sealing.
+
+### 7. OPEN RISK introduced by this amendment — sealed-stage scheduling
+
+`SEALED_EVAL` is priority 13, **last of the seventeen stages**, and its own note
+gives the reason: "LAST: it can never inform a development decision because
+every such decision is already frozen." That rationale is sound as far as it
+goes — but the structural protection against contamination is
+`campaign/promotion.py` refusing sealed evidence in the `DevMetrics`
+constructor (hostile-tested against five smuggling routes), **not** the
+ordering. The ordering is belt-and-braces on top of it.
+
+The consequence is a scheduling tension that item 1 of this amendment
+sharpens, and it is recorded here rather than silently repaired:
+
+- `SEALED_EVAL` produces the **principal claim** (section 6).
+- It is scheduled behind every mechanistic extension (FL4-FL8) and every
+  diagnostic, although section 6 also says "an extension result can never
+  replace a failed core comparison in the headline".
+- Under budget pressure it is therefore the **first work to be dropped**, and
+  item 1 raised its cost from 300 to 1200 episode walks (+900, about +10% of
+  the campaign's total evaluation walks).
+
+So the amendment that made the sealed result *interpretable* also made it
+*more likely to be skipped*. Both halves are true and both are recorded.
+
+**Not repaired here**, deliberately: moving a stage in the priority ladder is a
+design change whose downstream effects (SECOND_SEED, the fallback-work chain,
+the overrun watchdog) have not been traced, and the campaign's own projection
+already refuses to start work it cannot finish. **The decision required before
+the rental** is one of:
+
+1. reserve the projected `SEALED_EVAL` seconds up front, so the extensions
+   consume only what remains after the principal claim is funded; or
+2. promote `SEALED_EVAL` to run immediately after `CORE_MATCHING` (priority 5),
+   relying on `promotion.py`'s structural refusal — which is what actually
+   enforces non-contamination — rather than on ordering; or
+3. accept explicitly that a budget-truncated campaign yields
+   `INCONCLUSIVE_UNDER_COMPUTE_BUDGET` with no sealed result, which the
+   conclusion vocabulary in item 2 already provides for.
+
+4. **predeclare a degraded arm set** via the `fallback_work` machinery the
+   stage definition already carries (contract §10): if the projection does not
+   fit, run `(FL0, FL1, FL3)`. The PRIMARY is ΔAULC(FL3−FL1) and FL0 is the
+   in-context comparator, so only secondary metric (3), ΔAULC vs FL2, is lost.
+   That cuts the increase from +900 to +600 walks, preserves the principal
+   claim intact, and touches neither the priority ladder nor the budget
+   accounting. It converts "the headline stage is dropped entirely" into "the
+   headline stage runs, one secondary is unavailable."
+
+**Two independent reviews split on this**, and both arguments are recorded
+because they are about different risks:
+
+- One favours **option 4**: it is the only option that keeps the principal
+  claim computable under budget pressure without changing scheduling.
+- One favours **option 1 + moving the sealed stage off interruptible
+  capacity**, and raises a specific objection to option 2 that the other did
+  not: after `unlock.revoke()` the sealed report sits in
+  `ctx.results["SEALED_EVAL"]`, readable by every later stage's *work
+  function*. Only `DevMetrics` construction is structurally guarded, so
+  running the sealed stage at priority 5 with FL4–FL8 still to come genuinely
+  widens the contamination surface rather than being a no-op. **Option 2 is
+  therefore withdrawn.** The same review notes the opening is now ~4× longer
+  and carries four model loads, so on interruptible capacity a mid-opening
+  eviction — which counts against the two permanent attempts — is roughly 4×
+  more likely.
+
+Options 1 and 4 are complementary and both are recommended: reserve the
+projected seconds up front (which requires the corrected
+`STAGE_BUNDLE_LOADS`, or the reservation is itself an under-estimate), AND
+predeclare the degraded arm set as the fallback. Option 3 remains the status
+quo and is defensible for a pilot only as an explicit recorded choice.
+
+## 18. Amendment 18 — session budget follows O1 amendment 2; sealed evaluation reserved (2026-09-02, PRE-RUN, sealed set still unopened)
+
+The "USD 45 total budget" statements in sections 12 and 13 are superseded:
+the combined session budget is USD 35.00 total / 30.00 compute / 5.00 reserve
+(O1 budget amendment 2, 2026-09-02; contract Amendment 17). The change is a
+resourcing fact, not a design choice: no metric, threshold, seed, split,
+family, episode structure, arm, or promotion rule changes with it. Rental
+confirmation remains NOT AUTHORIZED.
+
+Amendment 17 option 1 is implemented: the scheduler reserves the projected
+sealed-evaluation seconds (times the frozen safety factor) before admitting
+any rung other than BENCH, DEV_GRID, FL1-FL3, CORE_MATCHING and SEALED_EVAL
+itself, so a short ladder degrades by dropping mechanism rungs and
+diagnostics, never the sealed evaluation.

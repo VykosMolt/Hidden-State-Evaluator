@@ -1,0 +1,9 @@
+{
+  "pod_fetch_path": "campaign/fetch_pregen.py (the same module the pod runs; SHARD_SUMS.json re-hashed, sealed shards verified by on-disk digest and never opened)",
+  "pregen_download_test": "PASS",
+  "remote_prefix": "artifacts_fl/pregen",
+  "repo": "Vykos/o1-b200-staging",
+  "schema": "flb200.pregen_staging_record.v1",
+  "sealed_shards": 9,
+  "shards_verified": 58
+}

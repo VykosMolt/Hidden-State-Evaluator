@@ -87,6 +87,7 @@ from foundation_learner.episodes.schema import (
     Role,
 )
 from foundation_learner.evaluation.scoring import ScoreRequest, answer_logprob_batch
+from foundation_learner.mechanisms.fast_state import _init_linear_
 from foundation_learner.mechanisms.hidden_states import item_hidden_summary
 from foundation_learner.training.tokenization import (
     MASK_STRADDLE_POLICY,
@@ -168,22 +169,6 @@ class AblationPlanError(ValueHeadError):
 # ---------------------------------------------------------------------------
 # the head
 # ---------------------------------------------------------------------------
-def _init_linear_(layer: nn.Linear, gen: torch.Generator) -> None:
-    """``nn.Linear.reset_parameters`` driven by an EXPLICIT generator."""
-    fan_in = int(layer.weight.shape[1])
-    # kaiming_uniform_(a=sqrt(5)) -> bound = sqrt(6 / ((1 + 5) * fan_in))
-    bound = math.sqrt(6.0 / ((1.0 + 5.0) * fan_in))
-    with torch.no_grad():
-        layer.weight.copy_(
-            torch.empty(layer.weight.shape, dtype=torch.float32).uniform_(
-                -bound, bound, generator=gen))
-        if layer.bias is not None:
-            b = 1.0 / math.sqrt(fan_in)
-            layer.bias.copy_(
-                torch.empty(layer.bias.shape, dtype=torch.float32).uniform_(
-                    -b, b, generator=gen))
-
-
 class ValueHead(nn.Module):
     """Contract §7 FL4 head: ``Linear(H,256) + GELU + Linear(256,1)``, fp32.
 
@@ -565,11 +550,11 @@ def episode_targets(bundle: Any, episode: Episode, plan: dict | None = None,
         if entry.get("ablation_id") == "FULL":
             continue
         ablated = [int(i) for i in entry.get("ablated_event_indices", [])]
-        if any(i > horizon for i in ablated):
+        if any(i > horizon for i in ablated):  # after the last query: no signal
             # a feedback item after the last query cannot change the query
             # log-probability; it carries no realized learning value signal
             continue
-        keep = [i for i in universe if i not in set(ablated)]
+        keep = [i for i in universe if i not in ablated]
         part = query_answer_score(bundle, scoring, keep)
         index = ablated[0]
         targets.append({

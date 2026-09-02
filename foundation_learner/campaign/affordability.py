@@ -108,7 +108,7 @@ _FROZEN_NUMERIC = {
     "core_arms": float(CORE_ARMS),
     "grid_configurations": float(GRID_CONFIGURATIONS),
     "grid_update_fraction": GRID_UPDATE_FRACTION,
-    "session_total_authorized_usd": 45.0,
+    "session_total_authorized_usd": 35.0,
 }
 
 _FROZEN_FALSE = ("confirmation_authorized", "automatic_extension_allowed",

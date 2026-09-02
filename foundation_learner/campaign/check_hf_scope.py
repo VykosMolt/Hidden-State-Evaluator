@@ -27,7 +27,7 @@ import sys
 from .hf_transfer import child_env
 from .o1_isolation import MODE_READ, MODE_WRITE, guard_path
 from .redaction import redact
-from .transient import TransientStepError
+from .transient import TransientStepError, helper_error as _helper_error
 
 
 class ScopeError(RuntimeError):
@@ -42,17 +42,6 @@ def parse_repo(uri: str) -> str | None:
     if len(parts) < 2 or not all(parts[:2]):
         raise ScopeError(f"malformed hf:// URI {uri!r}")
     return "/".join(parts[:2])
-
-
-def _helper_error(text: str, limit: int = 400) -> str:
-    """The last meaningful line, not a raw tail.
-
-    A Python traceback ends with the exception line — the one thing the
-    operator needs ("Invalid user token", "401 Unauthorized").  Slicing the
-    last N characters instead lands mid-frame and prints source fragments.
-    """
-    lines = [ln.strip() for ln in text.strip().splitlines() if ln.strip()]
-    return lines[-1][:limit] if lines else "(helper produced no output)"
 
 
 def _run_helper(repo: str, mode: str, timeout: float) -> dict:

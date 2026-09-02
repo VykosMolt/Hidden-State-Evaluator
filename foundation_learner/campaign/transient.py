@@ -24,7 +24,13 @@ import sys
 import time
 
 __all__ = ["ATTEMPTS", "DETERMINISTIC_STATUSES", "TransientStepError",
-           "http_status", "run_helper_with_retry"]
+           "helper_error", "http_status", "run_helper_with_retry"]
+
+
+def helper_error(text: str, limit: int = 400) -> str:
+    """The last meaningful line of a helper's output (the exception line)."""
+    lines = [ln.strip() for ln in text.strip().splitlines() if ln.strip()]
+    return lines[-1][:limit] if lines else "(helper produced no output)"
 
 #: HTTP statuses that mean "this will fail identically on a fresh pod".
 DETERMINISTIC_STATUSES = (401, 403, 404)

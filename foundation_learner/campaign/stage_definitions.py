@@ -163,8 +163,21 @@ EVAL_SPLIT_BY_STAGE: dict[str, str] = {"SEALED_EVAL": "SEALED_TEST"}
 #: FL8 walks 3 consolidation modes x the 3 positions of an A->B->A chain;
 #: REMAP_DIAG walks the canonical control plus the 2 pre-generated remap
 #: surfaces; INTERFERENCE_DIAG walks the 3 chain positions; POISON_DIAG walks
-#: the 5 frozen conditions.
+#: the 5 frozen conditions.  SEALED_EVAL walks every arm in SEALED_EVAL_ARMS
+#: over the SAME episode set (FL-F1, amendment 17): the paired contrast costs
+#: len(SEALED_EVAL_ARMS) walks per sealed episode, not one.
+CORE_ARM_STAGES: tuple[str, ...] = ("FL1", "FL2", "FL3")
+#: The untrained backbone, evaluated on the sealed set as the in-context-
+#: learning baseline.  It has no checkpoint: a fresh bundle IS FL0.
+BASE_ARM_ID = "FL0"
+#: FL-F1 (amendment 17, 2026-08-28): every arm walks the SAME sealed episodes
+#: inside the SAME single opening, so the preregistered dAULC contrasts vs FL1
+#: and FL2 exist on the sealed holdout and are paired.  FL0 is evaluated in
+#: ADDITION to the promoted arm, never in its place (Amendment 12.7).
+SEALED_EVAL_ARMS: tuple[str, ...] = (BASE_ARM_ID,) + CORE_ARM_STAGES
+
 STAGE_EVAL_MULTIPLIER: dict[str, int] = {
+    "SEALED_EVAL": len(SEALED_EVAL_ARMS),
     "FL0": 4,
     "FL5": 4,
     "FL6": 10,
@@ -186,7 +199,11 @@ STAGE_BUNDLE_LOADS: dict[str, int] = {
     "FL4": 2, "FL5": 3, "FL6": 2, "FL7": 3, "FL8": 4,
     "CORE_MATCHING": 0,
     "REMAP_DIAG": 1, "INTERFERENCE_DIAG": 1, "POISON_DIAG": 1,
-    "SECOND_SEED": 0, "SEALED_EVAL": 1,
+    # SEALED_EVAL loads every arm TWICE: once in sealed_arms_preflight's dry
+    # run (outside the seal, where failure is free) and once in the opening.
+    # Under-projecting this stage is uniquely bad: it has no watchdog
+    # checkpoints inside the opening.
+    "SECOND_SEED": 0, "SEALED_EVAL": 2 * len(SEALED_EVAL_ARMS),
 }
 
 #: Teacher-forced forwards per episode in the FL4 target computation: the
@@ -566,7 +583,6 @@ STAGE_TABLE: tuple[StageDefinition, ...] = (
 )
 
 STAGES_BY_ID: dict[str, StageDefinition] = {s.stage_id: s for s in STAGE_TABLE}
-CORE_ARM_STAGES: tuple[str, ...] = ("FL1", "FL2", "FL3")
 #: Unconditional post-core diagnostics (contract §9 metrics 11, 12, 13).
 DIAGNOSTIC_STAGES: tuple[str, ...] = ("REMAP_DIAG", "INTERFERENCE_DIAG",
                                       "POISON_DIAG")
@@ -1493,15 +1509,112 @@ def promoted_arm_id(ctx: StageContext) -> str:
     return str(declared)
 
 
+def _release_bundle_memory() -> None:
+    """Return a discarded bundle's memory to the allocator, not just to Python.
+
+    ``del`` drops the Python reference but leaves the block in torch's caching
+    allocator; four sequential 2.6B load/free cycles inside a window that must
+    not fail is exactly where fragmentation-driven OOM appears.
+    """
+    import gc
+    gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:                       # torch absent in some test envs
+        pass
+
+
+def sealed_arm_bundle(ctx: StageContext, arm_id: str) -> tuple[Any, dict]:
+    """A fresh bundle for ONE sealed-evaluation arm (FL-F1).
+
+    ``FL0`` is the untrained backbone, so a fresh bundle already IS the arm and
+    no checkpoint is restored.  Every other arm MUST restore its ``final``
+    checkpoint: inside the sealed opening there is no acceptable fallback to
+    the base model, because silently evaluating the base and labelling it FL1
+    would corrupt the very contrast this stage exists to produce.
+    """
+    bundle = ctx.bundle_factory()
+    if arm_id == BASE_ARM_ID:
+        record = {
+            "loaded": False, "arm_id": arm_id, "model": "BASE_CHECKPOINT",
+            "rule": ("the untrained backbone: the in-context-learning "
+                     "comparator, evaluated IN ADDITION to the promoted arm, "
+                     "never in place of it"),
+        }
+    else:
+        from ..mechanisms.stage_support import arm_checkpoint_state
+        record = dict(arm_checkpoint_state(ctx, bundle, arm_id, tag="final"))
+        if not record.get("loaded"):
+            raise StageError(
+                f"REFUSED: no {arm_id!r} 'final' checkpoint is available "
+                f"({record.get('reason')}). The sealed contrast needs every "
+                f"arm's trained weights; evaluating a base model and labelling "
+                f"it {arm_id} would fabricate the comparison.")
+    record["evaluation_mode"] = prepare_bundle_for_evaluation(bundle)
+    return bundle, record
+
+
+def sealed_arms_preflight(ctx: StageContext, arms: tuple[str, ...]
+                          ) -> dict[str, dict]:
+    """Refuse BEFORE the seal is touched if any arm's checkpoint is missing.
+
+    Everything inside the opening must succeed; a missing checkpoint found
+    mid-opening would consume one of the two permanent attempts for a reason
+    that has nothing to do with the sealed data.  Returns each arm's
+    checkpoint record from the dry run.
+    """
+    missing = []
+    for arm_id in arms:
+        if arm_id == BASE_ARM_ID:
+            continue
+        manifest_path = os.path.join(ctx.out_dir, arm_id.lower(), "arm",
+                                     "ckpt_final.manifest.json")
+        if not os.path.isfile(ctx.guard.guard(manifest_path)):
+            missing.append(arm_id)
+    if missing:
+        raise StageError(
+            f"REFUSED before the sealed opening: no 'final' checkpoint for "
+            f"{missing}. The sealed evaluation produces the preregistered "
+            f"dAULC contrasts against FL1 and FL2 (preregistration sections 6 "
+            f"and 7); without every arm it cannot, and the single-use opening "
+            f"must not be spent on an uninterpretable result.")
+
+    # File existence is NOT enough.  Two independent reviews found that the
+    # real raise paths live deeper: load_checkpoint sha256-verifies a multi-GB
+    # payload and raises CorruptCheckpointError; _assert_checkpoint_binding
+    # raises on arm-config-hash drift or identity mismatch; bundle_factory can
+    # OOM.  All of those are DETERMINISTIC -- they recur on the retry and
+    # exhaust BOTH permanent opening attempts, losing the sealed set forever.
+    # So actually build and restore every arm here, where a failure is free,
+    # and discard.  This costs the same loads; it just pays them outside the
+    # burn zone.
+    records: dict[str, dict] = {}
+    for arm_id in arms:
+        bundle, records[arm_id] = sealed_arm_bundle(ctx, arm_id)
+        del bundle
+    _release_bundle_memory()
+
+    # resolve_answer_parser() now RAISES rather than falling back silently, and
+    # run_episodes resolves it lazily -- on a replacement pod resuming straight
+    # into SEALED_EVAL that first resolution would otherwise happen inside the
+    # opening.  Force it here.
+    from ..evaluation.generation import resolve_answer_parser
+    resolve_answer_parser()
+    return records
+
+
 def promoted_arm_bundle(ctx: StageContext, *, require: bool) -> tuple[Any, dict]:
     """A fresh bundle carrying the promoted arm's FINAL trained state.
 
     Contract §7 hands out a FRESH BASE bundle by design, so the arm's trained
     weights must be restored explicitly — otherwise the "evaluation of the
     promoted candidate" silently evaluates the untrained base model (R-C4).
-    ``require=True`` (the sealed opening) REFUSES when the checkpoint is
-    absent; ``require=False`` (the diagnostics) records the fallback to the
-    base checkpoint in the payload instead.
+    ``require=True`` REFUSES when the checkpoint is absent; ``require=False``
+    (the diagnostics) records the fallback to the base checkpoint in the
+    payload instead.  The sealed opening itself restores every arm through
+    ``sealed_arm_bundle`` after ``sealed_arms_preflight``.
     """
     arm_id = promoted_arm_id(ctx)
     bundle = ctx.bundle_factory()
@@ -1792,7 +1905,12 @@ def sealed_eval_work(ctx: StageContext, stage: StageDefinition) -> dict:
                 "opening but the sealed result is missing; a second opening "
                 "is refused")
     ctx.checkpoint("sealed:promoted_arm")
-    bundle, model_record = promoted_arm_bundle(ctx, require=True)
+    # FL-F1: every arm's checkpoint must exist BEFORE the seal is touched.
+    # The dry run already restored the promoted arm once; its checkpoint
+    # record is reused here rather than paying a second 2.6B load.
+    preflight = sealed_arms_preflight(ctx, SEALED_EVAL_ARMS)
+    promoted = promoted_arm_id(ctx)
+    model_record = dict(preflight[promoted], promoted_arm=promoted)
     # The LAST watchdog checkpoint before the seal.  Nothing inside the opening
     # may raise StageAbortedOverrun: a timing abort there would consume one of
     # the two permanent opening attempts for a reason that has nothing to do
@@ -1814,38 +1932,125 @@ def sealed_eval_work(ctx: StageContext, stage: StageDefinition) -> dict:
             result_paths=(report_path, records_path)) as unlock:
         # write-ahead, made durable BEFORE the first sealed shard is read
         unlock.declare_intent()
+        # ONE episode set, walked by EVERY arm: that is what makes the
+        # preregistered dAULC contrasts paired rather than two independent
+        # samples (FL-F1).
         episodes = _sealed_episodes(ctx, stage, unlock)
-        records = run_episodes(bundle, episodes, env_factory,
-                               cfg=LearningCurveConfig(
-                                   arm_tag=f"SEALED_EVAL_{model_record['promoted_arm']}",
-                                   generation=_generation_config(ctx)))
-        # the split tag goes on through the evaluation layer's own annotator,
-        # which RE-HASHES the record: a hand-mutated dict would carry a
-        # record_hash certifying content the record no longer has
-        records = annotate_records(records, split="SEALED_TEST")
-        if not records:
-            raise StageError(
-                "SEALED_EVAL produced no episode records; the opening is "
-                "aborted rather than committed (contract §12 + Amendment 12)")
         trained_family_ids = list(split_families("TRAIN"))
-        summary = _metrics.summarize(records, trained_family_ids)
-        holdout = build_family_holdout_report(
-            records, trained_family_ids,
-            arm_tag=f"SEALED_EVAL_{model_record['promoted_arm']}",
-            split="SEALED_TEST")
+        records: list = []
+        arm_records_by_arm: dict[str, list] = {}
+        arms_payload: dict[str, dict] = {}
+        for arm_id in SEALED_EVAL_ARMS:
+            arm_tag = f"SEALED_EVAL_{arm_id}"
+            arm_bundle, arm_record = sealed_arm_bundle(ctx, arm_id)
+            arm_records = run_episodes(
+                arm_bundle, episodes, env_factory,
+                cfg=LearningCurveConfig(arm_tag=arm_tag,
+                                        generation=_generation_config(ctx)))
+            # the split tag goes on through the evaluation layer's own
+            # annotator, which RE-HASHES the record: a hand-mutated dict would
+            # carry a record_hash certifying content the record no longer has
+            arm_records = annotate_records(arm_records, split="SEALED_TEST")
+            if not arm_records:
+                raise StageError(
+                    f"SEALED_EVAL produced no episode records for {arm_id}; "
+                    "the opening is aborted rather than committed "
+                    "(contract §12 + Amendment 12)")
+            arms_payload[arm_id] = {
+                "arm_tag": arm_tag,
+                "checkpoint": arm_record,
+                "n_records": len(arm_records),
+                "summary": _metrics.summarize(arm_records, trained_family_ids),
+                "family_holdout": build_family_holdout_report(
+                    arm_records, trained_family_ids, arm_tag=arm_tag,
+                    split="SEALED_TEST"),
+            }
+            arm_records_by_arm[arm_id] = arm_records
+            records.extend(arm_records)
+            # one 2.6B bundle at a time: four resident bundles is avoidable
+            # memory pressure inside the one window that must not fail
+            del arm_bundle
+            _release_bundle_memory()
+        if promoted not in arms_payload:
+            raise StageError(
+                f"the promoted arm {promoted!r} was not evaluated on the "
+                "sealed set; refusing to commit the opening")
+
+        # The PAIRED contrast is only defined on episodes every arm scored.
+        # analysis.stats.clustered_sample_from_records SILENTLY DROPS a record
+        # whose AULC is None (an aborted / budget-exceeded episode), and
+        # paired_clustered_bootstrap then REFUSES arms whose episode-id
+        # sequences differ.  Prompt length depends on each arm's own generated
+        # history, so FL0 -- the untrained base, expected to ramble past the
+        # online token allowance -- will drop a different set from FL3.  Left
+        # unhandled that turns the preregistered PRIMARY into "unavailable"
+        # AFTER the single-use opening is already spent.  So the intersection
+        # is computed and recorded HERE, inside the opening, while the evidence
+        # exists; picking it afterwards would be an unpreregistered choice.
+        scoreable = {
+            arm: {str(r.get("episode_id", "")) for r in recs
+                  if _metrics.record_aulc(r) is not None}
+            for arm, recs in arm_records_by_arm.items()}
+        common = set.intersection(*scoreable.values()) if scoreable else set()
+        for arm, ids in scoreable.items():
+            arms_payload[arm]["n_scoreable"] = len(ids)
+            arms_payload[arm]["n_excluded_from_pairing"] = len(ids - common)
+        pairing = {
+            "n_common_scoreable_episodes": len(common),
+            "n_episodes_walked": len(episodes),
+            "per_arm_scoreable": {a: len(i) for a, i in scoreable.items()},
+            "common_episode_ids": sorted(common),
+            "rule": ("paired contrasts are computed on the INTERSECTION of "
+                     "episodes scoreable in every arm of the contrast; the "
+                     "per-arm exclusion counts are reported alongside "
+                     "(preregistration Amendment 17 item 1)"),
+        }
+        # the promoted arm's own numbers stay at the top level so existing
+        # readers of this report keep working; the contrasts are computed by
+        # the analysis layer from the per-arm records, which is where the
+        # frozen clustered-bootstrap machinery already lives
+        summary = arms_payload[promoted]["summary"]
+        holdout = arms_payload[promoted]["family_holdout"]
         # phase two: the evidence exists, so the seal may be consumed
         unlock.commit(evaluation={
             "n_episodes": len(episodes), "n_records": len(records),
             "promoted_arm": model_record["promoted_arm"],
             "checkpoint_manifest_hash": model_record.get("manifest_hash"),
-            "arm_tag": f"SEALED_EVAL_{model_record['promoted_arm']}"})
-        unlock.write_result_records(
-            os.path.join(out_dir, "sealed_records.jsonl"), records)
+            "arm_tag": f"SEALED_EVAL_{model_record['promoted_arm']}",
+            "arms_evaluated": list(SEALED_EVAL_ARMS),
+            "records_per_arm": {a: v["n_records"]
+                                for a, v in arms_payload.items()}})
+        unlock.write_result_records(records_path, records)
+        # analysis.report.report_from_record_files takes {arm_label -> path},
+        # ONE FILE PER ARM.  Nothing anywhere splits a records file by arm_tag,
+        # so a pooled four-arm file handed to it would silently produce a
+        # MIXTURE as the headline number.  Write the per-arm files the analysis
+        # layer can actually consume; the pooled file stays as the complete
+        # immutable record.
+        per_arm_paths = {}
+        for arm_id, arm_recs in arm_records_by_arm.items():
+            arm_path = os.path.join(out_dir, f"sealed_records_{arm_id}.jsonl")
+            unlock.write_result_records(arm_path, arm_recs)
+            per_arm_paths[arm_id] = os.path.basename(arm_path)
         report = {
-            "schema": "flb200.sealed_eval_report.v1",
+            "schema": "flb200.sealed_eval_report.v2",
             "n_episodes": len(episodes),
             "promoted_arm": model_record["promoted_arm"],
             "promoted_arm_checkpoint": model_record,
+            # FL-F1: every arm, same episodes, one opening.  Without these the
+            # preregistered metrics (2) dAULC vs FL1 and (3) dAULC vs FL2 do
+            # not exist on the sealed holdout.
+            "arms": arms_payload,
+            "pairing": pairing,
+            "paired_design": (
+                "all arms walked the SAME sealed episode set inside the SAME "
+                "single opening. Contrasts are computed by the analysis layer "
+                "from the PER-ARM files below via analysis.report."
+                "report_from_record_files({arm: path}), restricted to "
+                "pairing.common_episode_ids. sealed_records.jsonl is the "
+                "pooled immutable record and must NOT be handed to the "
+                "analysis layer directly: it would be read as one arm."),
+            "per_arm_record_files": per_arm_paths,
             "eval_plan": ctx.results.get("_eval_plans", {}).get(stage.stage_id),
             "summary": summary,
             "family_holdout": holdout,
@@ -1857,8 +2062,7 @@ def sealed_eval_work(ctx: StageContext, stage: StageDefinition) -> dict:
                 "three held-out generators and are never a population-level "
                 "unseen-family claim (preregistration §13.1)"),
         }
-        unlock.write_result(os.path.join(out_dir, "sealed_eval_report.json"),
-                            report)
+        unlock.write_result(report_path, report)
         # the opening and its evidence exist locally; now they must exist
         # off-pod too, or a replacement pod could be granted a second opening
         unlock.assert_durable(report_path, records_path)

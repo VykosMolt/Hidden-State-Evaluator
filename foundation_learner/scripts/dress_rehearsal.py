@@ -215,8 +215,7 @@ def _context_factory(pregen_root: str, guard, log):
         def bundle_factory():
             # a FRESH tiny bundle per arm, mirroring the frozen "fresh load of
             # the identical checkpoint per arm" rule
-            bundle = build_tiny_model(seed=20260809, device="cpu")
-            return bundle
+            return build_tiny_model(seed=20260809, device="cpu")
 
         return StageContext(
             out_dir=os.path.join(supervisor.out_dir, "ladder"),

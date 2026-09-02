@@ -57,7 +57,6 @@ def _assert_online_capable() -> None:
 
 def git_blob_sha1(path: str) -> str:
     """The id the Hub assigns a non-LFS file: sha1("blob <size>\\0" + bytes)."""
-    import hashlib
     size = os.path.getsize(path)
     h = hashlib.sha1()
     h.update(f"blob {size}\0".encode())

@@ -581,7 +581,7 @@ def _train_loop(
             episode_ids=[ex.get("episode_id") for ex in batch_examples],
         )
 
-        events = monitor.observe_step(
+        monitor.observe_step(
             step=step,
             loss=loss_value,
             grad_norm=grad_norm,
@@ -592,7 +592,6 @@ def _train_loop(
             ),
             grads_finite=grads_finite,
         )
-        del events
 
         now = time.monotonic()
         due_by_steps = cfg.checkpoint_every_steps > 0 and step % cfg.checkpoint_every_steps == 0

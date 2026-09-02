@@ -37,10 +37,16 @@ from ..eviction import EvictedBySignal
 from .affordability import (AffordabilityRefusal, BenchMeasurement, CorePlan,
                             admission_check, load_policy, plan_core_comparison,
                             policy_sha256)
-from .stage_definitions import (StageAbortedOverrun, StageContext,
-                                StageDefinition, StageError, StageWatchdog,
-                                planned_eval_episodes, project_stage_seconds,
-                                resolve_dotted, stages_in_priority_order)
+from .stage_definitions import (STAGES_BY_ID, StageAbortedOverrun,
+                                StageContext, StageDefinition, StageError,
+                                StageWatchdog, planned_eval_episodes,
+                                project_stage_seconds, resolve_dotted,
+                                stages_in_priority_order)
+
+#: Stages admitted WITHOUT leaving room for the sealed evaluation (Amendment
+#: 17 item 1a): without them there is nothing to evaluate on the sealed set.
+SEALED_RESERVATION_EXEMPT: frozenset[str] = frozenset(
+    {"BENCH", "DEV_GRID", "FL1", "FL2", "FL3", "CORE_MATCHING", "SEALED_EVAL"})
 
 __all__ = [
     "Clock",
@@ -328,27 +334,53 @@ class Scheduler:
 
     # ---------------- admission ----------------
 
+    def sealed_reservation(self, stage_id: str, ctx: StageContext) -> float:
+        """Seconds a non-core stage must leave for SEALED_EVAL (Amendment 17).
+
+        Zero for the exempt stages and once the sealed evaluation has reached
+        a terminal outcome.  A sealed projection that cannot be computed is a
+        refusal of the caller, never a zero reservation.
+        """
+        if stage_id in SEALED_RESERVATION_EXEMPT:
+            return 0.0
+        if any(o.stage_id == "SEALED_EVAL" for o in self.outcomes):
+            return 0.0
+        try:
+            projected = self._projection_for(STAGES_BY_ID["SEALED_EVAL"], ctx)
+        except (StageError, AffordabilityRefusal) as exc:
+            raise AffordabilityRefusal(
+                f"{stage_id}: the sealed evaluation cannot be projected "
+                f"({exc}); a non-core stage is not admitted on a guess") from exc
+        return float(projected["projected_seconds"]) * self.safety_factor
+
     def admit(self, stage_id: str, projected_seconds: float, *,
-              strict: bool = True) -> dict:
-        """The frozen §11 admission rule, journalled either way."""
+              strict: bool = True, reserved_seconds: float = 0.0) -> dict:
+        """The frozen §11 admission rule, journalled either way.
+
+        ``reserved_seconds`` is added to the transfer reserve the stage must
+        leave (the sealed-evaluation reservation of Amendment 17).
+        """
+        reserve = self.reserve + float(reserved_seconds)
         try:
             record = admission_check(
                 projected_stage_seconds=float(projected_seconds),
-                remaining_reserve_seconds=self.reserve,
+                remaining_reserve_seconds=reserve,
                 remaining_authorized_seconds=self.remaining_authorized(),
                 safety_factor=self.safety_factor,
                 stage=stage_id, strict=strict)
         except AffordabilityRefusal as exc:
             record = admission_check(
                 projected_stage_seconds=float(projected_seconds),
-                remaining_reserve_seconds=self.reserve,
+                remaining_reserve_seconds=reserve,
                 remaining_authorized_seconds=self.remaining_authorized(),
                 safety_factor=self.safety_factor,
                 stage=stage_id, strict=False)
             record["refusal"] = str(exc)
+            record["sealed_reservation_seconds"] = float(reserved_seconds)
             self.journal("STAGE_REFUSED", {"stage_id": stage_id,
                                            "admission": record})
             raise
+        record["sealed_reservation_seconds"] = float(reserved_seconds)
         self.journal("STAGE_ADMITTED", {"stage_id": stage_id,
                                         "admission": record})
         return record
@@ -454,7 +486,9 @@ class Scheduler:
             return outcome
 
         try:
-            admission = self.admit(stage.stage_id, projection["projected_seconds"])
+            reserved = self.sealed_reservation(stage.stage_id, ctx)
+            admission = self.admit(stage.stage_id, projection["projected_seconds"],
+                                   reserved_seconds=reserved)
         except AffordabilityRefusal as exc:
             outcome = StageOutcome(stage.stage_id, STATE_REFUSED, entry=entry,
                                    projection=projection, error=str(exc),

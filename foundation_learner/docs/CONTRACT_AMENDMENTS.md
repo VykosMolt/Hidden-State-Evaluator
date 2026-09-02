@@ -1554,3 +1554,46 @@ threshold, the split, or the sealed-test policy.
    evaluation, the records exist in memory at that point, and the ledger's
    `records_read` / `evaluation` payload documents what was read even if the
    result files are missing. Not repaired; recorded.
+
+## Amendment 17 — session budget follows O1 amendment 2; sealed-evaluation reservation; sealed-opening load count (2026-09-02, PRE-RUN)
+
+1. **Budget mirror.** The combined session budget is USD 35.00 total /
+   30.00 compute / 5.00 reserve (O1 budget amendment 2, 2026-09-02, which
+   supersedes amendment 1's 60/55/5: O1's equivalence phase now runs a
+   frozen 128-row subset instead of the 384-row serial reference pass, and
+   its calibration runs batched). FL's copies said 45:
+   `campaign/FL_BUDGET_POLICY.json` (`session_total_authorized_usd`),
+   `campaign/affordability.py` (`_FROZEN_NUMERIC`), the manifest template
+   (`budget_total_usd_session`) and `deploy/INTEGRATION.md`. All now say 35.
+   `deploy/FL_SESSION_CONFIG.json` is re-sized: `session_authorized_seconds`
+   15,900 (USD 30 at the B200 rate; the supervisor still takes the minimum
+   with the per-pod `O1_SESSION_AUTHORIZED_SECONDS`) and `o1_timeout_seconds`
+   12,600. Nothing in FL spends money; rental confirmation remains NOT
+   AUTHORIZED. The frozen contract and preregistration text that say
+   "USD 45" are superseded by this entry, not edited.
+
+1a. **The sealed evaluation is reserved up front** (preregistration
+   Amendment 17, option 1). `SEALED_EVAL` has the lowest priority in the §11
+   order, so a short ladder could spend its allowance on mechanism rungs and
+   diagnostics and then refuse the one stage the preregistered claim needs.
+   `campaign/scheduler.py` now projects `SEALED_EVAL` from BENCH and adds
+   `projected * SAFETY_FACTOR` to the reserve every non-core stage must
+   leave: `FL0`, `FL4`-`FL8`, the three diagnostics and `SECOND_SEED` are
+   admitted only if the sealed evaluation still fits afterwards. `BENCH`,
+   `DEV_GRID`, `FL1`-`FL3` and `CORE_MATCHING` are exempt (without them there
+   is nothing to evaluate on the sealed set), and so is `SEALED_EVAL` itself.
+   If the sealed projection cannot be computed the non-core stage is REFUSED
+   with that reason, never admitted on a guess. The admission inequality,
+   the safety factor and the transfer reserve are unchanged.
+
+2. **Sealed opening: the promoted arm is loaded once outside the seal.**
+   `sealed_arms_preflight` returns the checkpoint records of its dry run and
+   `sealed_eval_work` reuses the promoted arm's record instead of calling
+   `promoted_arm_bundle` a second time. The stage now performs exactly the
+   `STAGE_BUNDLE_LOADS["SEALED_EVAL"] = 2 * len(SEALED_EVAL_ARMS)` loads the
+   projection charges for (it was one more). `SEALED_EVAL_ARMS` is declared
+   before the stage tables, so the multiplier and load count are derived from
+   it rather than checked against it at import.
+
+3. **No metric, seed, split, family source, episode structure or promotion
+   rule changed.** The sealed shards are unopened.

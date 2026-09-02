@@ -57,6 +57,7 @@ import torch
 
 from foundation_learner.ecology.base import domain_sha256
 from foundation_learner.ecology.split import split_of
+from foundation_learner.mechanisms.fast_adapter import FastAdapter, revealed_support_items
 from foundation_learner.training.lora import (
     LoraHandles,
     lora_frobenius_norm,
@@ -96,7 +97,6 @@ class SealedInputRefused(ConsolidationError):
 def assert_not_sealed(family_id: str, split: str | None = None) -> str:
     """Refuse sealed material anywhere in the consolidation path."""
     fid = str(family_id)
-    computed = None
     try:
         computed = split_of(fid)
     except KeyError:
@@ -384,7 +384,6 @@ def run_fl8_stage(ctx: Any, stage: Any) -> dict:
     """
     from foundation_learner.evaluation.interference import run_interference_eval
     from foundation_learner.mechanisms import stage_support as _s
-    from foundation_learner.mechanisms.fast_adapter import FastAdapter
 
     dev_eps = _s.dev_episodes(ctx, stage)
     if not dev_eps:
@@ -440,7 +439,7 @@ def run_fl8_stage(ctx: Any, stage: Any) -> dict:
             for episode in episodes:
                 adapter.reset_episode()
                 admitted = declined = 0
-                reveals = _reveal_items(episode)
+                reveals = revealed_support_items(episode)
                 for item_id in sorted(reveals, key=lambda k: reveals[k]):
                     summary = None
                     if use_gate is not None:
@@ -497,12 +496,6 @@ def run_fl8_stage(ctx: Any, stage: Any) -> dict:
     return _s.finish_stage(ctx, stage, payload)
 
 
-def _reveal_items(episode: Any) -> dict[str, int]:
-    from foundation_learner.mechanisms.fast_adapter import revealed_support_items
-
-    return revealed_support_items(episode)
-
-
 def _item_summary(bundle: Any, episode: Any, item_id: str):
     """Hidden summary of the item's REVEAL event, for the gate.
 
@@ -511,7 +504,7 @@ def _item_summary(bundle: Any, episode: Any, item_id: str):
     """
     from foundation_learner.mechanisms.value_head import head_input_hidden
 
-    reveals = _reveal_items(episode)
+    reveals = revealed_support_items(episode)
     return head_input_hidden(bundle, episode, int(reveals[item_id]))
 
 

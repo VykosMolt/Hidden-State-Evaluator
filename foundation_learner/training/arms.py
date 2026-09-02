@@ -17,6 +17,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Sequence
 
+from foundation_learner.training.model_loading import domain_sha256
 from foundation_learner.training.objectives import objective_for_arm
 from foundation_learner.training.peft_modes import (
     FULL_MODEL_MODE_NAME,
@@ -266,6 +267,4 @@ def assert_core_arms_matched(configs: Sequence[ArmConfig]) -> None:
 
 
 def arm_config_hash(cfg: ArmConfig) -> str:
-    from foundation_learner.training.model_loading import domain_sha256
-
     return domain_sha256("FL_V0_ARM_CONFIG", cfg.to_dict())

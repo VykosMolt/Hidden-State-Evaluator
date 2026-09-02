@@ -28,7 +28,7 @@ def test_policy_loads_and_pins_the_frozen_constants():
     assert policy["safety_factor"] == 1.25
     assert policy["final_transfer_reserve_seconds"] == 1200
     assert policy["update_ladder"] == [600, 1200, 2400, 4800]
-    assert policy["session_total_authorized_usd"] == 45.0
+    assert policy["session_total_authorized_usd"] == 35.0
     assert policy["rental_confirmation"] == "NOT_AUTHORIZED"
     assert policy["confirmation_authorized"] is False
     assert policy["o1_priority"] == "ABSOLUTE_FIRST"

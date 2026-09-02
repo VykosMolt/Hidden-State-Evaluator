@@ -812,20 +812,7 @@ class SessionSupervisor:
     # ---------------- helpers ----------------
 
     def _child_env(self) -> dict:
-        """Environment for a configured subprocess (the O1 phase included).
-
-        O1's pod entrypoint dispatches to THIS supervisor whenever it sees
-        O1_FL_SESSION_CONFIG.  Leaving that variable in the child environment
-        would make the O1 phase start a second combined session, which would
-        run the O1 phase again: unbounded recursion on a paid accelerator.
-        O1's entry carries its own depth marker as an independent guard;
-        either alone is sufficient, and neither depends on the other being
-        correct.
-        """
-        env = {k: v for k, v in os.environ.items()
-               if k != "O1_FL_SESSION_CONFIG"}
-        env["O1_B300_ENTRY_ACTIVE"] = "1"
-        return env
+        return child_env()
 
     def _run_command(self, command: Sequence[str] | str, *, state: str,
                      timeout: float | None = None) -> dict:
@@ -1674,6 +1661,22 @@ def _transient_setup_error(exc: BaseException) -> bool:
     return isinstance(exc, OSError) and exc.errno in _TRANSIENT_ERRNOS
 
 
+def child_env() -> dict:
+    """Environment for a configured subprocess (the O1 phase included).
+
+    O1's pod entrypoint dispatches to THIS supervisor whenever it sees
+    O1_FL_SESSION_CONFIG.  Leaving that variable in the child environment
+    would make the O1 phase start a second combined session, which would
+    run the O1 phase again: unbounded recursion on a paid accelerator.
+    O1's entry carries its own depth marker as an independent guard;
+    either alone is sufficient, and neither depends on the other being
+    correct.
+    """
+    env = {k: v for k, v in os.environ.items() if k != "O1_FL_SESSION_CONFIG"}
+    env["O1_B300_ENTRY_ACTIVE"] = "1"
+    return env
+
+
 def _terminate_without_supervisor(config: "SessionConfig", out_dir: str,
                                   exc: BaseException) -> None:
     """Last-resort termination when the supervisor cannot even be built.
@@ -1699,7 +1702,7 @@ def _terminate_without_supervisor(config: "SessionConfig", out_dir: str,
             command, shell=isinstance(command, str), check=False,
             timeout=float(payload.get("terminate_timeout_seconds")
                           or TERMINATE_TIMEOUT_SECONDS),
-            env=SessionSupervisor._child_env(None), capture_output=True)
+            env=child_env(), capture_output=True)
     except Exception as fail:  # noqa: BLE001 - recorded, never raised over exc
         print(json.dumps({"event": "TERMINATE_WITHOUT_SUPERVISOR_FAILED",
                           "error": repr(fail)[:400]}), file=sys.stderr)

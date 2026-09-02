@@ -24,6 +24,7 @@ Everything is deterministic given ``seed``; no global RNG, no wall clock.
 """
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
@@ -113,7 +114,6 @@ class ResamplePlan:
     unit_uniform: np.ndarray   # float32 [reps, F, max_n]
 
     def digest(self) -> str:
-        import hashlib
         h = hashlib.sha256()
         h.update(np.ascontiguousarray(self.family_index).tobytes())
         h.update(np.ascontiguousarray(self.unit_uniform).tobytes())
@@ -504,16 +504,15 @@ def top1_regret(predictions: Sequence[float], targets: Sequence[float],
 def value_head_metrics(predictions: Sequence[float], targets: Sequence[float],
                        groups: Sequence[Any] | None = None) -> dict[str, Any]:
     """METRIC 14 — Spearman, pairwise ranking accuracy, calibration, top-1 regret."""
-    out: dict[str, Any] = {
+    return {
         "schema": VALUE_METRICS_SCHEMA,
         "n": len(list(predictions)),
         "spearman": spearman(predictions, targets),
         "pearson": pearson(predictions, targets),
         "calibration": calibration_fit(predictions, targets),
+        "pairwise": pairwise_ranking_accuracy(predictions, targets, groups),
+        "regret": top1_regret(predictions, targets, groups),
     }
-    out.update({"pairwise": pairwise_ranking_accuracy(predictions, targets, groups)})
-    out.update({"regret": top1_regret(predictions, targets, groups)})
-    return out
 
 
 # --------------------------------------------------------------------------

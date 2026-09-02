@@ -20,11 +20,10 @@ This package contains every ONLINE evaluation path of the campaign:
 Hash / seed conventions
 -----------------------
 Contract section 3 requires the ``flhash`` helpers to be implemented ONCE in
-``foundation_learner/ecology/base.py`` and imported everywhere.  This package
-therefore never re-implements ``canonical_json`` / ``domain_sha256`` /
-``derive_seed``; it resolves them lazily from that module and fails loudly if
-they are unavailable.  ``text_sha256`` is a plain ``hashlib`` digest of UTF-8
-bytes (no domain convention involved) and is defined here.
+``foundation_learner/ecology/base.py`` and imported everywhere; this package
+re-exports ``canonical_json`` / ``domain_sha256`` / ``derive_seed`` from there.
+``text_sha256`` is a plain ``hashlib`` digest of UTF-8 bytes (no domain
+convention involved) and is defined here.
 
 Nothing in this package imports its own submodules at import time, so the
 submodules may safely import these helpers from the package.
@@ -32,66 +31,13 @@ submodules may safely import these helpers from the package.
 from __future__ import annotations
 
 import hashlib
-from typing import Any, Callable
+from typing import Any
 
 VERSION = "0.1.0"
 
-_FLHASH_NAMES = ("canonical_json", "domain_sha256", "derive_seed")
-
-_flhash_cache: dict[str, Callable[..., Any]] = {}
-
-
-class FlHashUnavailable(ImportError):
-    """Raised when ``ecology/base.py`` (the single flhash home) is missing."""
-
-
-def _resolve_flhash() -> dict[str, Callable[..., Any]]:
-    """Resolve the shared hash helpers from ``foundation_learner.ecology.base``.
-
-    Contract section 3 fixes both the home of these functions and their exact
-    semantics.  We accept either module-level functions or functions grouped
-    under a ``flhash`` attribute (namespace/class), because the producing
-    worker owns that file; we never substitute our own implementation.
-    """
-    if _flhash_cache:
-        return _flhash_cache
-    try:
-        from foundation_learner.ecology import base as _base  # type: ignore
-    except Exception as exc:  # pragma: no cover - exercised via error path test
-        raise FlHashUnavailable(
-            "foundation_learner.ecology.base is required for the frozen hash / "
-            "seed conventions (contract section 3); it could not be imported: "
-            f"{exc!r}"
-        ) from exc
-    holder = getattr(_base, "flhash", _base)
-    resolved: dict[str, Callable[..., Any]] = {}
-    for name in _FLHASH_NAMES:
-        fn = getattr(holder, name, None)
-        if fn is None:
-            fn = getattr(_base, name, None)
-        if not callable(fn):
-            raise FlHashUnavailable(
-                f"foundation_learner.ecology.base does not expose a callable "
-                f"{name!r} (contract section 3)"
-            )
-        resolved[name] = fn
-    _flhash_cache.update(resolved)
-    return _flhash_cache
-
-
-def canonical_json(obj: Any) -> str:
-    """``ecology.base.canonical_json`` (contract section 3)."""
-    return _resolve_flhash()["canonical_json"](obj)
-
-
-def domain_sha256(domain: str, obj: Any) -> str:
-    """``ecology.base.domain_sha256`` (contract section 3)."""
-    return _resolve_flhash()["domain_sha256"](domain, obj)
-
-
-def derive_seed(root_seed: int, *tags: Any) -> int:
-    """``ecology.base.derive_seed`` (contract section 3)."""
-    return _resolve_flhash()["derive_seed"](root_seed, *tags)
+from foundation_learner.ecology.base import (  # noqa: E402
+    canonical_json, derive_seed, domain_sha256,
+)
 
 
 def text_sha256(text: str) -> str:
@@ -145,7 +91,6 @@ def read_jsonl_records(path: str) -> list[Any]:
 
 __all__ = [
     "VERSION",
-    "FlHashUnavailable",
     "canonical_json",
     "domain_sha256",
     "derive_seed",

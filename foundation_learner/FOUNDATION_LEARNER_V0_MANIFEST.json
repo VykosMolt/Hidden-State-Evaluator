@@ -147,7 +147,7 @@
     "split_manifest_path": "artifacts_fl/pregen/MANIFESTS/family_split_manifest.json"
   },
   "scheduler": {
-    "budget_total_usd_session": 45.0,
+    "budget_total_usd_session": 35.0,
     "checkpoint_cadence": "600s or 200 steps",
     "final_transfer_reserve_seconds": 1200,
     "o1_priority": "ABSOLUTE_FIRST",

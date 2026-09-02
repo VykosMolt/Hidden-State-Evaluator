@@ -174,29 +174,16 @@ def _as_python_state(value: Any) -> tuple:
 def code_commit(repo_hint: str | None = None) -> dict[str, Any]:
     """Read the current git commit for provenance (never fabricated)."""
     start = repo_hint or os.path.dirname(os.path.abspath(__file__))
+
+    def git(*args: str, timeout: float = 30) -> str:
+        return subprocess.run(
+            ["git", "-C", start, *args], capture_output=True, text=True,
+            timeout=timeout, check=True).stdout.strip()
+
     try:
-        commit = subprocess.run(
-            ["git", "-C", start, "rev-parse", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=True,
-        ).stdout.strip()
-        dirty = subprocess.run(
-            ["git", "-C", start, "status", "--porcelain"],
-            capture_output=True,
-            text=True,
-            timeout=60,
-            check=True,
-        ).stdout.strip()
-        branch = subprocess.run(
-            ["git", "-C", start, "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=True,
-        ).stdout.strip()
-        return {"commit": commit, "branch": branch, "dirty": bool(dirty)}
+        return {"commit": git("rev-parse", "HEAD"),
+                "branch": git("rev-parse", "--abbrev-ref", "HEAD"),
+                "dirty": bool(git("status", "--porcelain", timeout=60))}
     except Exception as exc:  # noqa: BLE001 - provenance failure must be visible
         return {"commit": None, "branch": None, "dirty": None, "error": repr(exc)}
 

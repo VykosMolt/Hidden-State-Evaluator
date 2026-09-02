@@ -101,6 +101,7 @@ def rho_from_embeddings(embedding_matrix: torch.Tensor) -> float:
 
 
 def _init_linear_(layer: nn.Linear, gen: torch.Generator) -> None:
+    """``nn.Linear.reset_parameters`` driven by an explicit generator."""
     fan_in = int(layer.weight.shape[1])
     bound = math.sqrt(6.0 / ((1.0 + 5.0) * fan_in))  # kaiming_uniform_(a=sqrt(5))
     with torch.no_grad():

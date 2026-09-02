@@ -357,3 +357,34 @@ def test_scheduler_journal_is_mirrored_on_every_append(tmp_path):
             dest, restored, session_id="SID")
     m2.restore_all()
     assert os.path.isfile(os.path.join(restored, sched.JOURNAL_NAME))
+
+
+def test_non_core_stages_leave_room_for_the_sealed_evaluation(tmp_path):
+    """Amendment 17 item 1a: SEALED_EVAL is reserved before any non-core stage."""
+    CALLS.clear()
+    ctx, guard = context(tmp_path, spu=1.0, eval_per_episode=0.1)
+    s = make_scheduler(tmp_path, 10.0, guard)
+    s.start()
+    sealed = s.sealed_reservation("FL4", ctx)
+    assert sealed > 0.0
+    assert s.sealed_reservation("FL1", ctx) == 0.0
+    assert s.sealed_reservation("SEALED_EVAL", ctx) == 0.0
+    # what the stub needs on its own: projected * 1.25 + the transfer reserve
+    need = (s._projection_for(stage("FL4"), ctx)["projected_seconds"]
+            * s.safety_factor + s.reserve)
+    s_short = make_scheduler(tmp_path / "short", need + sealed - 1.0, guard)
+    s_short.start()
+    assert s_short.run_stage(stage("FL4"), ctx).state == sched.STATE_REFUSED
+    assert CALLS == []
+    # an exempt core arm is admitted without the reservation
+    assert s_short.run_stage(stage("FL1"), ctx).state == sched.STATE_COMPLETE
+    assert CALLS == ["FL1"]
+    CALLS.clear()
+    s_long = make_scheduler(tmp_path / "long", need + sealed, guard)
+    s_long.start()
+    assert s_long.run_stage(stage("FL4"), ctx).state == sched.STATE_COMPLETE
+    assert CALLS == ["FL4"]
+    admitted = [r for r in s_long.read_journal()
+                if r.get("event") == "STAGE_ADMITTED"]
+    assert admitted and admitted[-1]["admission"][
+        "sealed_reservation_seconds"] == sealed

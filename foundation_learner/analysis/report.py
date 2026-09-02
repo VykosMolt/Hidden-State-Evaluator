@@ -321,6 +321,20 @@ def render_markdown(report: Mapping[str, Any]) -> str:
             "carries FL2's attempt0 imitation handicap rather than a difference "
             "in learning from feedback.")
         add("")
+        add("**Reading the CI-excludes-0 column (Amendment 17).** It is a "
+            "DESCRIPTIVE property of a conditional interval, not a decision. "
+            "The designated PRIMARY is dAULC(FL3-FL1) on the {4, 5, 6} "
+            "restriction, and 'improvement' requires the point estimate > 0, "
+            "that interval to exclude 0, AND the same sign in at least 2 of 3 "
+            "families. For every other row this column must not be read as a "
+            "test: with 3 family clusters the nominal-95% interval covers the "
+            "population estimand at only ~74-83% and a CI-excludes-0 rule "
+            "carries ~17-26% type-I error (preregistration 13.1). Any "
+            "family-level distribution-free test also has a hard floor of "
+            "one-sided p = 0.5^3 = 0.125, so no result here can reach p < 0.05 "
+            "by such a test. All intervals are conditional on these three "
+            "named sealed families.")
+        add("")
 
     fh = report.get("family_holdout")
     if fh:

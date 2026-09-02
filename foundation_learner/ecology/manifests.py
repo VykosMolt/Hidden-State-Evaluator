@@ -11,12 +11,11 @@ input to the sealed-shard key derivation (Amendment 1).
 """
 from __future__ import annotations
 
-import hashlib
 import os
 
 from .base import canonical_json, domain_sha256, sha256_file
 from .split import (EXPECTED_SPLIT, FAMILY_IDS, SPLIT_DOMAIN, compute_split,
-                    ordered_families)
+                    family_hash, ordered_families)
 
 __all__ = ["SPLIT_MANIFEST_NAME", "build_split_manifest",
            "split_manifest_sha256", "write_split_manifest",
@@ -94,9 +93,7 @@ def verify_split_manifest(manifest: dict, check_sources: bool = True) -> None:
     if manifest["assignment"] != {k: list(v) for k, v in EXPECTED_SPLIT.items()}:
         raise ValueError("family split manifest disagrees with Amendment 2")
     for fid, digest in manifest["family_hashes"].items():
-        if digest != hashlib.sha256(
-                SPLIT_DOMAIN.encode("utf-8") + b"\0" + fid.encode("utf-8")
-        ).hexdigest():
+        if digest != family_hash(fid):
             raise ValueError(f"family split hash mismatch for {fid}")
     if check_sources:
         paths = family_module_paths()

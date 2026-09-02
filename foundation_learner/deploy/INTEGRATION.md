@@ -9,7 +9,7 @@ rental, and nothing here spends money.
 
 | item | value |
 |---|---|
-| image | `o1-b300-runner:v0.3.11` (local id `sha256:6591e5a5…`; B300 primary / B200 explicit fallback, INTERRUPTIBLE) |
+| image | `o1-b300-runner:v0.3.20` (local id `sha256:5baefea2…`; B300 primary / B200 explicit fallback, INTERRUPTIBLE) |
 | base | `python:3.14-slim-bookworm`, pinned by digest `python@sha256:23c59390…` |
 | venv | `/opt/venv` |
 | torch | `2.12.1+cu130` (stable; identical wheel verified locally on sm_120 incl. the real-checkpoint smoke) |
@@ -154,12 +154,13 @@ baked into the image or committed to Git.
 ## 6. Budget
 
 `campaign/FL_BUDGET_POLICY.json` is FL's own policy file. It is **separate**
-from `o1_b200/runner/budget.py`, which hard-asserts the O1 45/40/5 split and
+from `o1_b200/runner/budget.py`, which hard-asserts the O1 35/30/5 split and
 cannot be reused. FL freezes `SAFETY_FACTOR = 1.25` and
 `FINAL_TRANSFER_RESERVE = 1200 s`, admits a stage only when
 `projected * 1.25 + reserve <= remaining`, and never consumes the reserve.
 
-The USD 45.00 total session budget remains authoritative at session level, and
+The USD 35.00 total session budget (O1 amendment 2, 2026-09-02) remains
+authoritative at session level, and
 **rental confirmation remains NOT AUTHORIZED**. Nothing in this package
 contacts a provider, quotes an instance, or spends money.
 
@@ -175,15 +176,15 @@ uses its own allocation and does not charge the unbilled gap.
 ### Giving the ladder the accelerator
 
 Two numbers in the session config decide how much of the rental the FL
-ladder gets. With the USD 40 compute allocation at the live B200 rate
-($6.79/h) one pod's allowance is ~21,000 s; at the B300 rate ($7.89/h)
-~18,000 s. `O1_SESSION_AUTHORIZED_SECONDS` carries the exact figure onto
+ladder gets. With the USD 30 compute allocation at the live B200 rate
+($6.79/h) one pod's allowance is ~15,900 s; at the B300 rate ($7.89/h)
+~13,700 s. `O1_SESSION_AUTHORIZED_SECONDS` carries the exact figure onto
 the pod.
 
 | field | set it to | why |
 |---|---|---|
 | `session_authorized_seconds` | the per-pod allowance (same figure the driver computes) | the supervisor takes `min(config, O1_SESSION_AUTHORIZED_SECONDS)` anyway |
-| `o1_timeout_seconds` | **14,000 s** (from the local rate probe: ~7,000-9,000 s projected for 4,608 rows on B200, and O1's gate needs 1.3x + 1,500 s) | a kill switch, not a budget: FL gets what O1 does not USE; `validate()` refuses if it does not leave `o1_timeout + 3,000 s` below the allowance |
+| `o1_timeout_seconds` | **12,600 s** (O1 with the 128-row equivalence subset and batched calibration projects to ~2.4 h = 8,600 s; 1.3x + margin) | a kill switch, not a budget: FL gets what O1 does not USE; `validate()` refuses if it does not leave `o1_timeout + 3,000 s` below the allowance |
 | `fl_minimum_seconds` | leave at the default (3,000 s) | the frozen 1,200 s transfer reserve plus one minimal stage |
 
 With those values the ladder receives **whatever remains after O1

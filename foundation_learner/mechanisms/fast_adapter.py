@@ -194,11 +194,8 @@ class FastAdapter:
                  inner_lr: float = FL7_INNER_LR,
                  max_frobenius: float = FL7_FAST_DELTA_MAX_FROBENIUS,
                  gate: Any = None) -> None:
-        base = spec or FL7_FAST_ADAPTER_SPEC
-        self.spec = LoraSpec(
-            target_suffixes=base.target_suffixes, rank=base.rank,
-            alpha=base.alpha, dropout=base.dropout, seed=int(seed),
-            freeze_base=True, name=base.name)
+        self.spec = dataclasses.replace(spec or FL7_FAST_ADAPTER_SPEC,
+                                        seed=int(seed), freeze_base=True)
         self.bundle = bundle
         self.model = bundle.model
         self.tokenizer = bundle.tokenizer
@@ -252,7 +249,6 @@ class FastAdapter:
         batch = examples_to_batch([example], int(pad_id), device=str(self.device))
         params = list(self.handles.parameters())
         optimizer = torch.optim.SGD(params, lr=self.inner_lr)
-        was_training = self.model.training
         self.model.train()
         losses: list[float] = []
         for _ in range(self.inner_steps):
@@ -265,12 +261,8 @@ class FastAdapter:
             loss.backward()
             optimizer.step()
             losses.append(float(loss.detach()))
-        # ALWAYS return to evaluation state, never merely to whatever the mode
-        # happened to be.  The fast adapter runs INSIDE an online evaluation
-        # walk, so the operation right after an inner update is a greedy
-        # decode, which requires eval mode (Amendment 16); `was_training` is
-        # kept only for the record.
-        del was_training
+        # ALWAYS return to eval mode: the adapter runs inside an online walk,
+        # and the next operation is a greedy decode (Amendment 16).
         self.model.eval()
         pre = clip_lora_frobenius_(self.handles, self.max_frobenius)
         record = InnerUpdateRecord(
@@ -286,7 +278,7 @@ class FastAdapter:
         """Run the inner loop on every REVEAL-supervised support item, in order."""
         reveals = revealed_support_items(episode)
         if item_ids is None:
-            item_ids = [i for i in sorted(reveals, key=lambda k: reveals[k])]
+            item_ids = sorted(reveals, key=lambda k: reveals[k])
         if self.gate is not None:
             raise FastAdapterError(
                 "adapt_episode() is the UNGATED batch entry point; a gated "

@@ -126,9 +126,7 @@ def derive_seed(root_seed: int, *tags: Any) -> int:
 
 
 def _jsonable(value: Any) -> Any:
-    if value is None or isinstance(value, (bool, int, str)):
-        return value
-    if isinstance(value, float):
+    if value is None or isinstance(value, (bool, int, float, str)):
         return value
     if isinstance(value, (list, tuple)):
         return [_jsonable(v) for v in value]

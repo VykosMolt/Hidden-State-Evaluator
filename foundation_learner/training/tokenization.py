@@ -593,7 +593,10 @@ def _item_record_answer(episode: Any, item_id: Any) -> str | None:
     if not isinstance(items, dict) or item_id is None:
         return None
     record = items.get(item_id)
-    for candidate in (record, (record or {}).get("instance") if isinstance(record, dict) else None):
+    candidates = [record]
+    if isinstance(record, dict):
+        candidates.append(record.get("instance"))
+    for candidate in candidates:
         if candidate is None:
             continue
         if isinstance(candidate, dict) and candidate.get("answer_canonical"):

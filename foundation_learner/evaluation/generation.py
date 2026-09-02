@@ -81,16 +81,32 @@ def parse_answer_local(text: str) -> str | None:
 
 
 def resolve_answer_parser() -> tuple[Callable[[str], str | None], str]:
-    """Return ``(parser, source)``; prefers the real ``episodes/parse.py``."""
+    """Return ``(parser, source)`` from the real ``episodes/parse.py``.
+
+    Amendment 17: this used to fall back SILENTLY to ``parse_answer_local`` on
+    any import failure.  The parser defines R, the quantity every principal
+    outcome is built from, so two implementations that merely happen to agree
+    today is the failure mode the O1 programme spent an amendment removing.
+    An unimportable parser is now a hard failure: a scored run must not be
+    produced by an unknown grammar.  ``parse_answer_local`` is retained ONLY
+    as the documented reference implementation for tests and for the streaming
+    stop rule, never as a scoring fallback.
+    """
     try:
         from foundation_learner.episodes import parse as _parse  # type: ignore
-    except Exception:
-        return parse_answer_local, "evaluation.generation.parse_answer_local"
+    except Exception as exc:
+        raise GenerationError(
+            "REFUSED: foundation_learner.episodes.parse is not importable "
+            f"({exc}); it defines the answer grammar that every principal "
+            "outcome depends on. Refusing to score with a second parser "
+            "implementation.") from exc
     for name in _PARSER_CANDIDATE_NAMES:
         fn = getattr(_parse, name, None)
         if callable(fn):
             return fn, f"episodes.parse.{name}"
-    return parse_answer_local, "evaluation.generation.parse_answer_local"
+    raise GenerationError(
+        "REFUSED: foundation_learner.episodes.parse exposes none of "
+        f"{_PARSER_CANDIDATE_NAMES}; the answer grammar cannot be resolved.")
 
 
 def complete_answer_line_end(text: str) -> int | None:

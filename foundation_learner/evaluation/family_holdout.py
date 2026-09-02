@@ -78,6 +78,11 @@ def _section(records: Sequence[Mapping[str, Any]], scope: str,
         "r_0": _metrics.r_0(subset),
         "r_K": _metrics.r_K(subset),
         "improvement_slope": _metrics.improvement_slope(subset),
+        # Amendment 17: the KEY is stable (hostile tests bind it), but the
+        # quantity is within-rule fresh-instance generalization, NOT transfer:
+        # the related item is the same latent rule at the same difficulty and
+        # is distributionally identical to R_5's queries (no family branches
+        # on KIND_RELATED). Do not report it as a transfer result.
         "related_task_transfer": _metrics.related_task_transfer(subset),
         "interactions_to_threshold": _metrics.interactions_to_threshold(subset),
     }

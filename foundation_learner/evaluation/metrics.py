@@ -639,6 +639,73 @@ def answer_line_rate_by_index(records: Sequence[Mapping[str, Any]]
     return out
 
 
+def record_compliant_accuracy(record: Mapping[str, Any],
+                              indices: Sequence[int] | None = None
+                              ) -> float | None:
+    """Accuracy of THIS episode's attempts AMONG those that were well formed.
+
+    DIAGNOSTIC ONLY -- NOT a format-corrected accuracy, and NOT comparable
+    across arms whose compliance rates differ.
+
+    Motivation: a rising R_0..R_6 curve is also produced by a model that merely
+    learns the strict ``ANSWER:`` grammar from the scaffolding, with no rule
+    inference -- preregistration 13.3 expects the base model to fail that
+    grammar frequently, and ``FORMAT_NONCOMPLIANT`` only flags cells below the
+    threshold, so a cell moving 0.6 -> 0.95 passes clean.
+
+    WHY THIS DOES NOT FIX THAT (two independent reviews, 2026-08-28).  Format
+    compliance is a POST-TREATMENT variable: the arm affects it, and episode
+    difficulty affects both it and correctness.  Conditioning on it therefore
+    opens a collider path and substitutes a selection bias of unknown sign for
+    the format channel -- it does not remove the confound.  Worked counter-
+    example: an arm that is well formed only on easy items and correct there
+    scores 1.0, while an arm that is well formed everywhere and correct on the
+    easy half scores 0.5 -- the second arm is weakly better on EVERY item and
+    this metric reports it as half as accurate.  The bias is not random: FL0 is
+    expected to have the lowest compliance, so it receives the most favourable
+    selection, which SHRINKS the trained-vs-base contrast.
+
+    Read it ONLY jointly with ``answer_line_rate``, and never as an arm
+    comparison.  The comparable format-robust quantity is the headline itself,
+    which already scores a non-compliant attempt as incorrect (a fixed
+    denominator, no collider); the analysis that actually disentangles format
+    acquisition from learning is the reset-vs-history contrast.
+
+    ``None`` when the episode emitted no parseable answer at these indices.
+    """
+    compliant = [a for a in record_attempts(record, indices)
+                 if attempt_has_answer_line(a)]
+    if not compliant:
+        return None
+    return float(sum(1 for a in compliant if bool(a.get("correct")))
+                 / len(compliant))
+
+
+def compliant_accuracy(records: Sequence[Mapping[str, Any]],
+                       indices: Sequence[int] | None = None) -> float | None:
+    """Macro accuracy among format-compliant attempts (families first)."""
+    return macro_mean(records, lambda r: record_compliant_accuracy(r, indices))
+
+
+def compliant_accuracy_by_index(records: Sequence[Mapping[str, Any]]
+                                ) -> dict[int, float]:
+    """Per-index diagnostic companion to ``macro_curve``.
+
+    Denominator composition shifts across indices as compliance changes, so
+    this is NOT a comparable curve; it is read next to
+    ``answer_line_rate_by_index`` to see whether a rise is compliance-driven.
+    """
+    indices = sorted({int(a["interaction_index"])
+                      for r in records for a in record_attempts(r)
+                      if a.get("interaction_index") is not None})
+    out: dict[int, float] = {}
+    for k in indices:
+        value = compliant_accuracy(records, [k])
+        if value is not None:
+            out[k] = value
+    return out
+
+
 def finish_reason_counts(records: Sequence[Mapping[str, Any]]) -> dict[str, int]:
     """Diagnostic breakdown of WHY each generation stopped.
 
@@ -668,6 +735,12 @@ def format_compliance(records: Sequence[Mapping[str, Any]],
         "macro_answer_line_rate": macro,
         "per_family_answer_line_rate": per_family,
         "answer_line_rate_by_index": {str(k): v for k, v in per_index.items()},
+        # Amendment 17: a DIAGNOSTIC, read only jointly with the rate above.
+        # Conditioning on well-formedness is a collider, not a correction --
+        # see record_compliant_accuracy.  Never an arm comparison.
+        "compliant_accuracy": compliant_accuracy(records),
+        "compliant_accuracy_by_index": {
+            str(k): v for k, v in compliant_accuracy_by_index(records).items()},
         "finish_reasons": finish_reason_counts(records),
         "flag": (FORMAT_NONCOMPLIANT_FLAG
                  if (macro is not None and macro < float(threshold)) else None),

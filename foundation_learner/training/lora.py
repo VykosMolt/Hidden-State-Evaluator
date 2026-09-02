@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Iterable, Iterator, Sequence
+from typing import Iterator, Sequence
 
 import torch
 from torch import nn
@@ -275,9 +275,6 @@ def attach_lora(model: nn.Module, spec: LoraSpec) -> LoraHandles:
     handles = LoraHandles(spec=spec, model=model)
     for full, parent, child_name, child in targets:
         wrapper = LoraLinear(child, spec, full)
-        for param in wrapper.base_layer.parameters():
-            if spec.freeze_base:
-                param.requires_grad_(False)
         wrapper.lora_A.requires_grad_(True)
         wrapper.lora_B.requires_grad_(True)
         setattr(parent, child_name, wrapper)
@@ -451,8 +448,3 @@ def merge_scaled_(dst_h: LoraHandles, src_h: LoraHandles, scale: float) -> int:
             )
             merged += 1
     return merged
-
-
-def iter_lora_parameters(handles: Iterable[LoraHandles]) -> Iterator[nn.Parameter]:
-    for handle in handles:
-        yield from handle.parameters()

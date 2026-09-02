@@ -15,6 +15,7 @@ selection between the two modes is mechanical (§11 affordability rule, owned by
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
 from typing import Sequence
 
@@ -138,15 +139,7 @@ def apply_mode(model, mode: TrainableParamMode | str, seed: int = 0) -> Trainabl
             lora_handles=None,
             num_trainable=sum(p.numel() for p in params),
         )
-    spec = LoraSpec(
-        target_suffixes=mode.lora_spec.target_suffixes,
-        rank=mode.lora_spec.rank,
-        alpha=mode.lora_spec.alpha,
-        dropout=mode.lora_spec.dropout,
-        seed=int(seed),
-        freeze_base=mode.lora_spec.freeze_base,
-        name=mode.lora_spec.name,
-    )
+    spec = dataclasses.replace(mode.lora_spec, seed=int(seed))
     handles = attach_lora(model, spec)
     params = list(handles.parameters())
     return TrainableParams(
