@@ -2816,15 +2816,19 @@ def _create_lease(args: argparse.Namespace, *, client: RunPodClient | None = Non
             timeout=min(validated["ssh_timeout"], ssh_budget),
             poll_seconds=lease_config.poll_seconds,
         )
-        # The deploy mutation may legitimately return machineId=null while a
-        # host is being assigned.  SSH readiness is the last acceptable bind
-        # point: require a concrete machine here and compare it with any
-        # machine already observed by the creator or detached monitor.
+        # RunPod may omit ``machine.gpuDisplayName`` from both the deploy
+        # response and the ready-pod listing.  The mutation itself is bound to
+        # the exact B300 SKU and the remote entrypoint checks the physical GPU
+        # with nvidia-smi before downloading the stage or model.  Treat an API
+        # GPU name as corroboration when present, not as a required field.
+        # machineId remains mandatory at readiness so cleanup stays bound to
+        # the concrete lease RunPod assigned.
         state = supervisor._state()
         LeaseSupervisor._exact_pod(state, [ready["pod"]])
         ready_machine = _validate_machine_id(ready["pod"].get("machineId"))
-        ready_gpu_name = _require_assigned_b300(ready["pod"])
-        if gpu_display_name is not None and ready_gpu_name != gpu_display_name:
+        ready_gpu_name = _optional_assigned_b300(ready["pod"])
+        if (gpu_display_name is not None and ready_gpu_name is not None
+                and ready_gpu_name != gpu_display_name):
             raise IdentityMismatch("provider GPU identity changed while waiting for SSH")
         _require_remaining_worker_window(
             worker_deadline_epoch,
@@ -2833,7 +2837,9 @@ def _create_lease(args: argparse.Namespace, *, client: RunPodClient | None = Non
         port = ready["port"]
         state.update({
             "machine_id": ready_machine,
-            "provider_gpu_display_name": ready_gpu_name,
+            # This records the exact SKU RunPod accepted.  pod_entry.sh
+            # independently attests the physical device before useful work.
+            "provider_gpu_display_name": ready_gpu_name or gpu_display_name or DEFAULT_GPU,
             "ssh_ip": port["ip"],
             "ssh_port": port["publicPort"],
         })

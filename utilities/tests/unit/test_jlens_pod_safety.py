@@ -880,6 +880,11 @@ def test_machine_identity_is_bound_at_readiness_and_never_changes(
     waiting["machineId"] = deploy_machine
     ready = _pod("ouro-jlens-r1", "new-pod", ports=[ready_port])
     ready["machineId"] = ready_machine
+    if deploy_machine is None and ready_machine == "m-ready":
+        # This is the shape returned by RunPod in production: the concrete
+        # machine and SSH endpoint are present, but machine.gpuDisplayName is
+        # omitted.  The remote entrypoint performs the physical GPU check.
+        ready["machine"] = None
 
     class MachineClient(FakeClient):
         def deploy(self, **kwargs):
@@ -910,6 +915,7 @@ def test_machine_identity_is_bound_at_readiness_and_never_changes(
         args, client=client, monitor_launcher=launch
     )
     assert state["machine_id"] == expected
+    assert state["provider_gpu_display_name"] == pod.DEFAULT_GPU
     assert pod._read_json(
         pod.state_path("r1", tmp_path / "states")
     )["machine_id"] == expected
