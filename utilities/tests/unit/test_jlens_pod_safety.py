@@ -347,6 +347,10 @@ def test_failed_run_sync_uses_remote_enumeration_without_local_index_fallback(tm
     assert snapshot["termination_verified"] is True
     remote_command = next(command for command in commands if "bash" in command)
     assert "JLENS_ATTEMPT_ID=r1" in remote_command
+    assert any(
+        item.startswith("JLENS_HF_TOKEN_BOOTSTRAP=hf_")
+        for item in remote_command
+    )
     assert f"JLENS_IMAGE_DIGEST={IMAGE}" in remote_command
     assert publisher.reads == []
 

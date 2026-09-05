@@ -1720,6 +1720,10 @@ def test_controller_preserves_remote_exit_status_and_releases_lease(monkeypatch,
     assert any(item.startswith("STAGE_PATH=stages/") for item in commands[2])
     assert any(item == "STAGING=Vykos/ouro-jlens-staging" for item in commands[2])
     assert any(item == "JLENS_ATTEMPT_ID=r1" for item in commands[2])
+    assert any(
+        item.startswith("JLENS_HF_TOKEN_BOOTSTRAP=hf_")
+        for item in commands[2]
+    )
     assert any(item == f"JLENS_IMAGE_DIGEST={publish_module.RUNTIME_IMAGE}" for item in commands[2])
 
 

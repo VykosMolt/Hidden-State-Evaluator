@@ -4239,6 +4239,13 @@ def run_job(args: argparse.Namespace) -> int:
                 _require_remaining_worker_window(worker_deadline_epoch)
                 command = ["ssh", *ssh_options, "env", f"PYTHONPATH={bootstrap_dir}",
                            f"RUN_ID={artifact_run_id}", f"JLENS_ATTEMPT_ID={run_id}",
+                           # RunPod injects this variable into the container's
+                           # init environment, but sshd does not propagate that
+                           # environment into an SSH session.  Supply the same
+                           # validated token to the entrypoint explicitly; it
+                           # immediately converts it to a 0600 file and unsets
+                           # the bootstrap variable before setup or downloads.
+                           f"JLENS_HF_TOKEN_BOOTSTRAP={hf_token}",
                            f"JLENS_LAUNCH_NONCE={launch_nonce}",
                            f"EXPECTED_STAGE_MANIFEST_SHA256={stage_manifest_sha256}",
                            f"EXPECTED_STAGE_SOURCE_HEAD={stage_source_head}",
