@@ -78,6 +78,8 @@ def test_shell_scripts_are_parseable_and_bind_every_launch_fact() -> None:
 
     entry = ENTRY.read_text(encoding="utf-8")
     run = RUN.read_text(encoding="utf-8")
+    assert "export PYTHONDONTWRITEBYTECODE=1" in entry
+    assert entry.index("export PYTHONDONTWRITEBYTECODE=1") < entry.index('"$PY"')
     for name in (
         "JLENS_LAUNCH_NONCE",
         "EXPECTED_STAGE_MANIFEST_SHA256",

@@ -7,6 +7,13 @@
 # RESULTS/STAGING).
 set -euo pipefail
 
+# Importing ouro_jlens from the freshly extracted stage must not mutate that
+# stage before its root verification.  The private bootstrap umask would make
+# Python's implicit __pycache__ directory mode 0700, correctly tripping the
+# deterministic-mode verifier.  Keep bootstrap and workload imports read-only;
+# bytecode caching is irrelevant for this one-shot run.
+export PYTHONDONTWRITEBYTECODE=1
+
 # Hugging Face recommends Xet's high-throughput profile only with at least
 # 64 GiB of host RAM. Enable it from the kernel-reported total, not from an
 # assumption about the GPU SKU. The normal adaptive Xet path remains active
