@@ -891,11 +891,18 @@ def _validate_paid_gpu(value: Any) -> str:
 def _require_assigned_b300(pod: Mapping[str, Any]) -> str:
     machine = pod.get("machine")
     name = machine.get("gpuDisplayName") if isinstance(machine, Mapping) else None
-    if name != DEFAULT_GPU:
+    # RunPod's pod listing uses aliases such as ``B300`` or ``NVIDIA B300``
+    # for the exact SKU requested by the deploy mutation.  This API field is
+    # corroborating metadata; pod_entry.sh checks the physical device with
+    # nvidia-smi before downloading any paid-workload bytes.
+    if (not isinstance(name, str)
+            or re.search(r"(?i)(?<![A-Za-z0-9_])B300(?![A-Za-z0-9_])", name) is None):
         raise IdentityMismatch(
-            f"provider did not attest the exact assigned GPU {DEFAULT_GPU!r}"
+            f"provider did not identify the assigned GPU as B300: {name!r}"
         )
-    return name
+    # Lease/recovery records use the exact requested SKU as their canonical
+    # identity; the raw provider alias is not an independently stable API.
+    return DEFAULT_GPU
 
 
 def _optional_assigned_b300(pod: Mapping[str, Any]) -> str | None:

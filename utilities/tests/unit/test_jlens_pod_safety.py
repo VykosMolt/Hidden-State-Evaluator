@@ -882,9 +882,9 @@ def test_machine_identity_is_bound_at_readiness_and_never_changes(
     ready["machineId"] = ready_machine
     if deploy_machine is None and ready_machine == "m-ready":
         # This is the shape returned by RunPod in production: the concrete
-        # machine and SSH endpoint are present, but machine.gpuDisplayName is
-        # omitted.  The remote entrypoint performs the physical GPU check.
-        ready["machine"] = None
+        # machine and SSH endpoint are present, while gpuDisplayName uses the
+        # short provider alias rather than the requested SKU string.
+        ready["machine"] = {"gpuDisplayName": "B300"}
 
     class MachineClient(FakeClient):
         def deploy(self, **kwargs):
@@ -920,6 +920,21 @@ def test_machine_identity_is_bound_at_readiness_and_never_changes(
         pod.state_path("r1", tmp_path / "states")
     )["machine_id"] == expected
     supervisor.terminate_verified()
+
+
+@pytest.mark.parametrize("name", ["B300", "NVIDIA B300", "NVIDIA B300 SXM6 AC"])
+def test_provider_b300_display_aliases_are_canonicalized(name):
+    assert pod._optional_assigned_b300(
+        {"machine": {"gpuDisplayName": name}}
+    ) == pod.DEFAULT_GPU
+
+
+def test_missing_provider_gpu_display_is_allowed_but_non_b300_is_rejected():
+    assert pod._optional_assigned_b300({"machine": None}) is None
+    with pytest.raises(pod.IdentityMismatch, match="identify.*B300"):
+        pod._optional_assigned_b300(
+            {"machine": {"gpuDisplayName": "NVIDIA H100 SXM"}}
+        )
 
 
 def test_env_key_derives_selector_and_rejects_explicit_mismatch(monkeypatch):
