@@ -5,7 +5,29 @@
 - Model: `ByteDance/Ouro-2.6B`, revision `1ed04250da1a9936042725d302e81c8fa2ab5abd`.
 - Jacobian-lens code: revision `581d398613e5602a5af361e1c34d3a92ea82ba8e`.
 - Ouro has 48 shared physical decoder layers applied over four recurrent steps. Human loop 1 is `ut=0`; virtual location is `ut * 48 + physical_layer`.
-- The primary lens targets the final recurrent exit and was fitted on the first 80 retained WikiText prompts.
+- The retained primary lens is the final recurrent-exit lens from the historical fit directory. Its producer
+  provenance is absent, so the canonical report does not authenticate the fit size or promote an `n=80` claim.
+
+## Lineage gates
+
+The canonical report derives claim status from complete, byte-checked producer
+records. A directory name, output-file existence, or a standalone numerical
+boolean cannot supply fit size or current-generation status. A current
+evaluation must bind its model, lens inputs, evaluation inputs, outputs, and
+source generators; the retained evaluation directories currently have no
+`provenance.json`, yielding
+`LOCAL_OBSERVATIONAL_ARITHMETIC_REPRODUCIBLE_LINEAGE_UNFROZEN`.
+
+The validation gate requires all M1–M5 milestones, the complete comparison set,
+`NUMERICAL_AND_PROVENANCE_PASS`, and `HASH_BOUND` model/JLens provenance. The
+current retained validator record satisfies that gate and the report records
+instrumentation as `SUPPORTED_CURRENT_VALIDATION`. The
+standalone probe is accepted only after its hidden-cache, lens-score, design,
+runtime, model, and complete project/installed-JLens source chain verifies.
+That chain is now current, but the lens input is still classified
+`RETAINED_PRE_CUSTODY_EXACT_BYTES_ONLY`, so the probe remains local and
+unfrozen. The retained checkpoint JSON is an older flattened
+schema and therefore remains unverified.
 
 ## Main readout
 
@@ -43,7 +65,12 @@ The family `(a + b) * c = ` contains 648 prompts over 45 unordered `(a,b)` clust
 
 For each held-out fold and each method, a physical layer is selected using the other folds and scored only on the held-out fold. The cluster bootstrap repeats layer selection inside every draw. Both uniform 17-way chance and the empirical majority baseline are reported.
 
-The current hidden-state cache and both lens score arrays were regenerated under current source/model bytes. Their arrays were bit-identical to the preserved pre-repair copies. Probe fitting is parallelized over virtual locations only; each location retains the same scaler, C grid, fold masks, refit, and rank calculation.
+The hidden-state cache, lens-score arrays, and CPU design are freshly bound to
+the current model/runtime/source bytes. Probe fitting is parallelized over
+virtual locations only. Each location forces one native BLAS/OpenMP thread and
+retains the same scaler, C grid, fold masks, refit, and rank calculation; this
+prevents ambient thread settings from changing discrete predictions. The
+remaining lineage limitation is the exact-byte-only pre-custody lens input.
 
 ## Explicit limits
 

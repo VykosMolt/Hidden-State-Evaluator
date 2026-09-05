@@ -3,9 +3,30 @@
 # The caller must have verified MANIFEST.sha256 and PINNED_INPUTS.json first.
 set -euo pipefail
 
+# Setup installs packages, checks git, and downloads a public model.  It must
+# never inherit a credential, even when invoked directly outside pod_entry.
+unset HF_TOKEN JLENS_HF_TOKEN_BOOTSTRAP
+
 cd "$(dirname "$0")/../.."
 PY=${PYTHON:-python}
 export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+
+# The controller passes the digest it approved.  Refuse an unset, tag-based,
+# or otherwise different runtime before touching the stage or model cache.
+JLENS_IMAGE_DIGEST=${JLENS_IMAGE_DIGEST:?JLENS_IMAGE_DIGEST is required}
+export JLENS_IMAGE_DIGEST
+EXPECTED_IMAGE='runpod/pytorch@sha256:bbe1496e2215cca3d25a5e5cd291d31ea86603e4577a81eb40096787a50e5303'
+if [[ "$JLENS_IMAGE_DIGEST" != "$EXPECTED_IMAGE" ]]; then
+  echo "JLENS_IMAGE_DIGEST does not match the approved image" >&2
+  exit 2
+fi
+"$PY" -c '
+from ouro_jlens.publish import RUNTIME_IMAGE
+import sys
+if sys.argv[1] != RUNTIME_IMAGE:
+    raise SystemExit("JLENS_IMAGE_DIGEST does not match the approved image")
+' "$JLENS_IMAGE_DIGEST"
+test -f src/ouro_jlens/runtime.lock.json
 
 # Refuse to execute an archive whose source/input identity was not verified.
 "$PY" -m ouro_jlens.publish stage-verify --root . --allow-extra
@@ -17,6 +38,7 @@ export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
   "transformers==4.54.1" \
   "numpy==2.4.3" \
   "scikit-learn==1.8.0" \
+  "threadpoolctl==3.6.0" \
   "matplotlib==3.10.8" \
   "safetensors==0.7.0" \
   "accelerate==1.13.0" \
@@ -51,5 +73,42 @@ hf download "$MODEL_REPOSITORY" --revision "$MODEL_REVISION" \
   --cache-dir artifacts/hf_cache/hub --quiet
 test -f "artifacts/hf_cache/hub/models--ByteDance--Ouro-2.6B/snapshots/$MODEL_REVISION/model.safetensors"
 
-# Print only non-secret environment facts after all pins and GPU checks pass.
-"$PY" -c 'import importlib.metadata as md, sys, torch, transformers, jlens; expected = {"transformers": "4.54.1", "numpy": "2.4.3", "scikit-learn": "1.8.0", "matplotlib": "3.10.8", "safetensors": "0.7.0", "accelerate": "1.13.0", "huggingface-hub": "0.36.2"}; found = {name: md.version(name) for name in expected}; assert found == expected, ("dependency pin mismatch", found, expected); assert sys.version_info[:2] == (3, 11); assert torch.cuda.is_available(); print(torch.__version__, transformers.__version__, torch.cuda.get_device_name())'
+# The future digest-pinned RunPod image supplies this exact Torch build.  Do
+# not let a dependency install silently replace it: the CUDA build and Python
+# package version are part of the model/runtime identity.
+EXPECTED_TORCH_VERSION='2.8.0+cu128'
+EXPECTED_TORCH_CUDA='12.8'
+"$PY" -c '
+import importlib.metadata as md
+import sys
+import torch, transformers, jlens
+
+expected = {
+    "transformers": "4.54.1",
+    "numpy": "2.4.3",
+    "scikit-learn": "1.8.0",
+    "threadpoolctl": "3.6.0",
+    "matplotlib": "3.10.8",
+    "safetensors": "0.7.0",
+    "accelerate": "1.13.0",
+    "huggingface-hub": "0.36.2",
+}
+found = {name: md.version(name) for name in expected}
+if found != expected:
+    raise SystemExit(f"dependency pin mismatch: {found!r} != {expected!r}")
+if sys.version_info[:2] != (3, 12):
+    raise SystemExit(f"Python version mismatch: {sys.version_info[:2]!r} != (3, 12)")
+if torch.__version__ != sys.argv[1]:
+    raise SystemExit(
+        f"Torch build does not match the digest-pinned image: {torch.__version__!r} != {sys.argv[1]!r}"
+    )
+if torch.version.cuda != sys.argv[2]:
+    raise SystemExit(
+        f"Torch CUDA build does not match the digest-pinned image: {torch.version.cuda!r} != {sys.argv[2]!r}"
+    )
+if not torch.backends.cuda.is_built():
+    raise SystemExit("Torch was not built with CUDA support")
+if not torch.cuda.is_available():
+    raise SystemExit("CUDA is not available at runtime")
+print(torch.__version__, torch.version.cuda, transformers.__version__, torch.cuda.get_device_name())
+' "$EXPECTED_TORCH_VERSION" "$EXPECTED_TORCH_CUDA"

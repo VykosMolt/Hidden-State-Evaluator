@@ -7,18 +7,32 @@ specific bug that was actually present in an earlier draft, so a silent revert i
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
+import torch
 
 from ouro_jlens import analyze
+from ouro_jlens import checkpoints
+from ouro_jlens import fetch_wikitext
+from ouro_jlens import probe as probe_module
+from ouro_jlens import probe_cv as probe_cv_module
+from ouro_jlens import recurrent
+from ouro_jlens import validate
 from ouro_jlens.probe import make_prompts
 from ouro_jlens.probe_cv import (
+    N_LAYER,
     N_FOLDS,
+    N_UT,
     N_VAL_PAIRS,
     fold_assignment,
     prompt_folds,
     unordered_pairs,
 )
+from ouro_jlens.probe_report import build_report, cross_fitted_point
 
 
 # --------------------------------------------------------------------------- #
@@ -151,3 +165,342 @@ def test_singleton_labels_are_the_root_cause():
         for b in range(a, 10):
             n_pairs[a + b] = n_pairs.get(a + b, 0) + 1
     assert sorted(l for l, n in n_pairs.items() if n == 1) == [2, 3, 17, 18]
+
+
+# --------------------------------------------------------------------------- #
+# 4. Supervised layer selection must have no ancestry through the outer fold.
+#    The old report chose a layer from classifiers scored on the other outer
+#    folds even though those classifiers had been trained on the target fold.
+# --------------------------------------------------------------------------- #
+
+def test_supervised_layer_selection_uses_only_inner_validation_scores():
+    folds = np.repeat(np.arange(N_FOLDS), 3)
+    eligible = np.ones(len(folds), dtype=bool)
+    ranks = np.ones((len(folds), N_UT * N_LAYER), dtype=np.int32)
+    selection = np.zeros((N_FOLDS, N_UT * N_LAYER), dtype=float)
+    for fold in range(N_FOLDS):
+        for loop in range(N_UT):
+            selection[fold, loop * N_LAYER + (fold + loop + 1) % N_LAYER] = 1.0
+
+    _, choices_before = cross_fitted_point(
+        ranks, folds, eligible, selection_accuracy=selection
+    )
+    # Make every outer-test prediction advertise a different layer.  Selection
+    # must remain fixed because those predictions are evaluation data, not a
+    # source of hyperparameter or layer choice.
+    for fold in range(N_FOLDS):
+        rows = folds == fold
+        for loop in range(N_UT):
+            ranks[rows, loop * N_LAYER + (fold + loop + 17) % N_LAYER] = 0
+    _, choices_after = cross_fitted_point(
+        ranks, folds, eligible, selection_accuracy=selection
+    )
+    assert choices_after == choices_before
+    for loop, choices in enumerate(choices_after):
+        assert choices == [(fold + loop + 1) % N_LAYER for fold in range(N_FOLDS)]
+
+
+def test_probe_report_rejects_arrays_without_inner_selection_scores(tmp_path: Path):
+    prompts = make_prompts()
+    arrays = tmp_path / "arrays.npz"
+    ranks = np.ones((len(prompts), N_UT * N_LAYER), dtype=np.int32)
+    np.savez_compressed(
+        arrays,
+        labels=np.asarray([q["label"] for q in prompts]),
+        folds=prompt_folds(prompts, seed=0),
+        probe_rank=ranks,
+        ll_cand=ranks,
+        jl_cand=ranks,
+    )
+    with pytest.raises(ValueError, match="inner-validation layer scores"):
+        build_report(arrays, seed=0, draws=1)
+
+
+def test_standalone_probe_report_does_not_claim_validated_provenance(tmp_path: Path):
+    prompts = make_prompts()
+    arrays = tmp_path / "arrays.npz"
+    ranks = np.ones((len(prompts), N_UT * N_LAYER), dtype=np.int32)
+    np.savez_compressed(
+        arrays,
+        labels=np.asarray([q["label"] for q in prompts]),
+        folds=prompt_folds(prompts, seed=0),
+        probe_rank=ranks,
+        ll_cand=ranks,
+        jl_cand=ranks,
+        selection_accuracy=np.zeros((N_FOLDS, N_UT * N_LAYER)),
+        chosen_C=np.full((N_FOLDS, N_UT * N_LAYER), 0.01),
+    )
+    report = build_report(arrays, seed=0, draws=1)
+    assert report["status"] == "DERIVED_FROM_SUPPLIED_ARRAYS_PROVENANCE_NOT_VALIDATED"
+    assert report["input_provenance_status"] == "NOT_VALIDATED_BY_STANDALONE_REPORT_GENERATOR"
+
+
+# --------------------------------------------------------------------------- #
+# 5. GPU-score resume is fail-closed.  Existence is never provenance.
+# --------------------------------------------------------------------------- #
+
+def test_probe_cli_rejects_existing_score_without_valid_provenance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    out = tmp_path / "out"
+    out.mkdir()
+    np.savez_compressed(out / "lens_all648.npz", bogus=np.asarray([1]))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "probe_cv.py",
+            "--cache", str(tmp_path / "missing-cache.npz"),
+            "--lens", str(tmp_path / "missing-lens.pt"),
+            "--out", str(out),
+            "--lens-only",
+        ],
+    )
+    with pytest.raises(ValueError, match="provenance is missing"):
+        probe_cv_module.main()
+
+
+def test_direct_probe_cli_rejects_existing_cache_without_provenance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    out = tmp_path / "out"
+    out.mkdir()
+    np.savez_compressed(out / "gpu_cache.npz", bogus=np.asarray([1]))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "probe.py",
+            "--lens", str(tmp_path / "missing-lens.pt"),
+            "--out", str(out),
+        ],
+    )
+    with pytest.raises(ValueError, match="cache provenance is missing"):
+        probe_module.main()
+
+
+def test_direct_probe_rejects_symlinked_output_root(tmp_path: Path):
+    real = tmp_path / "real"
+    real.mkdir()
+    linked = tmp_path / "linked"
+    linked.symlink_to(real, target_is_directory=True)
+    with pytest.raises(ValueError, match="traverses a symlink"):
+        probe_module._reject_writable_symlinks(linked)
+
+
+def test_cache_rebuild_invalidates_dependent_scores_before_gpu_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    out = tmp_path / "out"
+    out.mkdir()
+    score = out / "lens_all648.npz"
+    provenance = out / "lens_all648.provenance.json"
+    score.write_bytes(b"old score")
+    provenance.write_text("{}")
+
+    class RebuildObserved(RuntimeError):
+        pass
+
+    def observe_rebuild(cache: Path) -> None:
+        assert not score.exists()
+        assert not provenance.exists()
+        raise RebuildObserved
+
+    monkeypatch.setattr(probe_cv_module, "rebuild_gpu_cache", observe_rebuild)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "probe_cv.py",
+            "--cache", str(tmp_path / "cache.npz"),
+            "--lens", str(tmp_path / "lens.pt"),
+            "--out", str(out),
+            "--rebuild-gpu-cache",
+            "--lens-only",
+        ],
+    )
+    with pytest.raises(RebuildObserved):
+        probe_cv_module.main()
+
+
+def test_wikitext_resume_requires_pinned_revision_and_exact_bytes(tmp_path: Path):
+    out = tmp_path / "prompts.json"
+    provenance = out.with_suffix(".provenance.json")
+    prompts = ["a" * 600, "b" * 601]
+    from ouro_jlens.evidence import atomic_write_json
+
+    atomic_write_json(out, prompts, indent=None)
+    atomic_write_json(provenance, {
+        "schema_version": 1,
+        "status": "FRESH_PINNED_DATASET_REVISION",
+        "source": {
+            "dataset": "Salesforce/wikitext",
+            "config": "wikitext-103-raw-v1",
+            "split": "train",
+            "revision": fetch_wikitext.WIKITEXT_REVISION,
+            "minimum_characters": 600,
+            "requested_prompts": 2,
+        },
+        "datasets_version": fetch_wikitext.importlib.metadata.version("datasets"),
+        "generator": fetch_wikitext._record(
+            Path(fetch_wikitext.__file__).resolve(), "src/ouro_jlens/fetch_wikitext.py"
+        ),
+        "output": fetch_wikitext._record(out, "wikitext_prompts"),
+    })
+    fetch_wikitext._validate_existing(
+        out,
+        provenance,
+        n=2,
+        min_chars=600,
+        revision=fetch_wikitext.WIKITEXT_REVISION,
+    )
+    out.write_text("[]")
+    with pytest.raises(ValueError, match="byte identity mismatch"):
+        fetch_wikitext._validate_existing(
+            out,
+            provenance,
+            n=2,
+            min_chars=600,
+            revision=fetch_wikitext.WIKITEXT_REVISION,
+        )
+
+
+def test_alternate_checkpoint_identity_is_not_silently_labeled_base(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    revision = "a" * 40
+    snapshot = tmp_path / revision
+
+    class AutoTokenizer:
+        @staticmethod
+        def from_pretrained(path: str, **kwargs):
+            return (path, kwargs)
+
+    class LoadedModel:
+        def to(self, device: str):
+            self.device = device
+            return self
+
+    class AutoModel:
+        @staticmethod
+        def from_pretrained(path: str, **kwargs):
+            return LoadedModel()
+
+    monkeypatch.setattr(recurrent.transformers, "AutoTokenizer", AutoTokenizer)
+    monkeypatch.setattr(recurrent.transformers, "AutoModelForCausalLM", AutoModel)
+    monkeypatch.setattr(
+        recurrent,
+        "OuroLensModel",
+        lambda model, tokenizer: SimpleNamespace(model=model, tokenizer=tokenizer),
+    )
+    loaded = recurrent.load_ouro(snapshot, device="cpu")
+    assert loaded.snapshot_path == snapshot.absolute()
+    assert loaded.model_revision == revision
+
+
+def test_recurrent_index_validation_survives_optimized_python():
+    model = recurrent.OuroLensModel.__new__(recurrent.OuroLensModel)
+    model.n_ut, model.n_physical = 4, 48
+    assert model.index(3, 47) == 191
+    for ut, layer in ((-1, 0), (4, 0), (0, -1), (0, 48), (True, 0)):
+        with pytest.raises(ValueError):
+            model.index(ut, layer)
+
+
+def test_model_snapshot_identity_includes_remote_code_and_tokenizer_inputs(tmp_path: Path):
+    required = {
+        "config.json": b"config",
+        "model.safetensors": b"weights",
+        "modeling_ouro.py": b"model code",
+        "tokenizer.json": b"tokenizer",
+    }
+    for name, data in required.items():
+        (tmp_path / name).write_bytes(data)
+    (tmp_path / "configuration_ouro.py").write_bytes(b"configuration code")
+    (tmp_path / "tokenizer_config.json").write_bytes(b"tokenizer config")
+    assert [path.relative_to(tmp_path).as_posix() for path in recurrent.model_snapshot_files(tmp_path)] == [
+        "config.json",
+        "configuration_ouro.py",
+        "model.safetensors",
+        "modeling_ouro.py",
+        "tokenizer.json",
+        "tokenizer_config.json",
+    ]
+
+    (tmp_path / "linked-dir").symlink_to(tmp_path, target_is_directory=True)
+    with pytest.raises(ValueError, match="link"):
+        recurrent.model_snapshot_files(tmp_path)
+
+
+def test_checkpoint_identity_requires_and_binds_all_weight_shards(tmp_path: Path):
+    for name in ("config.json", "modeling_ouro.py", "tokenizer.json"):
+        (tmp_path / name).write_text(name)
+    (tmp_path / "configuration_ouro.py").write_text("remote config code")
+    (tmp_path / "model-00001.safetensors").write_bytes(b"one")
+    (tmp_path / "model-00002.safetensors").write_bytes(b"two")
+    (tmp_path / "model.safetensors.index.json").write_text(
+        '{"weight_map":{"a":"model-00001.safetensors","b":"model-00002.safetensors"}}'
+    )
+    records = checkpoints._checkpoint_files(tmp_path)
+    assert [record["path"] for record in records] == [
+        "checkpoint/config.json",
+        "checkpoint/configuration_ouro.py",
+        "checkpoint/model-00001.safetensors",
+        "checkpoint/model-00002.safetensors",
+        "checkpoint/model.safetensors.index.json",
+        "checkpoint/modeling_ouro.py",
+        "checkpoint/tokenizer.json",
+    ]
+    (tmp_path / "model-00002.safetensors").unlink()
+    with pytest.raises(ValueError, match="missing required"):
+        checkpoints._checkpoint_files(tmp_path)
+
+
+def test_validator_model_provenance_binds_checkpoint_bytes(tmp_path: Path):
+    (tmp_path / "model.safetensors").write_bytes(b"weights-v1")
+    (tmp_path / "config.json").write_text("{}")
+    (tmp_path / "modeling_ouro.py").write_text("model")
+    (tmp_path / "tokenizer.json").write_text("tokenizer")
+    model = SimpleNamespace(snapshot_path=tmp_path)
+    first = validate._model_byte_provenance(model)
+    assert first["status"] == "HASH_BOUND"
+    assert {record["path"] for record in first["files"]} == {
+        "model_snapshot/config.json",
+        "model_snapshot/model.safetensors",
+        "model_snapshot/modeling_ouro.py",
+        "model_snapshot/tokenizer.json",
+    }
+    (tmp_path / "model.safetensors").write_bytes(b"weights-v2")
+    second = validate._model_byte_provenance(model)
+    assert second["aggregate_sha256"] != first["aggregate_sha256"]
+
+
+def test_numerical_milestones_do_not_pass_with_incomplete_provenance(
+    monkeypatch: pytest.MonkeyPatch
+):
+    model = SimpleNamespace(n_layers=192, d_model=2048, n_physical=48, n_ut=4)
+    for name in (
+        "m1_noninterference",
+        "m2_exit_equality",
+        "m3_recurrent_identity",
+        "m4_distinct_vjps",
+        "m5_stock_consistency",
+    ):
+        monkeypatch.setattr(validate, name, lambda *args: {"pass": True})
+    monkeypatch.setattr(
+        validate,
+        "derive_milestone_passes",
+        lambda report: {
+            "m1_noninterference": True,
+            "m2_exit_equality": True,
+            "m3_recurrent_identity": True,
+            "m4_distinct_vjps": True,
+            "m5_stock_consistency": True,
+        },
+    )
+    monkeypatch.setattr(validate, "bit_exact_rollup", lambda report: ([], True))
+    monkeypatch.setattr(validate, "runtime_provenance", lambda model: {"status": "PROVENANCE_INCOMPLETE"})
+    report = validate.run_validation(model=model, ids=torch.tensor([[1]]))
+    assert report["numerical_pass"] is True
+    assert report["pass"] is False
+    assert report["status"] == "FAILED_OR_INCOMPLETE_VALIDATION"

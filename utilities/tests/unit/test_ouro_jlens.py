@@ -1,6 +1,7 @@
 """CPU-only checks for the recurrent Jacobian-lens helpers (no model download)."""
 
 import numpy as np
+import pytest
 import torch
 from torch import nn
 
@@ -62,12 +63,13 @@ def _fake_eval(tmp_path, n=30):
     xloop[:, 0, 0, 0, 20] = 0                        # loop 1 only matches itself
     xloop[:, 1, 0, 0, 20] = 0                        # ...but so does the control there -> no excess
     np.savez(tmp_path / "arrays.npz", jlens_exit3_allrank=allrank, logitlens_allrank=allrank, xloop_allrank=xloop,
-             exit_top1=np.zeros((n, 4), np.int64), jlens_exit3_top1=np.zeros((n, 192), np.int64))
-    items = [{"name": f"i{i}", "task": "multihop", "intermediates": ["alpha"], "own_index": [0, -1, -1],
+             exit_top1=np.zeros((n, 4), np.int64), jlens_exit3_top1=np.zeros((n, 192), np.int64),
+             logitlens_kl_to_final=np.zeros((n, 192), np.float32))
+    items = [{"name": f"i{i}", "task": "multihop", "intermediates": ["alpha"], "own_index": [0],
               "scorable": [True], "leaked": [False], "correct": True} for i in range(n)]
     (tmp_path / "items.json").write_text(json.dumps(items))
     (tmp_path / "task_names.json").write_text(json.dumps({"multihop": names}))
-    return Eval(tmp_path)
+    return Eval(tmp_path, verify_provenance=False)
 
 
 def test_scores_separate_own_hits_from_control_prior(tmp_path):
@@ -89,6 +91,72 @@ def test_cross_loop_summary_recovers_planted_structure(tmp_path):
     assert res["h1_loop1_minus_later_offdiag"] == -1.0 and res["n_items"] == 30
 
 
+def test_cross_loop_summary_rejects_undefined_constant_decomposition(tmp_path):
+    from ouro_jlens.analyze import cross_loop_summary
+
+    ev = _fake_eval(tmp_path)
+    ev.arrays["xloop_allrank"][:, :2] = 0
+    with pytest.raises(ValueError, match="constant matrix"):
+        cross_loop_summary(ev, ev.slot_mask["multihop"])
+
+
+def test_eval_rejects_inconsistent_intermediate_index(tmp_path):
+    import json
+
+    from ouro_jlens.analyze import Eval
+
+    _fake_eval(tmp_path)
+    items = json.loads((tmp_path / "items.json").read_text())
+    items[0]["own_index"] = [1]
+    (tmp_path / "items.json").write_text(json.dumps(items))
+    with pytest.raises(ValueError, match="does not identify"):
+        Eval(tmp_path, verify_provenance=False)
+
+
+def test_analysis_failure_removes_stale_and_partial_products(tmp_path, monkeypatch):
+    import json
+    import sys
+
+    from ouro_jlens import analyze
+
+    for name in ("summary.json", "summary.md", "fig1_readout_heatmaps.png"):
+        (tmp_path / name).write_text("stale")
+
+    def fail(args):
+        (Path(args.eval) / "summary.json").write_text("partial")
+        raise RuntimeError("synthetic failure")
+
+    from pathlib import Path
+
+    monkeypatch.setattr(analyze, "_run_analysis", fail)
+    monkeypatch.setattr(sys, "argv", ["analyze.py", "--eval", str(tmp_path)])
+    with pytest.raises(RuntimeError, match="synthetic failure"):
+        analyze.main()
+    assert not (tmp_path / "summary.json").exists()
+    assert not (tmp_path / "summary.md").exists()
+    assert not (tmp_path / "fig1_readout_heatmaps.png").exists()
+    status = json.loads((tmp_path / "analysis_status.json").read_text())
+    assert status["status"] == "FAILED_INCOMPLETE"
+
+
+def test_analysis_figure_write_rejects_symlink_destination(tmp_path):
+    import matplotlib.pyplot as plt
+
+    from ouro_jlens.analyze import _atomic_savefig
+
+    sentinel = tmp_path / "sentinel.png"
+    sentinel.write_bytes(b"preserve")
+    destination = tmp_path / "figure.png"
+    destination.symlink_to(sentinel)
+    figure = plt.figure()
+    try:
+        with pytest.raises(ValueError, match="symlink"):
+            _atomic_savefig(figure, destination)
+    finally:
+        plt.close(figure)
+    assert sentinel.read_bytes() == b"preserve"
+
+
 def test_readout_context_reads_before_target_first_token():
     from ouro_jlens.evaldata import readout_context
 
@@ -105,3 +173,24 @@ def test_readout_context_reads_before_target_first_token():
     assert ids == [1, 2] and dropped == 1          # trailing space merged into " Atlantic"
     ids, dropped = readout_context(encode, "Fact = ", "20")
     assert ids == [1, 5, 3] and dropped == 0       # digits follow the lone space token
+
+
+def test_load_items_rejects_unsafe_tasks_and_empty_readout_context(tmp_path, monkeypatch):
+    import json
+
+    from ouro_jlens import evaldata
+
+    with pytest.raises(ValueError, match="path-safe"):
+        evaldata.load_items(object(), tasks=("../escape",), encode=lambda _text: [1])
+
+    (tmp_path / "lens-eval-toy.json").write_text(json.dumps({
+        "items": [{
+            "name": "toy-item",
+            "prompt": "prompt",
+            "target": "target",
+            "intermediates": ["middle"],
+        }],
+    }))
+    monkeypatch.setattr(evaldata, "JLENS_DATA", tmp_path)
+    with pytest.raises(ValueError, match="no valid readout context"):
+        evaldata.load_items(object(), tasks=("toy",), encode=lambda _text: [])

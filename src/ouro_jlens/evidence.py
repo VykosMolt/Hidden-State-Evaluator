@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import stat
 import tempfile
 from pathlib import Path
 from typing import Any, Mapping
@@ -107,32 +108,157 @@ def file_record(path: str | os.PathLike[str]) -> dict[str, Any]:
     }
 
 
-def _temporary_path(path: Path, suffix: str = ".tmp") -> tuple[int, Path]:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, raw = tempfile.mkstemp(prefix=f".{path.name}.", suffix=suffix, dir=str(path.parent))
-    return fd, Path(raw)
+def _absolute_path(path: Path) -> Path:
+    """Make a lexical absolute path without resolving symlinks."""
+
+    # ``Path.resolve`` would erase the very symlink components this module is
+    # required to reject.  ``abspath`` only normalizes ``.``/``..`` and uses
+    # the process cwd, so the lstat walk below still observes links.
+    return Path(os.path.abspath(os.fspath(path)))
 
 
-def _replace_complete(temp: Path, destination: Path) -> None:
-    """Flush a temporary file and atomically install it at *destination*."""
+def _reject_symlink_components(path: Path, *, include_leaf: bool = True) -> None:
+    """Reject every existing symlink in a lexical path.
 
-    # The caller has already closed the descriptor.  Re-open only to issue a
-    # best-effort fsync; on filesystems where fsync is unavailable the atomic
-    # replacement still provides the important no-partial-file guarantee.
-    try:
-        with temp.open("rb") as handle:
-            os.fsync(handle.fileno())
-    except OSError:
-        pass
-    os.replace(temp, destination)
-    try:
-        fd = os.open(destination.parent, os.O_RDONLY)
+    ``Path.is_dir`` and ``Path.exists`` follow links (and miss dangling
+    links), so each component is inspected with ``lstat``.  Missing trailing
+    components are allowed; they are created by ``_prepare_destination``.
+    """
+
+    absolute = _absolute_path(path)
+    current = Path(absolute.anchor)
+    parts = absolute.parts[1:]
+    last = len(parts) - 1
+    for index, part in enumerate(parts):
+        current /= part
+        if not include_leaf and index == last:
+            break
         try:
-            os.fsync(fd)
-        finally:
-            os.close(fd)
+            mode = os.lstat(current).st_mode
+        except FileNotFoundError:
+            continue
+        if stat.S_ISLNK(mode):
+            raise ValueError(f"refusing symlink path component: {current}")
+
+
+def _prepare_destination(path: Path) -> Path:
+    """Validate and create a destination parent without following links."""
+
+    destination = _absolute_path(path)
+    # Validate before mkdir so an existing linked parent can never be
+    # silently accepted.  Validate again after mkdir to cover a directory
+    # that was created between the first walk and mkdir.
+    _reject_symlink_components(destination, include_leaf=False)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    _reject_symlink_components(destination.parent)
+    _reject_symlink_components(destination)
+    return destination
+
+
+def _temporary_identity(fd: int, temporary: Path) -> tuple[int, int]:
+    """Validate and return the device/inode owned by an open temp fd."""
+
+    descriptor_stat = os.fstat(fd)
+    path_stat = os.lstat(temporary)
+    if not stat.S_ISREG(descriptor_stat.st_mode) or not stat.S_ISREG(
+        path_stat.st_mode
+    ):
+        raise OSError(f"temporary evidence path is not a regular file: {temporary}")
+    identity = (int(descriptor_stat.st_dev), int(descriptor_stat.st_ino))
+    path_identity = (int(path_stat.st_dev), int(path_stat.st_ino))
+    if identity != path_identity:
+        raise OSError(f"temporary evidence path was replaced: {temporary}")
+    return identity
+
+
+def _unlink_owned_temp(
+    fd: int, temporary: Path, identity: tuple[int, int] | None = None
+) -> None:
+    """Remove a temp pathname only while it still names our inode."""
+
+    try:
+        path_stat = os.lstat(temporary)
+    except OSError:
+        return
+    if identity is None:
+        try:
+            descriptor_stat = os.fstat(fd)
+        except OSError:
+            return
+        identity = (int(descriptor_stat.st_dev), int(descriptor_stat.st_ino))
+    path_identity = (int(path_stat.st_dev), int(path_stat.st_ino))
+    if path_identity == identity:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+
+
+def _close_fd(fd: int) -> None:
+    try:
+        os.close(fd)
     except OSError:
         pass
+
+
+def _temporary_path(path: Path, suffix: str = ".tmp") -> tuple[int, Path]:
+    destination = _prepare_destination(path)
+    fd, raw = tempfile.mkstemp(
+        prefix=f".{destination.name}.", suffix=suffix, dir=str(destination.parent)
+    )
+    temporary = Path(raw)
+    try:
+        _temporary_identity(fd, temporary)
+    except BaseException:
+        # Do not unlink an attacker-controlled replacement (especially a
+        # symlink); only the inode returned by mkstemp is ours to remove.
+        try:
+            descriptor_stat = os.fstat(fd)
+            identity = (int(descriptor_stat.st_dev), int(descriptor_stat.st_ino))
+        except OSError:
+            identity = None
+        _unlink_owned_temp(fd, temporary, identity)
+        _close_fd(fd)
+        raise
+    return fd, temporary
+
+
+def _open_parent_dir(path: Path) -> int:
+    flags = os.O_RDONLY
+    flags |= getattr(os, "O_DIRECTORY", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    return os.open(path, flags)
+
+
+def _replace_complete(fd: int, temporary: Path, destination: Path) -> None:
+    """Flush and atomically install the inode owned by *fd*.
+
+    The temp fd remains open for the complete operation.  In particular, no
+    serialization step is allowed to reopen ``temporary`` by pathname.  The
+    source and destination names are passed relative to an opened parent
+    directory, so a parent-path swap after validation cannot redirect the
+    rename to another directory.
+    """
+
+    destination = _prepare_destination(destination)
+    identity = _temporary_identity(fd, temporary)
+    parent_fd = _open_parent_dir(destination.parent)
+    try:
+        # Re-check after obtaining the directory handle; a test or attacker
+        # may have swapped the temporary pathname while the payload was being
+        # serialized.  A symlink or different inode fails closed.
+        if _temporary_identity(fd, temporary) != identity:
+            raise OSError(f"temporary evidence path was replaced: {temporary}")
+        os.fsync(fd)
+        os.replace(
+            temporary.name,
+            destination.name,
+            src_dir_fd=parent_fd,
+            dst_dir_fd=parent_fd,
+        )
+        os.fsync(parent_fd)
+    finally:
+        _close_fd(parent_fd)
 
 
 def atomic_write_bytes(path: str | os.PathLike[str], data: bytes) -> None:
@@ -145,18 +271,15 @@ def atomic_write_bytes(path: str | os.PathLike[str], data: bytes) -> None:
     destination = Path(path)
     fd, temporary = _temporary_path(destination)
     try:
-        with os.fdopen(fd, "wb") as handle:
+        with os.fdopen(fd, "wb", closefd=False) as handle:
             handle.write(data)
             handle.flush()
-            os.fsync(handle.fileno())
-        _replace_complete(temporary, destination)
+            _replace_complete(fd, temporary, _absolute_path(destination))
     except BaseException:
-        try:
-            os.close(fd)
-        except OSError:
-            pass
-        temporary.unlink(missing_ok=True)
+        _unlink_owned_temp(fd, temporary)
         raise
+    finally:
+        _close_fd(fd)
 
 
 def atomic_write_text(
@@ -193,21 +316,17 @@ def atomic_savez(path: str | os.PathLike[str], **arrays: Any) -> None:
     import numpy as np
 
     destination = Path(path)
-    destination.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = _temporary_path(destination, suffix=".npz")
     try:
-        with os.fdopen(fd, "wb") as handle:
+        with os.fdopen(fd, "wb", closefd=False) as handle:
             np.savez_compressed(handle, **arrays)
             handle.flush()
-            os.fsync(handle.fileno())
-        _replace_complete(temporary, destination)
+            _replace_complete(fd, temporary, _absolute_path(destination))
     except BaseException:
-        try:
-            os.close(fd)
-        except OSError:
-            pass
-        temporary.unlink(missing_ok=True)
+        _unlink_owned_temp(fd, temporary)
         raise
+    finally:
+        _close_fd(fd)
 
 
 def atomic_torch_save(obj: Any, path: str | os.PathLike[str]) -> None:
@@ -217,13 +336,19 @@ def atomic_torch_save(obj: Any, path: str | os.PathLike[str]) -> None:
 
     destination = Path(path)
     fd, temporary = _temporary_path(destination, suffix=".pt")
-    os.close(fd)
     try:
-        torch.save(obj, str(temporary))
-        _replace_complete(temporary, destination)
+        # torch.save accepts a seekable binary file object.  Keeping the
+        # mkstemp descriptor open means a swapped temp pathname cannot divert
+        # serialization into an attacker-selected file.
+        with os.fdopen(fd, "w+b", closefd=False) as handle:
+            torch.save(obj, handle)
+            handle.flush()
+            _replace_complete(fd, temporary, _absolute_path(destination))
     except BaseException:
-        temporary.unlink(missing_ok=True)
+        _unlink_owned_temp(fd, temporary)
         raise
+    finally:
+        _close_fd(fd)
 
 
 def source_manifest(paths: list[str | os.PathLike[str]] | tuple[str | os.PathLike[str], ...]) -> dict[str, Any]:

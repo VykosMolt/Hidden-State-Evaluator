@@ -13,6 +13,7 @@ Writes summary.json, summary.md and fig_*.png into the eval directory.
 from __future__ import annotations
 
 import argparse
+import io
 import json
 from pathlib import Path
 
@@ -23,7 +24,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.colors import LinearSegmentedColormap  # noqa: E402
 
-from ouro_jlens.evidence import atomic_write_json, atomic_write_text
+from ouro_jlens.evidence import atomic_write_bytes, atomic_write_json, atomic_write_text, file_record
 
 N_UT, N_LAYER = 4, 48
 K = 10
@@ -46,8 +47,15 @@ def boundary_prefix_match(continuation: str, target: str) -> bool:
 class Eval:
     """Rank tensors plus the item/name bookkeeping needed to score them."""
 
-    def __init__(self, eval_dir: Path) -> None:
-        self.arrays = dict(np.load(eval_dir / "arrays.npz"))
+    def __init__(self, eval_dir: Path, *, verify_provenance: bool = True) -> None:
+        eval_dir = Path(eval_dir)
+        self.provenance = None
+        if verify_provenance:
+            from ouro_jlens.evaluate import validate_evaluation_provenance
+
+            self.provenance = validate_evaluation_provenance(eval_dir)
+        with np.load(eval_dir / "arrays.npz", allow_pickle=False) as values:
+            self.arrays = {key: values[key] for key in values.files}
         self.items = json.loads((eval_dir / "items.json").read_text())
         # Old artifacts used an unsafe prefix match ("11" counted as target
         # "1").  Correctness is derived from the retained continuation every
@@ -56,6 +64,7 @@ class Eval:
             if "continuation" in item and "target" in item:
                 item["correct"] = boundary_prefix_match(item["continuation"], item["target"])
         self.task_names = json.loads((eval_dir / "task_names.json").read_text())
+        self._validate_structure()
         n, max_names = self.arrays["jlens_exit3_allrank"].shape[:2]
         self.own = np.zeros((n, max_names), bool)       # item's own scorable names
         self.valid = np.zeros((n, max_names), bool)     # real (unpadded) names of the item's task
@@ -70,6 +79,101 @@ class Eval:
             for j in it["own_index"]:
                 if j >= 0:
                     self.own[i, j] = True
+
+    def _validate_structure(self) -> None:
+        if not isinstance(self.items, list) or not self.items:
+            raise ValueError("evaluation items must be a nonempty list")
+        if (not isinstance(self.task_names, dict) or not self.task_names
+                or any(not isinstance(task, str) or not isinstance(names, list)
+                       or not names or len(names) > 128
+                       or not all(isinstance(name, str) and name for name in names)
+                       or len(names) != len(set(names))
+                       for task, names in self.task_names.items())):
+            raise ValueError("evaluation task-name mapping is malformed")
+        n = len(self.items)
+        required_arrays = {
+            "jlens_exit3_allrank", "logitlens_allrank", "xloop_allrank",
+            "exit_top1", "jlens_exit3_top1", "logitlens_kl_to_final",
+        }
+        if not required_arrays <= set(self.arrays):
+            raise ValueError("evaluation arrays omit required readout tensors")
+        for name, value in self.arrays.items():
+            if not isinstance(value, np.ndarray) or value.ndim == 0 or value.shape[0] != n:
+                raise ValueError(f"evaluation array {name} has the wrong item dimension")
+            if np.issubdtype(value.dtype, np.floating) and not np.isfinite(value).all():
+                raise ValueError(f"evaluation array {name} contains NaN or infinity")
+        main_shape = self.arrays["jlens_exit3_allrank"].shape
+        if len(main_shape) != 3 or main_shape[0] != n or main_shape[2] != N_UT * N_LAYER:
+            raise ValueError("evaluation rank arrays have the wrong shape")
+        max_names = main_shape[1]
+        for name, value in self.arrays.items():
+            if name == "xloop_allrank":
+                expected = (n, max_names, N_UT, N_UT, N_LAYER)
+                if value.shape != expected or not np.issubdtype(value.dtype, np.integer):
+                    raise ValueError("cross-loop rank tensor has the wrong shape or dtype")
+            elif name.endswith("allrank"):
+                if value.shape != (n, max_names, N_UT * N_LAYER) \
+                        or not np.issubdtype(value.dtype, np.integer):
+                    raise ValueError(f"evaluation rank tensor {name} has the wrong shape or dtype")
+        if self.arrays["exit_top1"].shape != (n, N_UT) \
+                or not np.issubdtype(self.arrays["exit_top1"].dtype, np.integer):
+            raise ValueError("exit_top1 has the wrong shape or dtype")
+        if self.arrays["jlens_exit3_top1"].shape != (n, N_UT * N_LAYER) \
+                or not np.issubdtype(self.arrays["jlens_exit3_top1"].dtype, np.integer):
+            raise ValueError("jlens_exit3_top1 has the wrong shape or dtype")
+        if self.arrays["logitlens_kl_to_final"].shape != (n, N_UT * N_LAYER) \
+                or not np.issubdtype(self.arrays["logitlens_kl_to_final"].dtype, np.floating):
+            raise ValueError("logitlens_kl_to_final has the wrong shape or dtype")
+        for ut in range(N_UT - 1):
+            prefix = f"jlens_exit{ut}_"
+            if not any(name.startswith(prefix) for name in self.arrays):
+                continue
+            required_local = {
+                f"{prefix}allrank", f"{prefix}top1", f"{prefix}kl_to_eventual_readout",
+                f"{prefix}kl_to_local", f"{prefix}kl_to_final",
+                f"{prefix}rank_of_local_top1",
+            }
+            if not required_local <= set(self.arrays):
+                raise ValueError(f"local-exit {ut} arrays are incomplete")
+            for name in required_local - {f"{prefix}allrank"}:
+                value = self.arrays[name]
+                if value.shape != (n, N_UT * N_LAYER):
+                    raise ValueError(f"evaluation array {name} has the wrong shape")
+        for index, item in enumerate(self.items):
+            if not isinstance(item, dict) or item.get("task") not in self.task_names:
+                raise ValueError(f"evaluation item {index} has an unknown task")
+            intermediates = item.get("intermediates")
+            own_index = item.get("own_index")
+            scorable = item.get("scorable")
+            leaked = item.get("leaked")
+            if (not isinstance(intermediates, list) or not 1 <= len(intermediates) <= 3
+                    or not all(isinstance(name, str) for name in intermediates)
+                    or not isinstance(own_index, list) or len(own_index) != len(intermediates)
+                    or not isinstance(scorable, list) or len(scorable) != len(intermediates)
+                    or not all(isinstance(value, bool) for value in scorable)
+                    or not isinstance(leaked, list) or len(leaked) != len(intermediates)
+                    or not all(isinstance(value, bool) for value in leaked)
+                    or not isinstance(item.get("correct"), bool)):
+                raise ValueError(f"evaluation item {index} slot metadata is malformed")
+            names = self.task_names[item["task"]]
+            if any(isinstance(slot, bool) or not isinstance(slot, int)
+                   or slot < -1 or slot >= len(names) for slot in own_index):
+                raise ValueError(f"evaluation item {index} has an invalid own-name index")
+            for slot, intermediate in enumerate(intermediates):
+                own = own_index[slot]
+                if scorable[slot]:
+                    if own < 0 or names[own] != intermediate:
+                        raise ValueError(
+                            f"evaluation item {index} own-name index does not identify its intermediate"
+                        )
+                elif own != -1:
+                    raise ValueError(
+                        f"evaluation item {index} assigns an index to an unscorable intermediate"
+                    )
+            for name, value in self.arrays.items():
+                if name.endswith("allrank"):
+                    if np.any(value[index, :len(names)] < 0) or np.any(value[index, len(names):] != -1):
+                        raise ValueError(f"evaluation rank tensor {name} has invalid name padding")
     def groups(self) -> dict[str, np.ndarray]:
         """Boolean masks over (item, intermediate-slot) for each analysis group."""
         n = len(self.items)
@@ -108,6 +212,8 @@ class Eval:
         ctrl_any = np.zeros(_drop_layer_axis(hit.shape))
         for s, (i, j) in enumerate(zip(ii, jj)):
             others = self.valid[i] & ~self.own[i] & (self.is_op[i] == self.is_op[i, j])
+            if not others.any():
+                raise ValueError(f"item {i} has no matched control names for own slot {j}")
             r = (allrank[i, others] < K).astype(float)                # [n_ctrl, *loc]
             ctrl[s] = r.mean(0)
             ctrl_any[s] = _any_layer_per_name(r).mean(0)
@@ -142,6 +248,8 @@ def boot_ci(values: np.ndarray, stat) -> list[float]:
     many earlier calls drew from a shared stream."""
     rng = np.random.default_rng(BOOT_SEED)
     n = len(values)
+    if n <= 0:
+        raise ValueError("bootstrap requires at least one item")
     draws = [stat(values[rng.integers(0, n, n)]) for _ in range(N_BOOT)]
     return [round(float(np.percentile(draws, 2.5)), 3), round(float(np.percentile(draws, 97.5)), 3)]
 
@@ -208,6 +316,8 @@ def cross_loop_summary(ev: Eval, mask: np.ndarray) -> dict:
     grand = M.mean()
     row, col = M.mean(1) - grand, M.mean(0) - grand
     ss_tot = float(((M - grand) ** 2).sum())
+    if not np.isfinite(ss_tot) or ss_tot <= 0:
+        raise ValueError("cross-loop variance decomposition is undefined for a constant matrix")
     ss_row, ss_col = float(N_UT * (row ** 2).sum()), float(N_UT * (col ** 2).sum())
 
     contrasts = {
@@ -234,6 +344,15 @@ def cross_loop_summary(ev: Eval, mask: np.ndarray) -> dict:
     return out
 
 
+def _atomic_savefig(fig, path: Path, *, dpi: int = 150) -> None:
+    suffix = path.suffix.lower().lstrip(".")
+    if suffix not in {"png", "pdf", "svg"}:
+        raise ValueError(f"unsupported figure format: {path.suffix!r}")
+    payload = io.BytesIO()
+    fig.savefig(payload, format=suffix, dpi=dpi)
+    atomic_write_bytes(path, payload.getvalue())
+
+
 def fig_heatmaps(maps: dict[str, dict[str, dict[str, np.ndarray]]], out: Path) -> None:
     tasks = list(maps)
     rows = [("Jacobian lens", "hit", SEQ, 0, 1), ("logit lens", "hit", SEQ, 0, 1),
@@ -253,7 +372,7 @@ def fig_heatmaps(maps: dict[str, dict[str, dict[str, np.ndarray]]], out: Path) -
             if r % 2 == 1:
                 fig.colorbar(im, ax=axes[r - 1 : r + 1, col], shrink=0.7)
     fig.suptitle("Known-intermediate readout at the token preceding the target: recurrent loop × physical layer")
-    fig.savefig(out / "fig1_readout_heatmaps.png", dpi=150)
+    _atomic_savefig(fig, out / "fig1_readout_heatmaps.png")
     plt.close(fig)
 
 
@@ -272,7 +391,7 @@ def fig_lines(maps, out: Path) -> None:
         axes[1, col].set_xlabel("physical layer")
     axes[0, 0].legend(fontsize=7, ncol=2)
     fig.suptitle("Solid = Jacobian lens (eventual-exit target), dashed = vanilla logit lens")
-    fig.savefig(out / "fig2_lines.png", dpi=150)
+    _atomic_savefig(fig, out / "fig2_lines.png")
     plt.close(fig)
 
 
@@ -295,7 +414,7 @@ def fig_xloop(xl: dict[str, dict], out: Path) -> None:
             ax.set_yticks(range(N_UT), [f"J fit loop {u+1}" for u in range(N_UT)], fontsize=8)
             ax.set_title(f"{task}: {title}" + (f"\nH1 stat {res['h1_loop1_minus_later_offdiag']:+.3f}, CI {res['h1_ci95']}" if row == 0 else ""), fontsize=9)
     fig.suptitle("Cross-loop transfer: J fitted at (loop i, L) applied to the state at (loop j, L)")
-    fig.savefig(out / "fig3_cross_loop.png", dpi=150)
+    _atomic_savefig(fig, out / "fig3_cross_loop.png")
     plt.close(fig)
 
 
@@ -378,7 +497,7 @@ def fig_local_vs_eventual(lve: dict, out: Path) -> None:
         ax.legend(fontsize=7)
     axes[1].set_ylim(0, 1)
     fig.suptitle("Monitor gap: what a loop-k exit monitor reads vs what the completed recurrence is disposed to say")
-    fig.savefig(out / "fig4_local_vs_eventual.png", dpi=150)
+    _atomic_savefig(fig, out / "fig4_local_vs_eventual.png")
     plt.close(fig)
 
 
@@ -409,18 +528,17 @@ def probe_summary(probe_dir: Path, out: Path) -> dict:
     axes[0].set_ylabel("top-1 accuracy (candidate set)")
     axes[0].legend(fontsize=8)
     fig.suptitle(f"Intermediate a+b in '(a + b) * c = ': supervised reference vs lenses (n_test={meta['n_test']}, model acc {meta['model_accuracy_all']:.2f})")
-    fig.savefig(out / "fig5_probe_vs_lens.png", dpi=150)
+    _atomic_savefig(fig, out / "fig5_probe_vs_lens.png")
     plt.close(fig)
     return res
 
 
-def main() -> None:
-    p = argparse.ArgumentParser()
-    p.add_argument("--eval", required=True)
-    p.add_argument("--probe")
-    args = p.parse_args()
+def _run_analysis(args: argparse.Namespace) -> None:
     out = Path(args.eval)
     ev = Eval(out)
+    for required_group in ("multihop", "order-ops numeric"):
+        if not ev.slot_mask[required_group].any():
+            raise ValueError(f"analysis requires a nonempty {required_group} population")
     a = ev.arrays
     summary: dict = {"n_items": len(ev.items), "model_correct": int(sum(i["correct"] for i in ev.items)),
                      "group_sizes": {k: int(v.sum()) for k, v in ev.slot_mask.items()}}
@@ -508,6 +626,47 @@ def main() -> None:
                 lines.append(f"- {name}: {pr[name]['per_loop_max']} (best {pr[name]['best']} at ut{pr[name]['best_location'][0]} L{pr[name]['best_location'][1]}); chance {pr['chance']:.3f}")
     atomic_write_text(out / "summary.md", "\n".join(lines) + "\n")
     print("\n".join(lines))
+
+
+def main() -> None:
+    p = argparse.ArgumentParser()
+    p.add_argument("--eval", required=True)
+    p.add_argument("--probe")
+    args = p.parse_args()
+    out = Path(args.eval)
+    products = [
+        out / "summary.json",
+        out / "summary.md",
+        *(out / f"fig{index}_{name}.png" for index, name in (
+            (1, "readout_heatmaps"), (2, "lines"), (3, "cross_loop"),
+            (4, "local_vs_eventual"), (5, "probe_vs_lens"),
+        )),
+    ]
+    for product in products:
+        if product.is_dir() and not product.is_symlink():
+            raise ValueError(f"analysis product path is a directory: {product}")
+        product.unlink(missing_ok=True)
+    status_path = out / "analysis_status.json"
+    atomic_write_json(status_path, {"schema_version": 1, "status": "RUNNING_INCOMPLETE"})
+    try:
+        _run_analysis(args)
+    except BaseException as exc:
+        for product in products:
+            product.unlink(missing_ok=True)
+        atomic_write_json(status_path, {
+            "schema_version": 1,
+            "status": "FAILED_INCOMPLETE",
+            "error": f"{type(exc).__name__}: {exc}",
+        })
+        raise
+    atomic_write_json(status_path, {
+        "schema_version": 1,
+        "status": "COMPLETE_CURRENT_PROVENANCE",
+        "outputs": [
+            {**file_record(product), "path": product.name}
+            for product in products if product.is_file()
+        ],
+    })
 
 
 if __name__ == "__main__":

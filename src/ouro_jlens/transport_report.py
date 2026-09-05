@@ -17,19 +17,28 @@ import json
 from pathlib import Path
 
 import numpy as np
+import torch
 
 from ouro_jlens.evidence import atomic_write_json, file_record
+from ouro_jlens.fit_lens import IntegrityError, identity_projection, validate_sidecar
 
 N_LAYER = 48
 
 
 def estimate_from_squared_norms(sample_sizes: np.ndarray, squared_norms: np.ndarray) -> dict:
-    sample_sizes = np.asarray(sample_sizes, dtype=float)
+    raw_sizes = np.asarray(sample_sizes)
+    if (raw_sizes.ndim != 1 or not np.issubdtype(raw_sizes.dtype, np.integer)
+            or np.issubdtype(raw_sizes.dtype, np.bool_)):
+        raise ValueError("fit sizes must be an exact one-dimensional integer array")
+    sample_sizes = raw_sizes.astype(np.int64, copy=False)
     squared_norms = np.asarray(squared_norms, dtype=float)
     if squared_norms.ndim != 2 or squared_norms.shape[0] != len(sample_sizes):
         raise ValueError("squared_norms must have shape [n_fit_sizes, n_sources]")
-    if len(np.unique(sample_sizes)) < 3 or np.any(sample_sizes <= 0):
+    if len(np.unique(sample_sizes)) != len(sample_sizes) or len(sample_sizes) < 3 \
+            or np.any(sample_sizes <= 0):
         raise ValueError("at least three distinct positive fit sizes are required")
+    if not np.isfinite(squared_norms).all() or np.any(squared_norms < 0):
+        raise ValueError("squared norms must be finite and nonnegative")
     design = np.column_stack([np.ones(len(sample_sizes)), 1.0 / sample_sizes])
     mu2, sigma2 = np.linalg.lstsq(design, squared_norms, rcond=None)[0]
     fitted = design @ np.stack([mu2, sigma2])
@@ -92,6 +101,14 @@ def summarize(sample_sizes: np.ndarray, squared_norms: np.ndarray) -> dict:
         "rmse": float(np.sqrt(np.mean(estimate["residual"] ** 2))),
         "per_loop": rows,
         "per_source": {
+            # Retain the sufficient statistics consumed by the independent
+            # verifier.  Without these arrays, a verifier can only compare
+            # against hard-coded historical outputs rather than recomputing
+            # the regression for a fresh authenticated fit.
+            "squared_norms_by_n": {
+                str(int(n)): squared_norms[index].tolist()
+                for index, n in enumerate(sample_sizes)
+            },
             "mu_squared": mu2.tolist(),
             "sigma_squared": sigma2.tolist(),
             "valid": ((mu2 >= 0) & (sigma2 >= 0)).tolist(),
@@ -103,23 +120,63 @@ def lens_squared_norms(specs: list[tuple[int, Path]]) -> tuple[np.ndarray, np.nd
     from jlens import JacobianLens
 
     sizes, values, records = [], [], []
+    if len(specs) < 3:
+        raise ValueError("at least three fit-size lenses are required")
+    declared_sizes = [spec[0] for spec in specs]
+    declared_paths = [Path(spec[1]) for spec in specs]
+    if len(set(declared_sizes)) != len(declared_sizes):
+        raise ValueError("declared fit sizes must be distinct")
+    if len({str(path.absolute()) for path in declared_paths}) != len(declared_paths):
+        raise ValueError("each fit size must name a distinct lens path")
     expected_sources = None
+    expected_identity = None
     for declared_n, path in sorted(specs):
+        if not isinstance(declared_n, int) or isinstance(declared_n, bool) or declared_n <= 0:
+            raise ValueError("declared fit sizes must be exact positive integers")
+        try:
+            preview = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise IntegrityError(f"{path}: current fit sidecar is unavailable") from exc
+        kind = preview.get("kind") if isinstance(preview, dict) else None
+        if kind not in {"fit", "merged"}:
+            raise IntegrityError(f"{path}: current fit sidecar kind is invalid")
+        metadata = validate_sidecar(path, kind=kind)
         lens = JacobianLens.load(str(path))
-        if lens.n_prompts != declared_n:
+        sealed_count = metadata.get("end", 0) - metadata.get("start", 0)
+        if (not isinstance(lens.n_prompts, int) or isinstance(lens.n_prompts, bool)
+                or lens.n_prompts != declared_n or metadata.get("n_prompts") != declared_n
+                or metadata.get("n_fitted") != declared_n or sealed_count != declared_n):
             raise ValueError(f"{path}: declared n={declared_n}, lens contains {lens.n_prompts}")
+        if (not isinstance(lens.d_model, int) or isinstance(lens.d_model, bool)
+                or lens.d_model <= 0 or lens.d_model != metadata.get("d_model")):
+            raise IntegrityError(f"{path}: binary model width disagrees with its sidecar")
+        current_identity = identity_projection(metadata)
+        if expected_identity is None:
+            expected_identity = current_identity
+        elif current_identity != expected_identity:
+            raise IntegrityError(f"{path}: model/source/fitting identity differs across fit sizes")
         sources = list(lens.source_layers)
         if expected_sources is None:
             expected_sources = sources
         if sources != expected_sources or sources != list(range(len(sources))):
             raise ValueError(f"{path}: source layers are not the same exact contiguous prefix")
-        squared = np.asarray([
-            float(lens.jacobians[source].float().norm().square().item() / lens.d_model)
-            for source in sources
-        ])
+        squared_values = []
+        for source in sources:
+            matrix = lens.jacobians[source]
+            if tuple(matrix.shape) != (lens.d_model, lens.d_model) \
+                    or not torch.isfinite(matrix).all():
+                raise IntegrityError(f"{path}: Jacobian at source {source} is malformed or non-finite")
+            squared_values.append(
+                float(matrix.float().norm().square().item() / lens.d_model)
+            )
+        squared = np.asarray(squared_values)
         sizes.append(declared_n)
         values.append(squared)
-        records.append(file_record(path))
+        record = file_record(path)
+        record["path"] = f"lens_n{declared_n}"
+        sidecar_record = file_record(path.with_suffix(".json"))
+        sidecar_record["path"] = f"lens_n{declared_n}_sidecar"
+        records.append({"n_prompts": declared_n, "binary": record, "sidecar": sidecar_record})
         del lens
         gc.collect()
     return np.asarray(sizes), np.stack(values), records

@@ -20,8 +20,8 @@ import numpy as np
 import torch
 
 from jlens import JacobianLens
-from ouro_jlens.evidence import atomic_write_json, file_record
-from ouro_jlens.fit_lens import IntegrityError, validate_sidecar
+from ouro_jlens.evidence import atomic_write_json, file_record, sha256_json
+from ouro_jlens.fit_lens import IntegrityError, identity_projection, validate_sidecar
 
 N_LAYER = 48
 
@@ -68,6 +68,15 @@ def build(path_a: str, path_b: str) -> dict:
     b, meta_b = _validated_fit(path_b)
     disjoint = _require_disjoint(meta_a, meta_b)
     n1, n2 = a.n_prompts, b.n_prompts
+    for label, lens, metadata in (("a", a, meta_a), ("b", b, meta_b)):
+        expected_count = metadata.get("end", 0) - metadata.get("start", 0)
+        if (not isinstance(lens.n_prompts, int) or isinstance(lens.n_prompts, bool)
+                or lens.n_prompts <= 0 or lens.n_prompts != metadata.get("n_prompts")
+                or lens.n_prompts != metadata.get("n_fitted")
+                or lens.n_prompts != expected_count):
+            raise IntegrityError(f"lens {label} binary count disagrees with its sealed sidecar")
+    if identity_projection(meta_a) != identity_projection(meta_b):
+        raise IntegrityError("lenses do not share the same model, source, and fitting contract")
     if list(a.source_layers) != list(b.source_layers):
         raise ValueError("lenses have different source layers")
     if n1 == n2:
@@ -79,6 +88,9 @@ def build(path_a: str, path_b: str) -> dict:
     clipped_sigma = clipped_mu = 0
     for v in a.source_layers:
         A, B = a.jacobians[v], b.jacobians[v]
+        if tuple(A.shape) != (d, d) or tuple(B.shape) != (d, d) \
+                or not torch.isfinite(A).all() or not torch.isfinite(B).all():
+            raise IntegrityError(f"lens Jacobian at source {v} is malformed or non-finite")
         sq1, sq2 = (A.norm() ** 2 / d).item(), (B.norm() ** 2 / d).item()
         sigma2 = (sq1 - sq2) / (1 / n1 - 1 / n2)
         mu2 = sq2 - sigma2 / n2
@@ -100,7 +112,23 @@ def build(path_a: str, path_b: str) -> dict:
         "status": "INCONCLUSIVE_TWO_POINT_DIAGNOSTIC",
         "caveat": "sigma is modeled RMS scatter, not a direct single-prompt norm; invalid moments are NaN, not clipped",
         "n1": n1, "n2": n2,
-        "inputs": [file_record(Path(path_a)), file_record(Path(path_b))],
+        "inputs": [
+            {
+                "binary": {**file_record(Path(path_a)), "path": "lens_a"},
+                "sidecar": {
+                    **file_record(Path(path_a).with_suffix(".json")),
+                    "path": "lens_a_sidecar",
+                },
+            },
+            {
+                "binary": {**file_record(Path(path_b)), "path": "lens_b"},
+                "sidecar": {
+                    **file_record(Path(path_b).with_suffix(".json")),
+                    "path": "lens_b_sidecar",
+                },
+            },
+        ],
+        "shared_identity_sha256": sha256_json(identity_projection(meta_a)),
         "disjoint_prompt_evidence": disjoint,
         "negative_sigma_squared": clipped_sigma,
         "negative_mu_squared": clipped_mu,
@@ -110,7 +138,7 @@ def build(path_a: str, path_b: str) -> dict:
           f"Invalid moments are omitted from aggregates; treat raw ||J_n|| as primary.")
     print("loop  ||J_n1||  ||J_n2||  ||mu|| (converged)  sigma (per-prompt scatter)  cos(J_n1,J_n2)  sigma/(||mu||*sqrt(1000))")
     for u, (s1, s2, mu, sig, cos) in enumerate(per_loop):
-        ratio = sig / max(mu, 1e-9) / np.sqrt(1000) if np.isfinite(sig) and np.isfinite(mu) else np.nan
+        ratio = sig / mu / np.sqrt(1000) if np.isfinite(sig) and np.isfinite(mu) and mu > 0 else np.nan
         print(f"{u+1:>4}  {s1:8.3f}  {s2:8.3f}  {mu:18.3f}  {sig:26.3f}  {cos:14.3f}  {ratio:.3f}")
         report["per_loop"].append({"loop": u + 1, "norm_n1": _finite(s1),
                                    "norm_n2": _finite(s2),

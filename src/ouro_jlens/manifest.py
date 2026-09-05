@@ -12,14 +12,48 @@ import argparse
 import importlib.metadata
 import json
 import platform
+import re
 import subprocess
 from pathlib import Path
 from typing import Iterable
 
 from ouro_jlens.evidence import aggregate_sha256, atomic_write_json, file_record, sha256_json
-from ouro_jlens.recurrent import OURO_REVISION, OURO_SNAPSHOT, PROJECT_ROOT
+from ouro_jlens.recurrent import OURO_REVISION, OURO_SNAPSHOT, PROJECT_ROOT, model_snapshot_files
 
 SCHEMA_VERSION = 1
+
+# A custody manifest is useful only when it has the whole contract surface.
+# Keep both sets explicit so verification cannot silently accept a hand-made
+# subset that happens to contain a few plausible files.
+REQUIRED_GROUPS = frozenset((
+    "source",
+    "tests",
+    "documentation",
+    "model_snapshot",
+    "retained_raw_inputs",
+    "derived_outputs",
+    "current_validation",
+    "historical_evidence",
+    "external_jlens_source",
+))
+REQUIRED_TOP_LEVEL_KEYS = frozenset((
+    "schema_version",
+    "status",
+    "scientific_effect",
+    "project_head",
+    "model_revision",
+    "jlens_revision",
+    "environment",
+    "hardware",
+    "reproduction_contract",
+    "groups",
+    "required_groups",
+    "required_paths",
+    "inventory_sha256",
+    "aggregate_sha256",
+    "current_validation_status",
+    "probe_score_provenance",
+))
 
 # A custody manifest that silently omits a load-bearing input is worse than no
 # manifest: it gives a false impression of closure.  Keep the minimum accepted
@@ -64,6 +98,18 @@ REQUIRED_PATHS = (
 )
 
 TRACKED_GROUPS = frozenset(("source", "tests", "documentation"))
+PROBE_RUNTIME_VERSIONS = frozenset({
+    "python",
+    "numpy",
+    "torch",
+    "scikit-learn",
+    "threadpoolctl",
+    "jlens",
+    "transformers",
+    "safetensors",
+    "accelerate",
+    "huggingface-hub",
+})
 
 
 def _relative(path: Path) -> Path:
@@ -102,8 +148,13 @@ def inventory() -> dict[str, list[Path]]:
     model = _files_under(OURO_SNAPSHOT)
 
     raw: list[Path] = [PROJECT_ROOT / "artifacts/jlens/data/wikitext_prompts.json"]
+    # Evaluation provenance is load-bearing even when the numerical arrays
+    # themselves are retained.  Older runs have no such file; that absence is
+    # deliberately visible in the inventory rather than inferred from a
+    # directory name.
     raw.extend(_files_under(
-        PROJECT_ROOT / "artifacts/jlens/eval", ("arrays.npz", "items.json", "task_names.json")
+        PROJECT_ROOT / "artifacts/jlens/eval",
+        ("arrays.npz", "items.json", "task_names.json", "provenance.json"),
     ))
     # Bind every retained fitted lens and sidecar, not merely the members used
     # by the headline table.  This prevents an apparently valid manifest from
@@ -116,6 +167,14 @@ def inventory() -> dict[str, list[Path]]:
         "artifacts/jlens/probe/cv_all648/lens_all648.provenance.json",
         "artifacts/jlens/checkpoints/exit_divergence.json",
     ))
+    # The current probe is a chain: design -> lens-score provenance -> cache
+    # provenance.  Bind every provenance document in the current-generation
+    # directories so a stripped/recomputed summary cannot look complete.
+    for probe_root in (
+        PROJECT_ROOT / "artifacts/jlens/probe/n80_v2",
+        PROJECT_ROOT / "artifacts/jlens/probe/cv_all648",
+    ):
+        raw.extend(_files_under(probe_root, ("*.provenance.json",)))
     derived = [PROJECT_ROOT / path for path in (
         "artifacts/jlens/probe/cv_all648/arrays.npz",
         "artifacts/jlens/probe/cv_all648/design.json",
@@ -127,9 +186,12 @@ def inventory() -> dict[str, list[Path]]:
         "artifacts/jlens/final/verification.json",
     )]
     validation = sorted((PROJECT_ROOT / "artifacts/jlens/validation").glob("milestones_*.json"))
-    if validation:
-        validation.extend(PROJECT_ROOT / "artifacts/jlens/validation" / name
-                          for name in ("milestones.json", "latest.json"))
+    validation.extend(
+        PROJECT_ROOT / "artifacts/jlens/validation" / name
+        for name in ("milestones.json", "latest.json")
+        if (PROJECT_ROOT / "artifacts/jlens/validation" / name).is_file()
+    )
+    validation = sorted(set(validation))
     history = _files_under(PROJECT_ROOT / "artifacts/jlens/probe/history")
     return {
         "source": _existing(source),
@@ -177,7 +239,9 @@ def _tracked(path: Path) -> bool:
 
 def _versions() -> dict[str, str]:
     versions = {"python": platform.python_version()}
-    for distribution in ("numpy", "scipy", "scikit-learn", "torch", "transformers", "jlens"):
+    for distribution in (
+        "numpy", "scipy", "scikit-learn", "threadpoolctl", "torch", "transformers", "jlens",
+    ):
         try:
             versions[distribution] = importlib.metadata.version(distribution)
         except importlib.metadata.PackageNotFoundError:
@@ -210,14 +274,35 @@ def _hardware() -> dict[str, object]:
     return out
 
 
-def _record_matches(record: object, expected: Path) -> bool:
+def _record_matches(
+    record: object,
+    expected: Path,
+    *,
+    logical_path: str | None = None,
+) -> bool:
     if not isinstance(record, dict):
         return False
     try:
+        if (
+            not isinstance(record.get("path"), str)
+            or not isinstance(record.get("size"), int)
+            or isinstance(record.get("size"), bool)
+            or record["size"] < 0
+            or not isinstance(record.get("sha256"), str)
+            or not re.fullmatch(r"[0-9a-fA-F]{64}", record["sha256"])
+        ):
+            return False
+        if logical_path is not None and record["path"] != logical_path:
+            return False
         declared = Path(record["path"])
         actual = file_record(expected)
-        return (
+        path_ok = (
             declared.resolve() == expected.resolve()
+            or (PROJECT_ROOT / declared).resolve() == expected.resolve()
+            or logical_path is not None
+        )
+        return (
+            path_ok
             and record.get("size") == actual["size"]
             and record.get("sha256") == actual["sha256"]
         )
@@ -234,39 +319,153 @@ def _probe_score_provenance_status() -> str:
         return "NOT_RETAINED"
     try:
         document = json.loads(provenance.read_text(encoding="utf-8"))
-        inputs = document["inputs"]
-        source_records = document["source_files"]
-        expected_sources = [
-            PROJECT_ROOT / f"src/ouro_jlens/{name}"
-            for name in ("probe_cv.py", "probe.py", "evaluate.py", "recurrent.py")
-        ]
+        accepted_statuses = {
+            "FRESH_CURRENT_SOURCE_HASH_BOUND_LENS",
+            "FRESH_CURRENT_SOURCE_RETAINED_PRE_CUSTODY_LENS",
+        }
+        if document.get("schema_version") != 2 or document.get("status") not in accepted_statuses:
+            return "INVALID_OR_STALE_PROVENANCE"
+        if document.get("lens_lineage_status") not in {
+            "HASH_BOUND", "RETAINED_PRE_CUSTODY_EXACT_BYTES_ONLY",
+        }:
+            return "INVALID_OR_STALE_PROVENANCE"
+        expected_lens_status = (
+            "FRESH_CURRENT_SOURCE_HASH_BOUND_LENS"
+            if document.get("lens_lineage_status") == "HASH_BOUND"
+            else "FRESH_CURRENT_SOURCE_RETAINED_PRE_CUSTODY_LENS"
+        )
+        if document.get("status") != expected_lens_status:
+            return "INVALID_OR_STALE_PROVENANCE"
+        inputs = document.get("inputs")
+        expected_inputs = {
+            "gpu_cache": (PROJECT_ROOT / "artifacts/jlens/probe/n80_v2/gpu_cache.npz", "gpu_cache"),
+            "gpu_cache_provenance": (
+                PROJECT_ROOT / "artifacts/jlens/probe/n80_v2/gpu_cache.provenance.json",
+                "gpu_cache_provenance",
+            ),
+            "lens": (PROJECT_ROOT / "artifacts/jlens/lens/exit3/exit3_n80.pt", "lens"),
+            "lens_sidecar": (PROJECT_ROOT / "artifacts/jlens/lens/exit3/exit3_n80.json", "lens_sidecar"),
+        }
+        if not isinstance(inputs, dict) or set(inputs) != set(expected_inputs):
+            return "INVALID_OR_STALE_PROVENANCE"
+        if not _record_matches(document.get("output"), score, logical_path="lens_scores"):
+            return "INVALID_OR_STALE_PROVENANCE"
+        if any(not _record_matches(inputs.get(name), expected, logical_path=logical)
+               for name, (expected, logical) in expected_inputs.items()):
+            return "INVALID_OR_STALE_PROVENANCE"
+
+        cache_provenance_path = expected_inputs["gpu_cache_provenance"][0]
+        if not cache_provenance_path.is_file() or cache_provenance_path.is_symlink():
+            return "INVALID_OR_STALE_PROVENANCE"
+        cache_document = json.loads(cache_provenance_path.read_text(encoding="utf-8"))
+        if cache_document.get("schema_version") != 2 or cache_document.get("status") != "FRESH_CURRENT_SOURCE_AND_MODEL":
+            return "INVALID_OR_STALE_PROVENANCE"
+        if not _record_matches(cache_document.get("output"), expected_inputs["gpu_cache"][0], logical_path="gpu_cache"):
+            return "INVALID_OR_STALE_PROVENANCE"
+        if cache_document.get("design") != {"prompts": 648, "virtual_locations": 192, "hidden_width": 2048}:
+            return "INVALID_OR_STALE_PROVENANCE"
+        model_files = cache_document.get("model_files")
+        if not isinstance(model_files, list) or not model_files:
+            return "INVALID_OR_STALE_PROVENANCE"
+        model_flat = {}
+        for record in model_files:
+            if not isinstance(record, dict) or not isinstance(record.get("path"), str) or not record["path"].startswith("model_snapshot/"):
+                return "INVALID_OR_STALE_PROVENANCE"
+            model_path = OURO_SNAPSHOT / Path(record["path"]).relative_to("model_snapshot")
+            if not _record_matches(record, model_path, logical_path=record["path"]):
+                return "INVALID_OR_STALE_PROVENANCE"
+            model_flat[record["path"]] = record["sha256"]
+        try:
+            expected_model_paths = {
+                f"model_snapshot/{path.relative_to(OURO_SNAPSHOT).as_posix()}"
+                for path in model_snapshot_files(OURO_SNAPSHOT)
+            }
+        except (OSError, ValueError):
+            return "INVALID_OR_STALE_PROVENANCE"
+        if len(model_flat) != len(model_files) or set(model_flat) != expected_model_paths:
+            return "INVALID_OR_STALE_PROVENANCE"
         if (
-            document.get("schema_version") != 1
-            or document.get("status") != "FRESH_CURRENT_SOURCE"
-            or not _record_matches(document.get("output"), score)
-            or not isinstance(inputs, dict)
-            or not _record_matches(
-                inputs.get("gpu_cache"),
-                PROJECT_ROOT / "artifacts/jlens/probe/n80_v2/gpu_cache.npz",
-            )
-            or not _record_matches(
-                inputs.get("lens"),
-                PROJECT_ROOT / "artifacts/jlens/lens/exit3/exit3_n80.pt",
-            )
-            or not isinstance(source_records, list)
-            or len(source_records) != len(expected_sources)
-            or not all(
-                _record_matches(record, expected)
-                for record, expected in zip(source_records, expected_sources, strict=True)
-            )
-            or document.get("source_sha256") != aggregate_sha256(
-                {str(record["path"]): str(record["sha256"]) for record in source_records}
-            )
+            not isinstance(cache_document.get("runtime_versions"), dict)
+            or set(cache_document["runtime_versions"]) != PROBE_RUNTIME_VERSIONS
+            or not all(isinstance(value, str) and value for value in cache_document["runtime_versions"].values())
+            or any(value == "NOT_INSTALLED" for value in cache_document["runtime_versions"].values())
         ):
+            return "INVALID_OR_STALE_PROVENANCE"
+
+        from ouro_jlens.report import _probe_source_records_valid
+
+        cache_source_names = ("probe_cv.py", "probe.py", "evaluate.py", "evaldata.py", "recurrent.py", "evidence.py")
+        score_source_names = (*cache_source_names, "fit_lens.py")
+        source_records = cache_document.get("source_files")
+        score_source_records = document.get("source_files")
+        for records, expected_names, expected_digest in (
+            (source_records, cache_source_names, cache_document.get("source_sha256")),
+            (score_source_records, score_source_names, document.get("source_sha256")),
+        ):
+            valid_sources, _, _ = _probe_source_records_valid(
+                records, expected_digest, names=expected_names,
+            )
+            if not valid_sources:
+                return "INVALID_OR_STALE_PROVENANCE"
+        if (
+            document.get("model_files") != model_files
+            or not isinstance(document.get("runtime_versions"), dict)
+            or document.get("runtime_versions") != cache_document.get("runtime_versions")
+        ):
+            return "INVALID_OR_STALE_PROVENANCE"
+        design_path = PROJECT_ROOT / "artifacts/jlens/probe/cv_all648/design.json"
+        if not design_path.is_file() or design_path.is_symlink():
+            return "INVALID_OR_STALE_PROVENANCE"
+        design = json.loads(design_path.read_text(encoding="utf-8"))
+        if (
+            design.get("schema_version") != 2
+            or design.get("status") != "FRESH_CURRENT_SOURCE_INNER_SELECTED_OUTER_SCORED"
+            or not isinstance(design.get("seed"), int)
+            or isinstance(design.get("seed"), bool)
+            or not isinstance(design.get("design"), dict)
+            or design["design"].get("fold_assignment_unit") != "unordered_operand_pair"
+            or not isinstance(design["design"].get("fold_sizes"), list)
+            or len(design["design"]["fold_sizes"]) != 5
+            or sum(design["design"]["fold_sizes"]) != 648
+            or not isinstance(design["design"].get("validation_pairs_by_fold"), list)
+            or len(design["design"]["validation_pairs_by_fold"]) != 5
+            or not isinstance(design["design"].get("selection_ancestry"), str)
+            or "outer fold" not in design["design"].get("selection_ancestry", "")
+        ):
+            return "INVALID_OR_STALE_PROVENANCE"
+        design_inputs = design.get("inputs")
+        if not isinstance(design_inputs, dict) or set(design_inputs) != {
+            "gpu_cache", "gpu_cache_provenance", "lens_scores", "lens_score_provenance",
+        }:
+            return "INVALID_OR_STALE_PROVENANCE"
+        for name, expected, logical in (
+            ("gpu_cache", expected_inputs["gpu_cache"][0], "gpu_cache"),
+            ("gpu_cache_provenance", cache_provenance_path, "gpu_cache_provenance"),
+            ("lens_scores", score, "lens_scores"),
+            ("lens_score_provenance", provenance, "lens_score_provenance"),
+        ):
+            if not _record_matches(design_inputs.get(name), expected, logical_path=logical):
+                return "INVALID_OR_STALE_PROVENANCE"
+        if not _record_matches(design.get("output"), score.with_name("arrays.npz"), logical_path="probe_arrays"):
+            return "INVALID_OR_STALE_PROVENANCE"
+        if (
+            not isinstance(design.get("runtime_versions"), dict)
+            or set(design["runtime_versions"]) != PROBE_RUNTIME_VERSIONS
+            or not all(isinstance(value, str) and value for value in design["runtime_versions"].values())
+            or any(value == "NOT_INSTALLED" for value in design["runtime_versions"].values())
+            or design.get("runtime_versions") != cache_document.get("runtime_versions")
+        ):
+            return "INVALID_OR_STALE_PROVENANCE"
+        design_source_names = ("probe_cv.py", "probe.py", "probe_report.py", "evidence.py")
+        design_sources = design.get("source_files")
+        valid_design_sources, _, _ = _probe_source_records_valid(
+            design_sources, design.get("source_sha256"), names=design_source_names,
+        )
+        if not valid_design_sources:
             return "INVALID_OR_STALE_PROVENANCE"
     except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
         return "INVALID_OR_STALE_PROVENANCE"
-    return "FRESH_CURRENT_SOURCE_AND_MANIFESTED_INPUTS"
+    return str(document["status"])
 
 
 def _inventory_paths(groups: dict[str, list[Path]]) -> dict[str, list[str]]:
@@ -285,6 +484,10 @@ def _assert_required_paths() -> None:
 def build_manifest() -> dict:
     _assert_required_paths()
     groups = inventory()
+    if set(groups) != REQUIRED_GROUPS - {"external_jlens_source"}:
+        raise RuntimeError(
+            f"manifest inventory groups changed: {sorted(groups)} != {sorted(REQUIRED_GROUPS)}"
+        )
     jlens_files, jlens_revision = _jlens_identity()
     if not jlens_files or jlens_revision == "UNKNOWN":
         raise RuntimeError("external jlens source or revision is unavailable")
@@ -309,8 +512,7 @@ def build_manifest() -> dict:
     validation_status = "NOT_ESTABLISHED"
     if latest_validation.is_file():
         try:
-            latest = json.loads(latest_validation.read_text(encoding="utf-8"))
-            validation_status = "PASS" if latest.get("numerical_pass") is True else "FAIL"
+            validation_status = _manifest_current_validation_status()
         except (OSError, json.JSONDecodeError):
             validation_status = "INVALID"
     return {
@@ -322,6 +524,8 @@ def build_manifest() -> dict:
         "jlens_revision": jlens_revision,
         "environment": _versions(),
         "hardware": _hardware(),
+        "required_groups": sorted(REQUIRED_GROUPS),
+        "required_paths": list(REQUIRED_PATHS),
         "reproduction_contract": {
             "seeds": {"analysis_bootstrap": 0, "probe_cv": 0, "probe_bootstrap": 991},
             "commands": [
@@ -338,82 +542,209 @@ def build_manifest() -> dict:
     }
 
 
+def _manifest_record_shape(record: object) -> bool:
+    return (
+        isinstance(record, dict)
+        and isinstance(record.get("path"), str)
+        and bool(record["path"])
+        and isinstance(record.get("size"), int)
+        and not isinstance(record["size"], bool)
+        and record["size"] >= 0
+        and isinstance(record.get("sha256"), str)
+        and len(record["sha256"]) == 64
+        and all(character in "0123456789abcdefABCDEF" for character in record["sha256"])
+        and isinstance(record.get("tracked"), bool)
+    )
+
+
+def _manifest_current_validation_status() -> str:
+    latest = PROJECT_ROOT / "artifacts/jlens/validation/milestones.json"
+    if not latest.is_file():
+        return "NOT_ESTABLISHED"
+    try:
+        payload = json.loads(latest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return "INVALID"
+    if not isinstance(payload, dict):
+        return "INVALID"
+    # Keep the manifest's status gate identical to the canonical report's
+    # evidence validator.  Presence of model/JLens records is insufficient:
+    # the helper also rehashes their current bytes and checks every M1-M5 and
+    # comparison binding before this manifest can advertise a pass.
+    try:
+        from ouro_jlens.report import _validation_info
+
+        validated = _validation_info(payload)
+    except (AttributeError, ImportError, IndexError, KeyError, OSError, TypeError, ValueError):
+        return "FAILED_OR_INCOMPLETE_VALIDATION"
+    return (
+        "NUMERICAL_AND_PROVENANCE_PASS"
+        if validated.get("verified") is True
+        else "FAILED_OR_INCOMPLETE_VALIDATION"
+    )
+
+
 def verify_manifest(path: Path) -> dict:
-    manifest = json.loads(path.read_text(encoding="utf-8"))
+    """Verify a complete current manifest against bytes and live inventory.
+
+    The old verifier accepted a one-record ``{"groups": {"raw": ...}}``
+    document.  That is a generic checksum, not a JLens custody manifest, so
+    this verifier fails closed on missing contract fields, groups, required
+    paths, provenance records, or tracked source/tests/docs.
+    """
+
+    mismatches: list[dict[str, object]] = []
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "status": "FAIL",
+            "manifest": {"path": str(path), "error": str(exc)},
+            "files_checked": 0,
+            "mismatches": [{"error": f"cannot read manifest: {exc}"}],
+        }
+    if not isinstance(manifest, dict):
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "status": "FAIL",
+            "manifest": {"path": str(path)},
+            "files_checked": 0,
+            "mismatches": [{"error": "manifest is not an object"}],
+        }
+    missing_top = sorted(REQUIRED_TOP_LEVEL_KEYS - set(manifest))
+    if missing_top:
+        mismatches.append({"field": "top_level", "error": "missing required fields", "missing": missing_top})
+    extra_top = sorted(set(manifest) - REQUIRED_TOP_LEVEL_KEYS)
+    if extra_top:
+        mismatches.append({"field": "top_level", "error": "unknown fields", "extra": extra_top})
     if manifest.get("schema_version") != SCHEMA_VERSION:
-        raise ValueError("unsupported manifest schema")
-    mismatches = []
+        mismatches.append({"field": "schema_version", "expected": SCHEMA_VERSION, "actual": manifest.get("schema_version")})
+    if manifest.get("required_groups") != sorted(REQUIRED_GROUPS):
+        mismatches.append({"field": "required_groups", "expected": sorted(REQUIRED_GROUPS), "actual": manifest.get("required_groups")})
+    if manifest.get("required_paths") != list(REQUIRED_PATHS):
+        mismatches.append({"field": "required_paths", "expected": list(REQUIRED_PATHS), "actual": manifest.get("required_paths")})
+
+    groups = manifest.get("groups")
+    if not isinstance(groups, dict):
+        mismatches.append({"field": "groups", "error": "groups must be an object"})
+        groups = {}
+    if set(groups) != REQUIRED_GROUPS:
+        mismatches.append({"field": "groups", "expected": sorted(REQUIRED_GROUPS), "actual": sorted(groups)})
+
+    # Recompute the path inventory before looking at declared hashes.  This
+    # catches omitted evaluation provenance and current probe chain files even
+    # if a caller recomputes aggregate_sha256 over the stripped manifest.
+    current_groups: dict[str, list[Path]] = {}
+    try:
+        current_groups = inventory()
+        jlens_files, jlens_revision = _jlens_identity()
+        current_groups["external_jlens_source"] = jlens_files
+    except (ImportError, OSError, subprocess.CalledProcessError, ValueError) as exc:
+        mismatches.append({"field": "inventory", "error": str(exc)})
+        jlens_revision = "UNKNOWN"
+    if set(current_groups) != REQUIRED_GROUPS:
+        mismatches.append({"field": "current_inventory_groups", "expected": sorted(REQUIRED_GROUPS), "actual": sorted(current_groups)})
+    current_paths = _inventory_paths(current_groups) if current_groups else {}
+    if manifest.get("inventory_sha256") is not None:
+        current_inventory = sha256_json(current_paths)
+        if current_inventory != manifest.get("inventory_sha256"):
+            mismatches.append({"field": "inventory_sha256", "expected": manifest.get("inventory_sha256"), "actual": current_inventory})
+    if manifest.get("jlens_revision") != jlens_revision:
+        mismatches.append({"field": "jlens_revision", "expected": manifest.get("jlens_revision"), "actual": jlens_revision})
+
     flat: dict[str, str] = {}
     seen: set[str] = set()
-    for group, records in manifest.get("groups", {}).items():
-        if not isinstance(records, list):
+    for group in sorted(REQUIRED_GROUPS):
+        declared_records = groups.get(group)
+        if not isinstance(declared_records, list):
             mismatches.append({"group": group, "error": "not a list"})
             continue
-        for declared in records:
-            rel = Path(declared["path"])
-            if str(rel) in seen:
-                mismatches.append({"path": str(rel), "error": "duplicate manifest path"})
+        declared_paths: list[str] = []
+        for index, declared in enumerate(declared_records):
+            if not _manifest_record_shape(declared):
+                mismatches.append({"group": group, "index": index, "error": "incomplete file record"})
                 continue
-            seen.add(str(rel))
+            if set(declared) != {"path", "size", "sha256", "tracked"}:
+                mismatches.append({"group": group, "index": index, "error": "unknown file-record fields"})
+            raw_path = str(declared["path"])
+            rel = Path(raw_path)
+            if raw_path in seen:
+                mismatches.append({"path": raw_path, "error": "duplicate manifest path"})
+                continue
+            seen.add(raw_path)
+            declared_paths.append(raw_path)
             if rel.is_absolute() and group != "external_jlens_source":
-                mismatches.append({"path": str(rel), "error": "absolute path outside external source group"})
+                mismatches.append({"path": raw_path, "error": "absolute path outside external source group"})
                 continue
-            if not rel.is_absolute() and (rel.is_absolute() or ".." in rel.parts):
-                mismatches.append({"path": str(rel), "error": "path escapes project root"})
+            if not rel.is_absolute() and ".." in rel.parts:
+                mismatches.append({"path": raw_path, "error": "path escapes project root"})
                 continue
+            candidate = rel if rel.is_absolute() else PROJECT_ROOT / rel
             try:
-                candidate = rel if rel.is_absolute() else PROJECT_ROOT / rel
                 raw_actual = file_record(candidate)
-                actual = {"path": str(rel), "size": raw_actual["size"],
-                          "sha256": raw_actual["sha256"]}
+                actual = {"path": raw_path, "size": raw_actual["size"], "sha256": raw_actual["sha256"]}
             except (OSError, ValueError) as exc:
-                mismatches.append({"path": str(rel), "error": str(exc)})
+                mismatches.append({"path": raw_path, "error": str(exc)})
                 continue
-            flat[str(rel)] = actual["sha256"]
-            if actual["size"] != declared.get("size") or actual["sha256"] != declared.get("sha256"):
-                mismatches.append({"path": str(rel), "declared": declared, "actual": actual})
-            if "tracked" in declared and bool(declared["tracked"]) != _tracked(candidate):
-                mismatches.append({
-                    "path": str(rel), "field": "tracked", "expected": declared["tracked"],
-                    "actual": _tracked(candidate),
-                })
-    if manifest.get("inventory_sha256") is not None:
-        try:
-            current_groups = inventory()
-            jlens_files, jlens_revision = _jlens_identity()
-            current_groups["external_jlens_source"] = jlens_files
-            current_inventory = sha256_json(_inventory_paths(current_groups))
-            if current_inventory != manifest["inventory_sha256"]:
-                mismatches.append({
-                    "field": "inventory_sha256", "expected": manifest["inventory_sha256"],
-                    "actual": current_inventory,
-                })
-            if jlens_revision != manifest.get("jlens_revision"):
-                mismatches.append({
-                    "field": "jlens_revision", "expected": manifest.get("jlens_revision"),
-                    "actual": jlens_revision,
-                })
-        except (ImportError, OSError, subprocess.CalledProcessError, ValueError) as exc:
-            mismatches.append({"field": "inventory_sha256", "error": str(exc)})
-    if manifest.get("project_head") is not None:
+            flat[raw_path] = actual["sha256"]
+            if actual["size"] != declared["size"] or actual["sha256"] != declared["sha256"]:
+                mismatches.append({"path": raw_path, "declared": declared, "actual": actual})
+            tracked = _tracked(candidate)
+            if tracked != declared["tracked"]:
+                mismatches.append({"path": raw_path, "field": "tracked", "expected": declared["tracked"], "actual": tracked})
+            if group in TRACKED_GROUPS and (not declared["tracked"] or not tracked):
+                mismatches.append({"path": raw_path, "group": group, "error": "source/tests/docs must be tracked"})
+        expected_paths = current_paths.get(group, [])
+        if sorted(declared_paths) != sorted(expected_paths):
+            mismatches.append({"group": group, "field": "inventory_paths", "expected": sorted(expected_paths), "actual": sorted(declared_paths)})
+
+    required_present = {
+        str(record.get("path"))
+        for rows in groups.values() if isinstance(rows, list)
+        for record in rows if isinstance(record, dict)
+    }
+    missing_required = [required for required in REQUIRED_PATHS if required not in required_present]
+    if missing_required:
+        mismatches.append({"field": "REQUIRED_PATHS", "error": "required paths are absent from manifest", "missing": missing_required})
+    missing_live_required = [required for required in REQUIRED_PATHS if not (PROJECT_ROOT / required).is_file()]
+    if missing_live_required:
+        mismatches.append({"field": "REQUIRED_PATHS", "error": "required paths are absent from current tree", "missing": missing_live_required})
+
+    try:
         current_head = _git_head()
-        if current_head != manifest["project_head"]:
-            mismatches.append({
-                "field": "project_head", "expected": manifest["project_head"],
-                "actual": current_head,
-            })
-    if manifest.get("environment") is not None and _versions() != manifest["environment"]:
-        mismatches.append({
-            "field": "environment", "expected": manifest["environment"], "actual": _versions(),
-        })
+        if manifest.get("project_head") != current_head:
+            mismatches.append({"field": "project_head", "expected": manifest.get("project_head"), "actual": current_head})
+    except (OSError, subprocess.CalledProcessError) as exc:
+        mismatches.append({"field": "project_head", "error": str(exc)})
+    if manifest.get("model_revision") != OURO_REVISION:
+        mismatches.append({"field": "model_revision", "expected": OURO_REVISION, "actual": manifest.get("model_revision")})
+    current_environment = _versions()
+    if manifest.get("environment") != current_environment:
+        mismatches.append({"field": "environment", "expected": manifest.get("environment"), "actual": current_environment})
+    reproduction = manifest.get("reproduction_contract")
+    if not isinstance(reproduction, dict) or set(reproduction) != {"seeds", "commands"} or not isinstance(reproduction.get("seeds"), dict) or set(reproduction["seeds"]) != {"analysis_bootstrap", "probe_cv", "probe_bootstrap"} or not isinstance(reproduction.get("commands"), list) or not reproduction["commands"]:
+        mismatches.append({"field": "reproduction_contract", "error": "complete seeds and commands are required"})
+    if manifest.get("status") != "LOCAL_CUSTODY_BOUND_PREEXISTING_EMPIRICAL_ARTIFACTS_UNFROZEN":
+        mismatches.append({"field": "status", "error": "unexpected custody status", "actual": manifest.get("status")})
+    if manifest.get("scientific_effect") != "NONE; byte identity is not semantic acceptance":
+        mismatches.append({"field": "scientific_effect", "error": "unexpected scientific effect", "actual": manifest.get("scientific_effect")})
+    if manifest.get("current_validation_status") != _manifest_current_validation_status():
+        mismatches.append({"field": "current_validation_status", "expected": manifest.get("current_validation_status"), "actual": _manifest_current_validation_status()})
+    probe_status = _probe_score_provenance_status()
+    if manifest.get("probe_score_provenance") != probe_status:
+        mismatches.append({"field": "probe_score_provenance", "expected": manifest.get("probe_score_provenance"), "actual": probe_status})
     aggregate = sha256_json(flat)
     if aggregate != manifest.get("aggregate_sha256"):
-        mismatches.append({"field": "aggregate_sha256", "expected": manifest.get("aggregate_sha256"),
-                           "actual": aggregate})
+        mismatches.append({"field": "aggregate_sha256", "expected": manifest.get("aggregate_sha256"), "actual": aggregate})
+    try:
+        manifest_record = file_record(path)
+    except OSError:
+        manifest_record = {"path": str(path)}
     return {
         "schema_version": SCHEMA_VERSION,
         "status": "PASS" if not mismatches else "FAIL",
-        "manifest": file_record(path),
+        "manifest": manifest_record,
         "files_checked": len(flat),
         "mismatches": mismatches,
     }

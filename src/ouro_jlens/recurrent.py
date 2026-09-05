@@ -30,6 +30,39 @@ OURO_SNAPSHOT = (
 )
 
 
+def model_snapshot_files(path: str | Path = OURO_SNAPSHOT) -> list[Path]:
+    """Return every regular file that can contribute to a local model load.
+
+    Transformers may consult remote-code, tokenizer, generation, and shard
+    metadata in addition to the primary config and weights.  Binding a
+    hand-picked subset therefore does not identify the loaded checkpoint.
+    The pinned Hugging Face snapshot is small apart from its weights, so the
+    conservative and stable contract is every file below the snapshot.
+    """
+
+    root = Path(path)
+    if root.is_symlink() or not root.is_dir():
+        raise ValueError(f"model snapshot root is missing or linked: {root}")
+    files: list[Path] = []
+    for candidate in sorted(root.rglob("*"), key=lambda item: item.relative_to(root).as_posix()):
+        relative = candidate.relative_to(root)
+        current = candidate.parent
+        while current != root:
+            if current.is_symlink():
+                raise ValueError(f"model snapshot traverses a linked directory: {relative}")
+            current = current.parent
+        if candidate.is_file():
+            files.append(candidate)
+        elif candidate.is_symlink():
+            raise ValueError(f"model snapshot contains a dangling or directory link: {relative}")
+    required = {"config.json", "model.safetensors", "modeling_ouro.py", "tokenizer.json"}
+    present = {candidate.relative_to(root).as_posix() for candidate in files}
+    missing = sorted(required - present)
+    if missing:
+        raise ValueError(f"model snapshot is missing required files: {', '.join(missing)}")
+    return files
+
+
 class LoopTap:
     """Hook target for one (recurrent step, physical layer) pair."""
 
@@ -58,10 +91,21 @@ class OuroLensModel(jlens.HFLensModel):
         self.n_layers = len(self.layers)
 
     def index(self, ut: int, layer: int) -> int:
-        assert 0 <= ut < self.n_ut and 0 <= layer < self.n_physical
+        if isinstance(ut, bool) or not isinstance(ut, int) or not 0 <= ut < self.n_ut:
+            raise ValueError(f"recurrent step is outside [0, {self.n_ut}): {ut!r}")
+        if isinstance(layer, bool) or not isinstance(layer, int) or not 0 <= layer < self.n_physical:
+            raise ValueError(f"physical layer is outside [0, {self.n_physical}): {layer!r}")
         return ut * self.n_physical + layer
 
     def split(self, virtual: int) -> tuple[int, int]:
+        if (
+            isinstance(virtual, bool)
+            or not isinstance(virtual, int)
+            or not 0 <= virtual < self.n_layers
+        ):
+            raise ValueError(
+                f"virtual layer is outside [0, {self.n_layers}): {virtual!r}"
+            )
         return divmod(virtual, self.n_physical)
 
     def exit_index(self, ut: int) -> int:
@@ -74,9 +118,21 @@ class OuroLensModel(jlens.HFLensModel):
 
 
 def load_ouro(path: str | Path = OURO_SNAPSHOT, device: str = "cuda", dtype=torch.bfloat16):
-    path = str(path)
-    tokenizer = transformers.AutoTokenizer.from_pretrained(path, trust_remote_code=True)
+    snapshot = Path(path)
+    path_string = str(snapshot)
+    tokenizer = transformers.AutoTokenizer.from_pretrained(path_string, trust_remote_code=True)
     hf_model = transformers.AutoModelForCausalLM.from_pretrained(
-        path, trust_remote_code=True, torch_dtype=dtype
+        path_string, trust_remote_code=True, torch_dtype=dtype
     ).to(device)
-    return OuroLensModel(hf_model, tokenizer)
+    wrapped = OuroLensModel(hf_model, tokenizer)
+    # Downstream evidence must describe the checkpoint actually loaded.  The
+    # previous wrapper silently left every alternate checkpoint looking like
+    # the base Ouro revision to provenance code.
+    wrapped.snapshot_path = snapshot.absolute()
+    name = snapshot.name
+    wrapped.model_revision = (
+        name
+        if len(name) == 40 and all(character in "0123456789abcdef" for character in name)
+        else "LOCAL_UNREVISIONED"
+    )
+    return wrapped

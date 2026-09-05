@@ -1,10 +1,11 @@
 """Deterministic, leakage-aware reporting for the arithmetic probe experiment.
 
 The probe is cross-validated over unordered operand pairs.  Some held-out folds
-contain labels that do not occur in their training folds, so the fair comparison
-population is the subset whose label is trainable in its fold.  Layer selection
-is itself cross-fitted: for fold ``f`` a layer is chosen using the other folds
-and scored only on ``f``.  Cluster bootstrap resampling repeats that selection.
+contain labels that do not occur in their training folds, so the comparison
+population is the subset whose label is trainable in its fold.  For the learned
+probe, layer and C selection use only an inner validation split inside each
+outer training partition.  Fixed lens readouts select on the other outer folds.
+No classifier trained on an outer test fold can influence its selected layer.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from pathlib import Path
 import numpy as np
 
 from ouro_jlens.evidence import atomic_write_json, file_record
-from ouro_jlens.probe import LABELS, make_prompts
+from ouro_jlens.probe import C_GRID, LABELS, make_prompts
 from ouro_jlens.probe_cv import N_FOLDS, N_LAYER, N_UT, prompt_folds, validation_pairs
 
 READOUTS = {
@@ -24,6 +25,16 @@ READOUTS = {
     "logit_lens": "ll_cand",
     "eventual_exit_jacobian_lens": "jl_cand",
 }
+
+
+def _logical_input_record(path: Path) -> dict:
+    """Record the supplied archive without embedding its physical location."""
+
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("probe report input archive is missing or linked")
+    record = file_record(path)
+    record["path"] = "probe_arrays"
+    return record
 
 
 def design(arrays: dict[str, np.ndarray], seed: int) -> dict:
@@ -62,8 +73,14 @@ def design(arrays: dict[str, np.ndarray], seed: int) -> dict:
     }
 
 
-def cross_fitted_point(ranks: np.ndarray, folds: np.ndarray, eligible: np.ndarray,
-                       rows: np.ndarray | None = None) -> tuple[np.ndarray, list[list[int]]]:
+def cross_fitted_point(
+    ranks: np.ndarray,
+    folds: np.ndarray,
+    eligible: np.ndarray,
+    rows: np.ndarray | None = None,
+    *,
+    selection_accuracy: np.ndarray | None = None,
+) -> tuple[np.ndarray, list[list[int]]]:
     """Return per-loop accuracy and fold-specific selected physical layers.
 
     ``rows`` may contain repeated indices, which is used by the cluster bootstrap.
@@ -73,6 +90,12 @@ def cross_fitted_point(ranks: np.ndarray, folds: np.ndarray, eligible: np.ndarra
         raise ValueError(f"unexpected rank shape {ranks.shape}")
     rows = np.flatnonzero(eligible) if rows is None else np.asarray(rows, dtype=int)
     hit = ranks == 0
+    if selection_accuracy is not None:
+        selection_accuracy = np.asarray(selection_accuracy, dtype=float)
+        if selection_accuracy.shape != (N_FOLDS, N_UT * N_LAYER) \
+                or not np.isfinite(selection_accuracy).all() \
+                or np.any((selection_accuracy < 0) | (selection_accuracy > 1)):
+            raise ValueError("supervised selection accuracy has an invalid shape or value")
     values: list[float] = []
     choices: list[list[int]] = []
     for loop in range(N_UT):
@@ -81,11 +104,21 @@ def cross_fitted_point(ranks: np.ndarray, folds: np.ndarray, eligible: np.ndarra
         denominator = 0
         block = slice(loop * N_LAYER, (loop + 1) * N_LAYER)
         for fold in range(N_FOLDS):
-            train_rows = rows[(folds[rows] != fold) & eligible[rows]]
             test_rows = rows[(folds[rows] == fold) & eligible[rows]]
-            if not len(train_rows) or not len(test_rows):
+            if not len(test_rows):
                 raise ValueError("bootstrap/design draw omitted a required fold")
-            layer = int(hit[train_rows, block].mean(0).argmax())
+            if selection_accuracy is None:
+                train_rows = rows[(folds[rows] != fold) & eligible[rows]]
+                if not len(train_rows):
+                    raise ValueError("bootstrap/design draw omitted selection folds")
+                layer = int(hit[train_rows, block].mean(0).argmax())
+            else:
+                # These scores were produced on inner validation pairs by
+                # classifiers whose training/validation data both exclude the
+                # outer fold.  Keep them fixed under the outer test-cluster
+                # bootstrap; the interval is conditional on hyperparameter
+                # selection rather than a leaky re-selection.
+                layer = int(selection_accuracy[fold, block].argmax())
             selected.append(layer)
             numerator += float(hit[test_rows, loop * N_LAYER + layer].sum())
             denominator += len(test_rows)
@@ -99,8 +132,11 @@ def _cluster_rows(sampled: np.ndarray, cluster_ids: np.ndarray) -> np.ndarray:
 
 
 def cluster_bootstrap(readouts: dict[str, np.ndarray], d: dict, *, seed: int,
-                      draws: int) -> tuple[dict[str, list[list[float]]], dict[str, list[list[float]]]]:
-    """Cluster percentile intervals, repeating layer selection inside each draw."""
+                      draws: int, selection_accuracy: np.ndarray
+                      ) -> tuple[dict[str, list[list[float]]], dict[str, list[list[float]]]]:
+    """Outer-test cluster intervals with ancestry-safe layer selection."""
+    if isinstance(draws, bool) or not isinstance(draws, int) or draws <= 0:
+        raise ValueError("bootstrap draws must be a positive integer")
     rng = np.random.default_rng(seed)
     clusters = np.asarray(d["eligible_clusters"])
     samples = {name: np.empty((draws, N_UT), float) for name in readouts}
@@ -114,7 +150,11 @@ def cluster_bootstrap(readouts: dict[str, np.ndarray], d: dict, *, seed: int,
                 break
         for name, ranks in readouts.items():
             samples[name][draw] = cross_fitted_point(
-                ranks, d["folds"], d["eligible"], rows=rows
+                ranks,
+                d["folds"],
+                d["eligible"],
+                rows=rows,
+                selection_accuracy=selection_accuracy if name == "supervised_probe" else None,
             )[0]
 
     ci = {
@@ -134,22 +174,50 @@ def cluster_bootstrap(readouts: dict[str, np.ndarray], d: dict, *, seed: int,
 
 
 def build_report(arrays_path: Path, *, seed: int = 0, draws: int = 5000) -> dict:
+    if isinstance(draws, bool) or not isinstance(draws, int) or draws <= 0:
+        raise ValueError("bootstrap draws must be a positive integer")
+    arrays_path = Path(arrays_path)
     raw = np.load(arrays_path, allow_pickle=False)
     arrays = {key: raw[key] for key in raw.files}
     d = design(arrays, seed)
-    readouts = {name: np.asarray(arrays[key]) for name, key in READOUTS.items()}
+    if "selection_accuracy" not in arrays:
+        raise ValueError("probe arrays lack outer-safe inner-validation layer scores")
+    selection_accuracy = np.asarray(arrays["selection_accuracy"], dtype=float)
+    if selection_accuracy.shape != (N_FOLDS, N_UT * N_LAYER) \
+            or not np.isfinite(selection_accuracy).all() \
+            or np.any((selection_accuracy < 0) | (selection_accuracy > 1)):
+        raise ValueError("inner-validation selection scores are malformed")
+    chosen_c = np.asarray(arrays.get("chosen_C"))
+    if chosen_c.shape != selection_accuracy.shape \
+            or not np.isin(chosen_c, np.asarray(C_GRID)).all():
+        raise ValueError("per-fold probe regularisation choices are missing or outside C_GRID")
+    readouts = {}
+    for name, key in READOUTS.items():
+        ranks = np.asarray(arrays[key])
+        if not np.issubdtype(ranks.dtype, np.integer) or ranks.shape != (648, N_UT * N_LAYER) \
+                or ranks.min() < 0 or ranks.max() >= len(LABELS):
+            raise ValueError(f"readout {name} has invalid rank values")
+        readouts[name] = ranks
     points, layers = {}, {}
     for name, ranks in readouts.items():
-        point, selected = cross_fitted_point(ranks, d["folds"], d["eligible"])
+        point, selected = cross_fitted_point(
+            ranks,
+            d["folds"],
+            d["eligible"],
+            selection_accuracy=selection_accuracy if name == "supervised_probe" else None,
+        )
         points[name] = point
         layers[name] = selected
-    ci, contrast_ci = cluster_bootstrap(readouts, d, seed=seed + 991, draws=draws)
+    ci, contrast_ci = cluster_bootstrap(
+        readouts, d, seed=seed + 991, draws=draws, selection_accuracy=selection_accuracy
+    )
 
     labels = d["labels"]
     eligible = d["eligible"]
     report = {
         "schema_version": 1,
-        "status": "SUPPORTED_LOCAL_UNFROZEN",
+        "status": "DERIVED_FROM_SUPPLIED_ARRAYS_PROVENANCE_NOT_VALIDATED",
+        "input_provenance_status": "NOT_VALIDATED_BY_STANDALONE_REPORT_GENERATOR",
         "population": {
             "total_prompts": int(len(labels)),
             "eligible_prompts": int(eligible.sum()),
@@ -164,8 +232,8 @@ def build_report(arrays_path: Path, *, seed: int = 0, draws: int = 5000) -> dict
             "fold_sizes_eligible": [int(((d["folds"] == f) & eligible).sum()) for f in range(N_FOLDS)],
         },
         "estimand": (
-            "candidate-set top-1 on fold-trainable prompts; layer chosen on the other folds "
-            "and scored on the held-out fold"
+            "candidate-set top-1 on fold-trainable prompts; supervised layer/C chosen by "
+            "inner validation wholly inside each outer training partition, then scored on its untouched outer fold"
         ),
         "baselines": {
             "uniform_17_way": round(1 / len(LABELS), 6),
@@ -174,9 +242,21 @@ def build_report(arrays_path: Path, *, seed: int = 0, draws: int = 5000) -> dict
         },
         "readouts": {},
         "contrasts": {},
-        "bootstrap": {"unit": "unordered_operand_pair", "draws": draws, "seed": seed + 991,
-                      "layer_selection_repeated_per_draw": True},
-        "input": file_record(arrays_path),
+        "bootstrap": {
+            "unit": "outer-test unordered_operand_pair",
+            "draws": draws,
+            "seed": seed + 991,
+            "supervised_layer_selection": "fixed inner-validation choice; interval conditional on selection",
+            "fixed_lens_layer_selection": "repeated from other outer folds per draw",
+        },
+        "selection_ancestry": {
+            "supervised_probe": (
+                "for outer fold f, selection_accuracy[f] uses only its training and inner-validation pairs; "
+                "fold f is absent from classifier training, C selection, and layer selection"
+            ),
+            "fixed_lenses": "no trained parameters; layer selected on held-out predictions from other outer folds",
+        },
+        "input": _logical_input_record(arrays_path),
     }
     for name, point in points.items():
         report["readouts"][name] = {

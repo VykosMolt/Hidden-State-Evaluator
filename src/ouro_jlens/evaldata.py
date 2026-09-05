@@ -11,6 +11,7 @@ prompt's token ids.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -103,13 +104,40 @@ def readout_context(encode, prompt: str, target: str) -> tuple[list[int], int]:
 
 
 def load_items(tokenizer, tasks=("multihop", "order-ops"), encode=None) -> list[Item]:
+    tasks = tuple(tasks)
+    if (not tasks or any(not isinstance(task, str)
+                         or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", task)
+                         for task in tasks)
+            or len(tasks) != len(set(tasks))):
+        raise ValueError("evaluation task names must be nonempty, unique, and path-safe")
     encode = encode or (lambda s: tokenizer(s).input_ids)
     items = []
     for task in tasks:
-        raw = json.loads((JLENS_DATA / f"lens-eval-{task}.json").read_text())["items"]
+        document = json.loads(
+            (JLENS_DATA / f"lens-eval-{task}.json").read_text(encoding="utf-8")
+        )
+        raw = document.get("items") if isinstance(document, dict) else None
+        if not isinstance(raw, list) or not raw:
+            raise ValueError(f"evaluation task {task!r} has no item list")
         for r in raw:
+            if (not isinstance(r, dict)
+                    or not all(isinstance(r.get(field), str) and r[field]
+                               for field in ("name", "prompt", "target"))
+                    or not isinstance(r.get("intermediates"), list)
+                    or not 1 <= len(r["intermediates"]) <= 3
+                    or not all(isinstance(value, str) and value
+                               for value in r["intermediates"])
+                    or len(r["intermediates"]) != len(set(r["intermediates"]))):
+                raise ValueError(f"evaluation task {task!r} contains a malformed item")
             ids, dropped = readout_context(encode, r["prompt"], r["target"])
-            assert dropped <= 1, (r["name"], dropped)
+            if (not isinstance(ids, list) or not ids
+                    or any(isinstance(value, bool) or not isinstance(value, int) for value in ids)):
+                raise ValueError(f"evaluation item {r['name']} has no valid readout context")
+            if dropped > 1:
+                raise ValueError(
+                    f"readout boundary dropped {dropped} prompt tokens for {r['name']}; "
+                    "evaluation alignment is no longer established"
+                )
             inter_tokens = {}
             for inter in r["intermediates"]:
                 inter_tokens[inter] = single_token_ids(tokenizer, surface_forms(inter))

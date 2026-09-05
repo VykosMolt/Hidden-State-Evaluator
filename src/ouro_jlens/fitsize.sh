@@ -40,6 +40,11 @@ ensure_merge() {
   shift
   if [[ -e "$out" || -L "$out" || -e "$sidecar" || -L "$sidecar" ]]; then
     validate_lens "$out" merged
+    "$PY" -c '
+from ouro_jlens.fit_lens import validate_merged_shards
+import sys
+validate_merged_shards(sys.argv[1], sys.argv[2:])
+' "$out" "$@"
     return 0
   fi
   local input
@@ -50,48 +55,30 @@ ensure_merge() {
   validate_lens "$out" merged
 }
 
-eval_base_complete() {
+eval_complete() {
   local out=$1
-  [[ -d "$out" ]] || return 1
-  local name
-  for name in arrays.npz items.json task_names.json provenance.json; do
-    [[ -f "$out/$name" && ! -L "$out/$name" ]] || return 1
-  done
+  local prompt_policy=${2:?missing evaluation prompt policy}
+  local lens_spec=${3:?missing evaluation lens spec}
+  # The shared validator binds arrays.npz, items.json, task_names.json, and
+  # provenance.json before a resume; summary.json is checked after analysis.
   "$PY" -c '
-import hashlib, json, sys
 from pathlib import Path
-import numpy as np
-root = Path(sys.argv[1]).resolve()
-try:
-    arrays = np.load(root / "arrays.npz")
-    if not arrays.files:
-        raise ValueError("arrays.npz is empty")
-    arrays.close()
-    json.loads((root / "items.json").read_text())
-    json.loads((root / "task_names.json").read_text())
-    provenance = json.loads((root / "provenance.json").read_text())
-    outputs = provenance.get("outputs")
-    if not isinstance(outputs, dict):
-        raise ValueError("evaluation provenance has no outputs")
-    for key, filename in (("arrays", "arrays.npz"), ("items", "items.json"), ("task_names", "task_names.json")):
-        record = outputs.get(key)
-        target = root / filename
-        if not isinstance(record, dict) or Path(record.get("path", "")).resolve() != target:
-            raise ValueError(f"{key} provenance path mismatch")
-        digest = hashlib.sha256(target.read_bytes()).hexdigest()
-        if record.get("sha256") != digest or record.get("size") != target.stat().st_size:
-            raise ValueError(f"{key} provenance digest mismatch")
-except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
-    print(f"invalid evaluation output: {exc}", file=sys.stderr)
-    raise SystemExit(1)
-' "$out"
+import sys
+from ouro_jlens.evaluate import validate_evaluation_provenance
+target, path = sys.argv[3].split("=", 1)
+validate_evaluation_provenance(
+    sys.argv[1],
+    lens_paths=[(int(target), Path(path))],
+    expected_prompt_policy=sys.argv[2],
+)
+' "$out" "$prompt_policy" "$lens_spec"
 }
 
 analysis_complete() {
   local out=$1
   [[ -f "$out/summary.json" && ! -L "$out/summary.json" &&
      -f "$out/summary.md" && ! -L "$out/summary.md" ]] || return 1
-  "$PY" -c 'import json,sys; from pathlib import Path; value=json.loads(Path(sys.argv[1]).read_text()); assert isinstance(value,dict) and value' \
+  "$PY" -c 'import json,sys; from pathlib import Path; value=json.loads(Path(sys.argv[1]).read_text()); (isinstance(value,dict) and bool(value)) or sys.exit("summary JSON must be a non-empty object")' \
     "$out/summary.json"
 }
 
@@ -108,9 +95,9 @@ run_eval() {
     echo "evaluation tree contains a symlink: $out" >&2
     return 2
   fi
-  if ! eval_base_complete "$out"; then
+  if ! eval_complete "$out" identical "3=$lens"; then
     "$PY" src/ouro_jlens/evaluate.py --lens "3=$lens" --out "$out"
-    eval_base_complete "$out"
+    eval_complete "$out" identical "3=$lens"
   fi
   # Analysis is always rerun after the complete base output is established;
   # a stale summary cannot make the run skip its current input validation.

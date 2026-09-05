@@ -1,0 +1,1147 @@
+{
+  "image": "runpod/pytorch@sha256:bbe1496e2215cca3d25a5e5cd291d31ea86603e4577a81eb40096787a50e5303",
+  "jlens": {
+    "install": "editable-no-deps",
+    "repository": "https://github.com/anthropics/jacobian-lens.git",
+    "revision": "581d398613e5602a5af361e1c34d3a92ea82ba8e",
+    "transformers_requirement": "transformers>=5.5"
+  },
+  "packages": {
+    "Jinja2": {
+      "bytes": 498175,
+      "file_count": 32,
+      "files_sha256": "67371885505b03c7815fe342809d35ad82eb17024dfee13af891601e828eddf0",
+      "version": "3.1.6"
+    },
+    "MarkupSafe": {
+      "bytes": 67384,
+      "file_count": 12,
+      "files_sha256": "a904127d0c9c1674468c00fc5f028b922e2ceca0a5990273ea4b752b0e5f00c9",
+      "version": "3.0.3"
+    },
+    "PyGObject": {
+      "bytes": 0,
+      "file_count": 0,
+      "files_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "version": "3.48.2"
+    },
+    "PyJWT": {
+      "bytes": 0,
+      "file_count": 0,
+      "files_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "version": "2.7.0"
+    },
+    "PyYAML": {
+      "bytes": 2904535,
+      "file_count": 25,
+      "files_sha256": "4e81db95d47572e0f73d7ca2cd6551b51ca256cf8457bd2f5c7d4c7916d0c49a",
+      "version": "6.0.3"
+    },
+    "Pygments": {
+      "bytes": 4640549,
+      "file_count": 351,
+      "files_sha256": "b7006d0719fa6a54dfa049223f99e1a392bcf51df9293532e9dc2b81751da898",
+      "version": "2.21.0"
+    },
+    "Send2Trash": {
+      "bytes": 35713,
+      "file_count": 21,
+      "files_sha256": "25d18b62bc2eabb99795aabd005d2ac5aede403c7c2cb2b6225921f342d984e9",
+      "version": "2.1.0"
+    },
+    "accelerate": {
+      "bytes": 1517894,
+      "file_count": 97,
+      "files_sha256": "252fdcec495764c9d0f7a513544dc874334a91bb0d18d7f94f1afd5ccf6de4b2",
+      "version": "1.13.0"
+    },
+    "anyio": {
+      "bytes": 514794,
+      "file_count": 53,
+      "files_sha256": "8567b4d425829edf4f5b6c5a5bb8891aaec34b4746862b3da7be68de969b10ef",
+      "version": "4.14.2"
+    },
+    "argon2-cffi": {
+      "bytes": 35166,
+      "file_count": 14,
+      "files_sha256": "da62315cce3c9f9721e03cc59b858114160f096ec894c0e20cc415e8d5d5cc5a",
+      "version": "25.1.0"
+    },
+    "argon2-cffi-bindings": {
+      "bytes": 65773,
+      "file_count": 7,
+      "files_sha256": "9e7b38f2b179112c6f1722c8992132034f23036e641e9700ee9a28da0f6cadc8",
+      "version": "26.1.0"
+    },
+    "arrow": {
+      "bytes": 306145,
+      "file_count": 16,
+      "files_sha256": "bd4cdfa62cc992d81aeebf7e941117aa12e1bbd9040f767619d5e6a7f04e5869",
+      "version": "1.4.0"
+    },
+    "asttokens": {
+      "bytes": 81372,
+      "file_count": 16,
+      "files_sha256": "95c9e23db0dfb94fb8023b4574ac616b44d538dcaff5b7f4b38e5bad9a0aa222",
+      "version": "3.0.2"
+    },
+    "async-lru": {
+      "bytes": 23166,
+      "file_count": 8,
+      "files_sha256": "644a9b61d833b47f1cee3c7c5afbddb6828f5e04e9461d1a1f9b36347b277a57",
+      "version": "2.3.0"
+    },
+    "attrs": {
+      "bytes": 234681,
+      "file_count": 36,
+      "files_sha256": "e3d80e49763a1915fde4de6f1826f57a4d66ed83d266f5b8e3bd5ab5a0989f7d",
+      "version": "26.1.0"
+    },
+    "babel": {
+      "bytes": 30912129,
+      "file_count": 1121,
+      "files_sha256": "f96e4a93442c01699b0a6dec22501f0ffab3b761d5e8e0191f453e6f47816518",
+      "version": "2.18.0"
+    },
+    "beautifulsoup4": {
+      "bytes": 407302,
+      "file_count": 22,
+      "files_sha256": "0a8b9cac721d9c881377e8e3ed1f7cef7d83a58774ede67f6c34a7a5ab9794a6",
+      "version": "4.15.0"
+    },
+    "bleach": {
+      "bytes": 668028,
+      "file_count": 62,
+      "files_sha256": "28f9ca0927c32e32ac1aead28ad3fae3a3379f00078fbdd3ce62f1b3f7254b89",
+      "version": "6.4.0"
+    },
+    "blinker": {
+      "bytes": 0,
+      "file_count": 0,
+      "files_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "version": "1.7.0"
+    },
+    "certifi": {
+      "bytes": 249281,
+      "file_count": 13,
+      "files_sha256": "0f4493d6026169ef96997c323ef6e6f296ca7bb89a4a408355556e85933ccdc3",
+      "version": "2026.7.22"
+    },
+    "cffi": {
+      "bytes": 736443,
+      "file_count": 33,
+      "files_sha256": "d3ab87efa86ac14e223f7c637991ac767d256e4bdc673b06e771212f2d1830c9",
+      "version": "2.1.1"
+    },
+    "charset-normalizer": {
+      "bytes": 725388,
+      "file_count": 23,
+      "files_sha256": "8657be54f2ee911331ce3341696e8bdc74fd00d8f3fbbdd1ef0054629785492a",
+      "version": "3.5.1"
+    },
+    "cloudpickle": {
+      "bytes": 69259,
+      "file_count": 8,
+      "files_sha256": "ba1da0d693c7198f8c373a11b0d0b23ab07611f00ddd15bd297a239b43a73483",
+      "version": "3.1.2"
+    },
+    "comm": {
+      "bytes": 17923,
+      "file_count": 8,
+      "files_sha256": "e0c2d5a67b76853b3e84aff6a19eab60dd28032f5d728f0f25dd4edb6d436225",
+      "version": "0.2.3"
+    },
+    "contourpy": {
+      "bytes": 1092206,
+      "file_count": 25,
+      "files_sha256": "5617ac6f4f62d13f20883412278b343d4bab2095be7aeea5183d3b4f1f83e119",
+      "version": "1.3.3"
+    },
+    "cryptography": {
+      "bytes": 0,
+      "file_count": 0,
+      "files_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "version": "41.0.7"
+    },
+    "cycler": {
+      "bytes": 22760,
+      "file_count": 8,
+      "files_sha256": "4a7b481dbd7c85282bb842e0d6015ea681866a25efd6c88dd315f77c0a2a8437",
+      "version": "0.12.1"
+    },
+    "dbus-python": {
+      "bytes": 0,
+      "file_count": 0,
+      "files_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "version": "1.3.2"
+    },
+    "debugpy": {
+      "bytes": 16613054,
+      "file_count": 293,
+      "files_sha256": "d154b9f87e8f5f342e1ded7099cff0f039e92c45fb1c37442453e40a64a47b73",
+      "version": "1.8.21"
+    },
+    "defusedxml": {
+      "bytes": 69322,
+      "file_count": 17,
+      "files_sha256": "7aebea6dffd86f35a50204510ffa656283d452334d517ad638234fac6e640cd6",
+      "version": "0.7.1"
+    },
+    "distlib": {
+      "bytes": 1164967,
+      "file_count": 25,
+      "files_sha256": "a83eb7a26c5f594ec09d36c056df09f54416658c26106f7f56ac157c50bf88dc",
+      "version": "0.4.3"
+    },
+    "distro": {
+      "bytes": 0,
+      "file_count": 0,
+      "files_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "version": "1.9.0"
+    },
+    "executing": {
+      "bytes": 95925,
+      "file_count": 14,
+      "files_sha256": "f704bbfa0b17b67c5cf1127eaa51c04e4ef7dbc0a04f873094af0dd843b73842",
+      "version": "2.2.1"
+    },
+    "fastjsonschema": {
+      "bytes": 94317,
+      "file_count": 18,
+      "files_sha256": "708a609d707d78d4961e1a2d8c9b815673372a38797cf1bb4020e585fec3f057",
+      "version": "2.22.2"
+    },
+    "filelock": {
+      "bytes": 355575,
+      "file_count": 27,
+      "files_sha256": "0586f09d1f5af62cbcd3a9329c1a86a6370ecf2a80cbf4c89cab99f254b5d4f2",
+      "version": "3.32.4"
+    },
+    "fonttools": {
+      "bytes": 22909525,
+      "file_count": 368,
+      "files_sha256": "365f5924e9728d836b173b3b0742466cb81af85a990d77b513bab8a6a255b9fc",
+      "version": "4.64.0"
+    },
+    "fqdn": {
+      "bytes": 23977,
+      "file_count": 9,
+      "files_sha256": "ecc767c07423543515ccac6a31801afb63498ab1696e974e4b37100e1158f978",
+      "version": "1.5.1"
+    },
+    "fsspec": {
+      "bytes": 755712,
+      "file_count": 62,
+      "files_sha256": "dd33cfbb1e3eeabecd7cfe940483ed6b17bbe0fa67246154dc919bb801f0e043",
+      "version": "2026.7.0"
+    },
+    "h11": {
+      "bytes": 104525,
+      "file_count": 18,
+      "files_sha256": "a56da7a9c0e638ede4cfafbfd51b2e0e5c299fdc765b7833bf9c47dd0781c269",
+      "version": "0.16.0"
+    },
+    "hf-xet": {
+      "bytes": 12509043,
+      "file_count": 8,
+      "files_sha256": "3caf30eddbb557183aa580a94f9f436ba4f591671f6270e974a2f7f32ce6d65b",
+      "version": "1.6.0"
+    },
+    "hf_transfer": {
+      "bytes": 9668044,
+      "file_count": 8,
+      "files_sha256": "4d0d371e2e4d7fbb04abe547b45914fe3ae2d66b20a963afafb81785bc14696a",
+      "version": "0.1.9"
+    },
+    "httpcore": {
+      "bytes": 289835,
+      "file_count": 37,
+      "files_sha256": "d74cee46488682134d59496894c31f58ae8df03b59a48d26c97522b958dc4c78",
+      "version": "1.0.9"
+    },
+    "httplib2": {
+      "bytes": 0,
+      "file_count": 0,
+      "files_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "version": "0.20.4"
+    },
+    "httpx": {
+      "bytes": 296763,
+      "file_count": 31,
+      "files_sha256": "4bf5ce452b3b9cc3e6ca8da2dc817a4b1fcf8012ef5ee3cd6a511ab4f1dea67c",
+      "version": "0.28.1"
+    },
+    "huggingface_hub": {
+      "bytes": 2268431,
+      "file_count": 175,
+      "files_sha256": "3db17a168ebe5246a7bf1e234ee098ac2785708143a8aa5fa6283875e47baaec",
+      "version": "0.36.2"
+    },
+    "idna": {
+      "bytes": 337992,
+      "file_count": 18,
+      "files_sha256": "62a8f25584afa81d3ade22821a3ef0db34c3527b3ec61626f955fd1c292b47ee",
+      "version": "3.19"
+    },
+    "ipykernel": {
+      "bytes": 369452,
+      "file_count": 59,
+      "files_sha256": "c08e0250be41ea5b19e794b0b605252e8f607cfad467d0561c6686624352a7a9",
+      "version": "7.3.0"
+    },
+    "ipython": {
+      "bytes": 2067677,
+      "file_count": 189,
+      "files_sha256": "fd1a03f3c17fd8694168b739a71fbd32462e29c9b1e2c1d6a6009ed789320256",
+      "version": "9.17.1"
+    },
+    "ipython_pygments_lexers": {
+      "bytes": 23287,
+      "file_count": 7,
+      "files_sha256": "14ffe7102c181cdbc834bd5ee3f7a07f3b43625b8866d63f556dfd832e0f206b",
+      "version": "1.1.1"
+    },
+    "ipywidgets": {
+      "bytes": 412393,
+      "file_count": 71,
+      "files_sha256": "613653540344fa2115beb7a1e4828032e859b13ccb8a8f215a57b75a5136816e",
+      "version": "8.1.8"
+    },
+    "isoduration": {
+      "bytes": 25334,
+      "file_count": 19,
+      "files_sha256": "bbba254c1f01c8b99633781a0c1de994a44d98d5ce92d9007baa464f36f2d5d5",
+      "version": "20.11.0"
+    },
+    "jaraco.context": {
+      "bytes": 16098,
+      "file_count": 9,
+      "files_sha256": "b92518968e30ecc365bc0abc499fcc2ce3cad474074a160a4929df51627ecafc",
+      "version": "6.1.0"
+    },
+    "jedi": {
+      "bytes": 14590216,
+      "file_count": 5627,
+      "files_sha256": "e49c90b949143c76bf56c36f4c97cbef2eeebff43886d446652a53cbba0601d0",
+      "version": "0.20.0"
+    },
+    "jlens": {
+      "bytes": 20360,
+      "file_count": 10,
+      "files_sha256": "21c9ba4ca0c4a3e37be32d7a3a6622553b1f6604d858b987bd07021aa829c6f2",
+      "version": "0.1.0"
+    },
+    "joblib": {
+      "bytes": 926397,
+      "file_count": 142,
+      "files_sha256": "76b166b1427f4b908d32b96ad580619be27f1f4434c4c9e0c06166b5e01e56e9",
+      "version": "1.6.0"
+    },
+    "json5": {
+      "bytes": 135787,
+      "file_count": 16,
+      "files_sha256": "6eb737ad4636cc66973db115fcbf0bf005316745d7e4f77baf4619edee133e78",
+      "version": "0.15.0"
+    },
+    "jsonpointer": {
+      "bytes": 17181,
+      "file_count": 9,
+      "files_sha256": "7677b6bb1522b85b01783e18a6e843929799ef0b09b5c6f5873e35442821ba94",
+      "version": "3.1.1"
+    },
+    "jsonschema": {
+      "bytes": 478747,
+      "file_count": 45,
+      "files_sha256": "be7189183f2444d95f3a92beea1fb018dda62255298b9231277f0103f0c58476",
+      "version": "4.26.0"
+    },
+    "jsonschema-specifications": {
+      "bytes": 47697,
+      "file_count": 29,
+      "files_sha256": "20625c2f3df1315d5fa0c71540fd1d56df7fb110422becb86029fbad6ec7e0b3",
+      "version": "2025.9.1"
+    },
+    "jupyter-archive": {
+      "bytes": 68958,
+      "file_count": 20,
+      "files_sha256": "3478b83c98e1e2b9f82961a99ef5210f23dc97090be9be01958650264e567e2a",
+      "version": "3.4.0"
+    },
+    "jupyter-events": {
+      "bytes": 48444,
+      "file_count": 22,
+      "files_sha256": "3253156fca8878139c6c3058f2580789cd4d5fa3b4915d69872a41dc39498fa7",
+      "version": "0.12.1"
+    },
+    "jupyter-lsp": {
+      "bytes": 257074,
+      "file_count": 72,
+      "files_sha256": "f2774fb6f462fb7b1e24241f2848b8a40d2e074bfaca8a80f93aba079257b78a",
+      "version": "2.3.1"
+    },
+    "jupyter_client": {
+      "bytes": 364845,
+      "file_count": 48,
+      "files_sha256": "909ebe6109922b1bb4da389ec0ee4d1d01dcec940816446c82615e3c3661591d",
+      "version": "8.10.0"
+    },
+    "jupyter_core": {
+      "bytes": 91805,
+      "file_count": 20,
+      "files_sha256": "fd4336feb96168f5e51ad024468573d6df3f948b7414d6f227757d2dd2e296e9",
+      "version": "5.9.1"
+    },
+    "jupyter_server": {
+      "bytes": 1727903,
+      "file_count": 130,
+      "files_sha256": "7a3f6eb6e8bafbe9aaaf283088c7a17f9ba11a92c393e9159239689aad4ea82b",
+      "version": "2.21.0"
+    },
+    "jupyter_server_terminals": {
+      "bytes": 31781,
+      "file_count": 15,
+      "files_sha256": "1113e8503457be88a74c9babd442ea3c7d406826890bb8b93011ac27ba4db651",
+      "version": "0.5.4"
+    },
+    "jupyterlab": {
+      "bytes": 38275769,
+      "file_count": 939,
+      "files_sha256": "540f4f166991b053a7dbada1fa31627b6b6f3a4b6ff40911c81e41df25a38e56",
+      "version": "4.5.10"
+    },
+    "jupyterlab_pygments": {
+      "bytes": 38194,
+      "file_count": 15,
+      "files_sha256": "278d5a77f7815df63d93b7364b54cd78482b7ae4a3e811ef259a42a95195efa4",
+      "version": "0.3.0"
+    },
+    "jupyterlab_server": {
+      "bytes": 189216,
+      "file_count": 41,
+      "files_sha256": "55dec27501799dc07c676fd4928226a4c7dcf1be4ac348fd18dcb185a43d523b",
+      "version": "2.28.0"
+    },
+    "jupyterlab_widgets": {
+      "bytes": 731739,
+      "file_count": 26,
+      "files_sha256": "b3f179b6262437d81d5eb2710966429fafed675aaccabc1188dff8100395e888",
+      "version": "3.0.17"
+    },
+    "kiwisolver": {
+      "bytes": 5760105,
+      "file_count": 11,
+      "files_sha256": "64359de8257a6ca4826bc85fbc137971e01477821754ad3a68cdb90b31794b30",
+      "version": "1.5.1"
+    },
+    "lark": {
+      "bytes": 359907,
+      "file_count": 47,
+      "files_sha256": "a2af67342ae7f0703b0f3f23dc7b2bf72b08800a0de121cef35f166f8eccff46",
+      "version": "1.3.1"
+    },
+    "launchpadlib": {
+      "bytes": 0,
+      "file_count": 0,
+      "files_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "version": "1.11.0"
+    },
+    "lazr.restfulclient": {
+      "bytes": 0,
+      "file_count": 0,
+      "files_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "version": "0.14.6"
+    },
+    "lazr.uri": {
+      "bytes": 0,
+      "file_count": 0,
+      "files_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "version": "1.0.6"
+    },
+    "matplotlib": {
+      "bytes": 22216514,
+      "file_count": 596,
+      "files_sha256": "0e10d12deee2c4784d8c41a64d75e905d38613a3324d48b6cbc28723dddecd6a",
+      "version": "3.10.8"
+    },
+    "matplotlib-inline": {
+      "bytes": 21656,
+      "file_count": 10,
+      "files_sha256": "bb83f4acf89c124ae2a3bd3d6d810c8f27fa2dcf767c49a6f0ad44f05c84ef07",
+      "version": "0.2.2"
+    },
+    "mistune": {
+      "bytes": 203874,
+      "file_count": 47,
+      "files_sha256": "39cc7c7c1c19ad3c3f0185d30283dad8bd7fb5ed83842189704fa00e8d9be71d",
+      "version": "3.3.4"
+    },
+    "mpmath": {
+      "bytes": 1955210,
+      "file_count": 93,
+      "files_sha256": "4ba77795f9b6707512319f2ff7710318260268177bc9442f04b94f6f45afd97b",
+      "version": "1.3.0"
+    },
+    "nbclient": {
+      "bytes": 81844,
+      "file_count": 16,
+      "files_sha256": "9307a7704818b88b5673adf43921cfebcb06172e87dcce71a39ff67f573a8f25",
+      "version": "0.11.0"
+    },
+    "nbconvert": {
+      "bytes": 951360,
+      "file_count": 134,
+      "files_sha256": "42979c5cc96867264ba87b86dcac33029fb62e8848413eafe28af145fcc1a278",
+      "version": "7.17.1"
+    },
+    "nbformat": {
+      "bytes": 292245,
+      "file_count": 56,
+      "files_sha256": "4c99946ef9626e30eb7a0c64761b3d4ff0898f4181378ceee463a3c28410b432",
+      "version": "5.11.1"
+    },
+    "nest-asyncio2": {
+      "bytes": 22106,
+      "file_count": 7,
+      "files_sha256": "ffe25cc2458322d460d0728562fba1841cd4128d2fbf597271e500ea872e2479",
+      "version": "1.7.2"
+    },
+    "networkx": {
+      "bytes": 7080946,
+      "file_count": 602,
+      "files_sha256": "1e18921a3a3308edc260e3b05ec879763f703a704477967af47de34edbd4a419",
+      "version": "3.6.1"
+    },
+    "notebook": {
+      "bytes": 66281996,
+      "file_count": 580,
+      "files_sha256": "ce2b9240120f1e7b395783bf59c81f764585cf12e0e20f96a191c38efa1ee5ad",
+      "version": "7.5.6"
+    },
+    "notebook_shim": {
+      "bytes": 35569,
+      "file_count": 17,
+      "files_sha256": "51d24c1461c6ce292d96d943c8600e98e29c0a15d9b34fa0d03cd7dd716e510e",
+      "version": "0.2.4"
+    },
+    "numpy": {
+      "bytes": 56518591,
+      "file_count": 917,
+      "files_sha256": "83bce2a0b627cbf1d57f386d88011a247b670fbfa8b2379af092466cb5ecc58a",
+      "version": "2.4.3"
+    },
+    "nvidia-cublas-cu12": {
+      "bytes": 869571446,
+      "file_count": 19,
+      "files_sha256": "f2377541a5bfe5a0186363798bf27cac521fbaac4489df1a7b180263ea97cfe8",
+      "version": "12.8.4.1"
+    },
+    "nvidia-cuda-cupti-cu12": {
+      "bytes": 42519579,
+      "file_count": 52,
+      "files_sha256": "ef0ea867518ef70563e9ba8e5e18e95863b43e9b7de1985c30ee481a9f8fb3fd",
+      "version": "12.8.90"
+    },
+    "nvidia-cuda-nvrtc-cu12": {
+      "bytes": 222209136,
+      "file_count": 15,
+      "files_sha256": "9c152b3d4dc3749e13f78d3332930b1b0ddb10df40cfde60bf95252040ecd369",
+      "version": "12.8.93"
+    },
+    "nvidia-cuda-runtime-cu12": {
+      "bytes": 4992432,
+      "file_count": 106,
+      "files_sha256": "8076aefba1842dc5d51cfe3a65a02e3a3be1fcee336781453b5035123da3250f",
+      "version": "12.8.90"
+    },
+    "nvidia-cudnn-cu12": {
+      "bytes": 1053624888,
+      "file_count": 28,
+      "files_sha256": "1b085afa942cc2082094d1eb89260e87dfc6856029c136dee1f7067c788fdd6e",
+      "version": "9.10.2.21"
+    },
+    "nvidia-cufft-cu12": {
+      "bytes": 281139565,
+      "file_count": 16,
+      "files_sha256": "a2bebb68b6e7daa4e96dbd429d51767188134c63308722a485da75eb9776ea12",
+      "version": "11.3.3.83"
+    },
+    "nvidia-cufile-cu12": {
+      "bytes": 3348036,
+      "file_count": 13,
+      "files_sha256": "a259abb6d96e28c1374767127df69fc3831e818d5f76bed5df265c3668eec0c1",
+      "version": "1.13.1.3"
+    },
+    "nvidia-curand-cu12": {
+      "bytes": 138917838,
+      "file_count": 28,
+      "files_sha256": "078be8b6602066498d5d817e1102df2e6f1f4837f4d2ad0ff4cd04999d70adb9",
+      "version": "10.3.9.90"
+    },
+    "nvidia-cusolver-cu12": {
+      "bytes": 405119493,
+      "file_count": 18,
+      "files_sha256": "c6af25f221018e10096e0f6f7e3d0aea75bda8b8ffb4900e7003e00346817b5c",
+      "version": "11.7.3.90"
+    },
+    "nvidia-cusparse-cu12": {
+      "bytes": 388352198,
+      "file_count": 13,
+      "files_sha256": "3eb5571f76a4784921b0f19d5ffa4c76e03b5812aeab1a62ebd1ff9d5c18691e",
+      "version": "12.5.8.93"
+    },
+    "nvidia-cusparselt-cu12": {
+      "bytes": 452024195,
+      "file_count": 8,
+      "files_sha256": "dcc2d877e97204e60cf690a10a0c5c88b3934538149e0039bd9586f12b81599e",
+      "version": "0.7.1"
+    },
+    "nvidia-nccl-cu12": {
+      "bytes": 429661555,
+      "file_count": 8,
+      "files_sha256": "2bb71a8ebd31da3f2d2de5aacdf9156bbb560f01df02ca91f112f0f4605eb0c1",
+      "version": "2.27.3"
+    },
+    "nvidia-nvjitlink-cu12": {
+      "bytes": 94180925,
+      "file_count": 12,
+      "files_sha256": "92a3af6343dcd8e80256b8137bd211a7c2669b5dbdf83324650eddc9fb0411f5",
+      "version": "12.8.93"
+    },
+    "nvidia-nvtx-cu12": {
+      "bytes": 367596,
+      "file_count": 32,
+      "files_sha256": "1dc779ddbff07978575353e0f263d8ee1b43208754471d7ce903efcf1e95d631",
+      "version": "12.8.90"
+    },
+    "oauthlib": {
+      "bytes": 0,
+      "file_count": 0,
+      "files_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "version": "3.2.2"
+    },
+    "packaging": {
+      "bytes": 500425,
+      "file_count": 30,
+      "files_sha256": "83a0cf2901820b31281da3f1987522ca7b9ca4996f0eb180999de860a90a1469",
+      "version": "26.3"
+    },
+    "pandocfilters": {
+      "bytes": 20307,
+      "file_count": 7,
+      "files_sha256": "f40e0a2190fdf5e24a2d5ec18a0762a092ef51fc7b1e87c86cc78a20c56561c3",
+      "version": "1.5.1"
+    },
+    "parso": {
+      "bytes": 356223,
+      "file_count": 38,
+      "files_sha256": "960e8ae72c55569ea90dd7a3a1c63cde39324e17395a0cf7f26f113d2a6cb9fb",
+      "version": "0.8.7"
+    },
+    "pexpect": {
+      "bytes": 192336,
+      "file_count": 25,
+      "files_sha256": "8b4685739cafe6a318df8ed0685f53c03b79fbeda51ac04dcf447b1e7d10f87a",
+      "version": "4.9.0"
+    },
+    "pillow": {
+      "bytes": 19672259,
+      "file_count": 141,
+      "files_sha256": "c0a1d7704d1e3fbf3ecbfbd6a4620c6ed2feb2ffb8b1071d14744e3f260de5dc",
+      "version": "12.3.0"
+    },
+    "pip": {
+      "bytes": 5690535,
+      "file_count": 479,
+      "files_sha256": "057e0ac4f09bf48684c8372d13460202c47704a8d8cd6ebb8d9917b78be13e61",
+      "version": "26.2.1"
+    },
+    "platformdirs": {
+      "bytes": 124168,
+      "file_count": 15,
+      "files_sha256": "c570ae605545acf85172ec79be2922dcba9a9781835c98854cf302d247af4fae",
+      "version": "4.11.4"
+    },
+    "prometheus_client": {
+      "bytes": 215374,
+      "file_count": 38,
+      "files_sha256": "30d15818498cec97c4f1027bea1753c72f1c31039211477229470b69e98d1bf6",
+      "version": "0.26.0"
+    },
+    "prompt_toolkit": {
+      "bytes": 1407407,
+      "file_count": 153,
+      "files_sha256": "b26e66c2967a8427fe62917041003a1f595a495e4af0ea2f996142c632fd2f9f",
+      "version": "3.0.53"
+    },
+    "psutil": {
+      "bytes": 521186,
+      "file_count": 17,
+      "files_sha256": "8a7cadbad8ac5817d7f1d6be9a0adbf020f33c84d3daa39560a2fddbc415a356",
+      "version": "7.2.2"
+    },
+    "ptyprocess": {
+      "bytes": 40213,
+      "file_count": 9,
+      "files_sha256": "b9cca474b08f9ceef1c4c5443c600997ae445482c4cd7a753212f4b7ce96ef20",
+      "version": "0.7.0"
+    },
+    "pure_eval": {
+      "bytes": 33268,
+      "file_count": 12,
+      "files_sha256": "7e79f6706781b4add8707827de18a2b6d4db5b4fab12bf6d0ee2d5a58d72d1ac",
+      "version": "0.2.3"
+    },
+    "pycparser": {
+      "bytes": 204205,
+      "file_count": 14,
+      "files_sha256": "5e1bcb783d90a0f0b599c43b0300ef8aefad4f4ad7ea51f34902432ddc88d6c2",
+      "version": "3.0"
+    },
+    "pyparsing": {
+      "bytes": 0,
+      "file_count": 0,
+      "files_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "version": "3.1.1"
+    },
+    "python-apt": {
+      "bytes": 0,
+      "file_count": 0,
+      "files_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "version": "2.7.7+ubuntu5.2"
+    },
+    "python-dateutil": {
+      "bytes": 442628,
+      "file_count": 26,
+      "files_sha256": "67c55c04abed8b8af2b90a1a7b1eb5666fdff57ca0f610e8a24c6147cd7299bf",
+      "version": "2.9.0.post0"
+    },
+    "python-discovery": {
+      "bytes": 120237,
+      "file_count": 18,
+      "files_sha256": "4b612d9e2d31ed1025e42a33b8ed01f5b9bc27fd73741e499fb5ce5d8e2cead2",
+      "version": "1.5.3"
+    },
+    "python-json-logger": {
+      "bytes": 40357,
+      "file_count": 16,
+      "files_sha256": "18deffe5349bdc456f37af2245f61fafa33d649e6e0e2d71a26c8db225875ac6",
+      "version": "4.2.0"
+    },
+    "pyzmq": {
+      "bytes": 3040725,
+      "file_count": 98,
+      "files_sha256": "98576c3e37989eefa2d3a6b7f965f9c580e11ad2c1bc806c34ae0247bd5f5645",
+      "version": "27.2.0"
+    },
+    "referencing": {
+      "bytes": 116229,
+      "file_count": 20,
+      "files_sha256": "95e74cbd74155c4f957bfa6648bb88cdc4a0c8e5d10a26c461b6ff51b7e38861",
+      "version": "0.37.0"
+    },
+    "regex": {
+      "bytes": 3033355,
+      "file_count": 11,
+      "files_sha256": "fe442485e6fcf86eaac28c2895826ae703ef6b03e0e70a59a0d17b5d62c42c3e",
+      "version": "2026.9.3"
+    },
+    "requests": {
+      "bytes": 235437,
+      "file_count": 27,
+      "files_sha256": "f5a997321e12eea0025d1ebe0412d03ef926ca93c9970b8ffef01964bd57cab6",
+      "version": "2.34.2"
+    },
+    "rfc3339-validator": {
+      "bytes": 4780,
+      "file_count": 8,
+      "files_sha256": "c240a6da23b69bd73ade5f2c2480b972c2bf80388ac4fcea3f274d5894b493c2",
+      "version": "0.1.4"
+    },
+    "rfc3986-validator": {
+      "bytes": 8245,
+      "file_count": 8,
+      "files_sha256": "3d291dd4a009ff9e1f9cc0c56174fdb6112c16a03e2af02c0f634d58a6f6e553",
+      "version": "0.1.1"
+    },
+    "rfc3987-syntax": {
+      "bytes": 18700,
+      "file_count": 10,
+      "files_sha256": "44b21057ff78eba5fccf0fc9ad39c8ee9e602b8a8d799dc3a8bce9de053f2ece",
+      "version": "1.1.0"
+    },
+    "rpds-py": {
+      "bytes": 996432,
+      "file_count": 10,
+      "files_sha256": "f69747cc8f56e6650f9421780ca221936ec9263c26c7dbdc390af68a9de3f613",
+      "version": "2026.6.3"
+    },
+    "safetensors": {
+      "bytes": 1282104,
+      "file_count": 16,
+      "files_sha256": "254169171d5a0321148ed964151f29a130a7b6adce9a82e69da7a2fb47a5ba1e",
+      "version": "0.7.0"
+    },
+    "scikit-learn": {
+      "bytes": 30298551,
+      "file_count": 963,
+      "files_sha256": "8f7d3a1f2c9bb22dd1e0c9d286c71e283cd0651f98735ef122cd65c18e6ddf34",
+      "version": "1.8.0"
+    },
+    "scipy": {
+      "bytes": 112001985,
+      "file_count": 1433,
+      "files_sha256": "f862cbb7c3ff57f7a5b3cf9513142812582f33784d06cad00b9a05e4749f847e",
+      "version": "1.18.1"
+    },
+    "setuptools": {
+      "bytes": 3674811,
+      "file_count": 460,
+      "files_sha256": "1f9beb398576223498a8f03d21a8b591c28e176fe658d12a8ca244a1e7e7ef6a",
+      "version": "81.0.0"
+    },
+    "six": {
+      "bytes": 0,
+      "file_count": 0,
+      "files_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "version": "1.16.0"
+    },
+    "soupsieve": {
+      "bytes": 144689,
+      "file_count": 13,
+      "files_sha256": "c27336682f58f014759b9330bd8e4bb374b755a6cdaaf7a002169560bc841286",
+      "version": "2.9.2"
+    },
+    "stack-data": {
+      "bytes": 75711,
+      "file_count": 13,
+      "files_sha256": "20e164053e38de8e5050e9cef582318557d7fca589efb1a27e2648f75ae0c94b",
+      "version": "0.6.3"
+    },
+    "sympy": {
+      "bytes": 26942230,
+      "file_count": 1572,
+      "files_sha256": "2008b1b0ba3ec70341a691cbe26fc30d2d1102d9fb29010cf538ab786f3e9ec9",
+      "version": "1.14.0"
+    },
+    "terminado": {
+      "bytes": 33685,
+      "file_count": 13,
+      "files_sha256": "a6ab8b844293fd08bc3785ddfe1fc1692e8801b91e70cc9f3fc61d788109d452",
+      "version": "0.18.1"
+    },
+    "threadpoolctl": {
+      "bytes": 66798,
+      "file_count": 7,
+      "files_sha256": "c2afe279fe98d3ca13afe4f62efba460a55dbe6b32e861668b1c015bb430bebf",
+      "version": "3.6.0"
+    },
+    "tinycss2": {
+      "bytes": 109710,
+      "file_count": 15,
+      "files_sha256": "5bd671429520ba1bfe01da49f6aed51dc197eeb7f9eb7d34349ebf3178c1a76a",
+      "version": "1.5.1"
+    },
+    "tokenizers": {
+      "bytes": 9566332,
+      "file_count": 29,
+      "files_sha256": "0f1753d7f9a76be75fad9d45ef80f1e64f6178d64bba02d129423d72e338fc36",
+      "version": "0.21.4"
+    },
+    "torch": {
+      "bytes": 1695334770,
+      "file_count": 11503,
+      "files_sha256": "271b937a79d12bee7e45073c7bfcc443afee120f3bc56414885ead5474f93446",
+      "version": "2.8.0+cu128"
+    },
+    "torchaudio": {
+      "bytes": 16298277,
+      "file_count": 151,
+      "files_sha256": "50647819f93ccf4867a569d317f278ea54eb72d4be406ca3c1ef71cf5716049f",
+      "version": "2.8.0+cu128"
+    },
+    "torchvision": {
+      "bytes": 23815910,
+      "file_count": 203,
+      "files_sha256": "b1997d52d8e81d35eb9a6cc2c55a5402a3c01739940f4ddb8b4eb512ccb5b113",
+      "version": "0.23.0+cu128"
+    },
+    "tornado": {
+      "bytes": 1674339,
+      "file_count": 98,
+      "files_sha256": "58be21bfd0f3c31820128d457dcc3c39e581c81fec85e7a6f1e4af667a824b93",
+      "version": "6.5.8"
+    },
+    "tqdm": {
+      "bytes": 235255,
+      "file_count": 41,
+      "files_sha256": "35ccbea0d4b5cdd00ec62603f0d273837c02ba361046aa93df921995b203e75f",
+      "version": "4.70.0"
+    },
+    "traitlets": {
+      "bytes": 321139,
+      "file_count": 30,
+      "files_sha256": "1f2873de23604f0a10de2cb348e1a2afcaee33830cc7cb30e97d3762bd378433",
+      "version": "5.16.1"
+    },
+    "transformers": {
+      "bytes": 49309275,
+      "file_count": 2089,
+      "files_sha256": "287da9d12664d6f8f5b863004e0f813dd55bb0d9577033bfcd47c9f11b39dd6b",
+      "version": "4.54.1"
+    },
+    "triton": {
+      "bytes": 564934311,
+      "file_count": 372,
+      "files_sha256": "07d8889b879e156f79edd6fd7365b26ce117a12ef14a3e107271ae6e81dcae90",
+      "version": "3.4.0"
+    },
+    "typing_extensions": {
+      "bytes": 182924,
+      "file_count": 6,
+      "files_sha256": "46a3d7805256785f4cbf33f65314df8438821de51da2b4dd4ff1fd76522fc7a4",
+      "version": "4.16.0"
+    },
+    "tzdata": {
+      "bytes": 584173,
+      "file_count": 634,
+      "files_sha256": "c319f963931b6975b01103a956bda26e63be81551324fbf78228097f7dc317cf",
+      "version": "2026.3"
+    },
+    "uri-template": {
+      "bytes": 38413,
+      "file_count": 12,
+      "files_sha256": "c98c7ab97befda3adf9e336a5baffbca665dbff2420a6379c96904703604bf4b",
+      "version": "1.3.0"
+    },
+    "urllib3": {
+      "bytes": 434465,
+      "file_count": 43,
+      "files_sha256": "9a1319014e2ef7fce70088dea8c5c59af14f64d6f475cc5be0486e67e3ca54bc",
+      "version": "2.7.0"
+    },
+    "virtualenv": {
+      "bytes": 5732556,
+      "file_count": 114,
+      "files_sha256": "3cd00735f86c814a74c3c25de0c5b579716dc3306a017077c0c48ee7eb506ed1",
+      "version": "21.7.5"
+    },
+    "wadllib": {
+      "bytes": 0,
+      "file_count": 0,
+      "files_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "version": "1.3.6"
+    },
+    "wcwidth": {
+      "bytes": 1844734,
+      "file_count": 54,
+      "files_sha256": "2788d25c11fd96caf8034d0478746728467a97c823b2388afa7a5ada8867bce2",
+      "version": "0.8.3"
+    },
+    "webcolors": {
+      "bytes": 45891,
+      "file_count": 12,
+      "files_sha256": "0f537e295ce2fd15df55a670f6070036c951e9ee3f07cd3c9bc847d582e51dc2",
+      "version": "25.10.0"
+    },
+    "webencodings": {
+      "bytes": 28547,
+      "file_count": 8,
+      "files_sha256": "37862ef99b1c875bb942fb6914187c99e8caa3efc18b1ff14648b805f7b74637",
+      "version": "0.6.1"
+    },
+    "websocket-client": {
+      "bytes": 365554,
+      "file_count": 45,
+      "files_sha256": "8f019f5a0cabcd33d30381a9181edd1780f9161b86c9b0644e67a5d04df046f2",
+      "version": "1.9.2"
+    },
+    "wheel": {
+      "bytes": 88035,
+      "file_count": 21,
+      "files_sha256": "f5a2db700966d8f70bcd5547e484e04e14d810e646bd490d24f72f3d802668ea",
+      "version": "0.46.2"
+    },
+    "widgetsnbextension": {
+      "bytes": 9241740,
+      "file_count": 15,
+      "files_sha256": "3b3d6d8d196755bccf792146fe321a602c4d0bde9699d55b8cc63270132f1047",
+      "version": "4.0.16"
+    }
+  },
+  "pip_freeze": [
+    "Jinja2==3.1.6",
+    "MarkupSafe==3.0.3",
+    "PyGObject==3.48.2",
+    "PyJWT==2.7.0",
+    "PyYAML==6.0.3",
+    "Pygments==2.21.0",
+    "Send2Trash==2.1.0",
+    "accelerate==1.13.0",
+    "anyio==4.14.2",
+    "argon2-cffi-bindings==26.1.0",
+    "argon2-cffi==25.1.0",
+    "arrow==1.4.0",
+    "asttokens==3.0.2",
+    "async-lru==2.3.0",
+    "attrs==26.1.0",
+    "babel==2.18.0",
+    "beautifulsoup4==4.15.0",
+    "bleach==6.4.0",
+    "blinker==1.7.0",
+    "certifi==2026.7.22",
+    "cffi==2.1.1",
+    "charset-normalizer==3.5.1",
+    "cloudpickle==3.1.2",
+    "comm==0.2.3",
+    "contourpy==1.3.3",
+    "cryptography==41.0.7",
+    "cryptography==41.0.7",
+    "cycler==0.12.1",
+    "dbus-python==1.3.2",
+    "debugpy==1.8.21",
+    "defusedxml==0.7.1",
+    "distlib==0.4.3",
+    "distro==1.9.0",
+    "executing==2.2.1",
+    "fastjsonschema==2.22.2",
+    "filelock==3.32.4",
+    "fonttools==4.64.0",
+    "fqdn==1.5.1",
+    "fsspec==2026.7.0",
+    "h11==0.16.0",
+    "hf-xet==1.6.0",
+    "hf_transfer==0.1.9",
+    "httpcore==1.0.9",
+    "httplib2==0.20.4",
+    "httpx==0.28.1",
+    "huggingface_hub==0.36.2",
+    "idna==3.19",
+    "ipykernel==7.3.0",
+    "ipython==9.17.1",
+    "ipython_pygments_lexers==1.1.1",
+    "ipywidgets==8.1.8",
+    "isoduration==20.11.0",
+    "jaraco.context==6.1.0",
+    "jedi==0.20.0",
+    "jlens==0.1.0",
+    "joblib==1.6.0",
+    "json5==0.15.0",
+    "jsonpointer==3.1.1",
+    "jsonschema-specifications==2025.9.1",
+    "jsonschema==4.26.0",
+    "jupyter-archive==3.4.0",
+    "jupyter-events==0.12.1",
+    "jupyter-lsp==2.3.1",
+    "jupyter_client==8.10.0",
+    "jupyter_core==5.9.1",
+    "jupyter_server==2.21.0",
+    "jupyter_server_terminals==0.5.4",
+    "jupyterlab==4.5.10",
+    "jupyterlab_pygments==0.3.0",
+    "jupyterlab_server==2.28.0",
+    "jupyterlab_widgets==3.0.17",
+    "kiwisolver==1.5.1",
+    "lark==1.3.1",
+    "launchpadlib==1.11.0",
+    "lazr.restfulclient==0.14.6",
+    "lazr.uri==1.0.6",
+    "matplotlib-inline==0.2.2",
+    "matplotlib==3.10.8",
+    "mistune==3.3.4",
+    "mpmath==1.3.0",
+    "nbclient==0.11.0",
+    "nbconvert==7.17.1",
+    "nbformat==5.11.1",
+    "nest-asyncio2==1.7.2",
+    "networkx==3.6.1",
+    "notebook==7.5.6",
+    "notebook_shim==0.2.4",
+    "numpy==2.4.3",
+    "nvidia-cublas-cu12==12.8.4.1",
+    "nvidia-cuda-cupti-cu12==12.8.90",
+    "nvidia-cuda-nvrtc-cu12==12.8.93",
+    "nvidia-cuda-runtime-cu12==12.8.90",
+    "nvidia-cudnn-cu12==9.10.2.21",
+    "nvidia-cufft-cu12==11.3.3.83",
+    "nvidia-cufile-cu12==1.13.1.3",
+    "nvidia-curand-cu12==10.3.9.90",
+    "nvidia-cusolver-cu12==11.7.3.90",
+    "nvidia-cusparse-cu12==12.5.8.93",
+    "nvidia-cusparselt-cu12==0.7.1",
+    "nvidia-nccl-cu12==2.27.3",
+    "nvidia-nvjitlink-cu12==12.8.93",
+    "nvidia-nvtx-cu12==12.8.90",
+    "oauthlib==3.2.2",
+    "packaging==26.3",
+    "pandocfilters==1.5.1",
+    "parso==0.8.7",
+    "pexpect==4.9.0",
+    "pillow==12.3.0",
+    "pip==26.2.1",
+    "platformdirs==4.11.4",
+    "prometheus_client==0.26.0",
+    "prompt_toolkit==3.0.53",
+    "psutil==7.2.2",
+    "ptyprocess==0.7.0",
+    "pure_eval==0.2.3",
+    "pycparser==3.0",
+    "pyparsing==3.1.1",
+    "python-apt==2.7.7+ubuntu5.2",
+    "python-dateutil==2.9.0.post0",
+    "python-discovery==1.5.3",
+    "python-json-logger==4.2.0",
+    "pyzmq==27.2.0",
+    "referencing==0.37.0",
+    "regex==2026.9.3",
+    "requests==2.34.2",
+    "rfc3339-validator==0.1.4",
+    "rfc3986-validator==0.1.1",
+    "rfc3987-syntax==1.1.0",
+    "rpds-py==2026.6.3",
+    "safetensors==0.7.0",
+    "scikit-learn==1.8.0",
+    "scipy==1.18.1",
+    "setuptools==81.0.0",
+    "six==1.16.0",
+    "soupsieve==2.9.2",
+    "stack-data==0.6.3",
+    "sympy==1.14.0",
+    "terminado==0.18.1",
+    "threadpoolctl==3.6.0",
+    "tinycss2==1.5.1",
+    "tokenizers==0.21.4",
+    "torch==2.8.0+cu128",
+    "torchaudio==2.8.0+cu128",
+    "torchvision==0.23.0+cu128",
+    "tornado==6.5.8",
+    "tqdm==4.70.0",
+    "traitlets==5.16.1",
+    "transformers==4.54.1",
+    "triton==3.4.0",
+    "typing_extensions==4.16.0",
+    "tzdata==2026.3",
+    "uri-template==1.3.0",
+    "urllib3==2.7.0",
+    "virtualenv==21.7.5",
+    "wadllib==1.3.6",
+    "wcwidth==0.8.3",
+    "webcolors==25.10.0",
+    "webencodings==0.6.1",
+    "websocket-client==1.9.2",
+    "wheel==0.46.2",
+    "widgetsnbextension==4.0.16"
+  ],
+  "python": {
+    "implementation": "CPython",
+    "version": "3.12.3"
+  },
+  "schema": "ouro_jlens.runtime_lock.v1",
+  "torch": {
+    "cuda": "12.8",
+    "cuda_built": true,
+    "torchaudio": "2.8.0+cu128",
+    "torchvision": "0.23.0+cu128",
+    "triton": "3.4.0",
+    "version": "2.8.0+cu128"
+  }
+}

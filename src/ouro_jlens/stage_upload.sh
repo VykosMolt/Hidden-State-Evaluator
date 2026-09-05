@@ -6,6 +6,11 @@
 # mutation.  Runtime result paths are separate and include a run_id.
 set -euo pipefail
 
+# The stage archive is public-source data, so no credential belongs in the
+# environment used to build or verify it.  A private token file is required
+# only after the explicit dry-run exit below.
+unset HF_TOKEN JLENS_HF_TOKEN_BOOTSTRAP
+
 cd "$(dirname "$0")/../.."
 PY=${PYTHON:-venv/bin/python}
 STAGING=${STAGING:-Vykos/ouro-jlens-staging}
@@ -34,50 +39,19 @@ if [[ "${DRY_RUN:-0}" == "1" || "${1:-}" == "--dry-run" ]]; then
   exit 0
 fi
 
-# --exist-ok makes the intended idempotency explicit.  No failure is hidden:
-# authentication, network, or upload errors terminate this script.
-hf repo create "$STAGING" --private --exist-ok --quiet
-# A digest-addressed stage path is immutable.  Inspect an existing object
-# before attempting upload; only an explicit not-found response permits the
-# first upload, while authentication/network uncertainty fails closed.
-existing_dir="$tmp/existing"
-mkdir -p "$existing_dir"
-set +e
-hf download "$STAGING" "$remote_stage" --local-dir "$existing_dir" --quiet \
-  > /dev/null 2> "$tmp/download.err"
-download_rc=$?
-set -e
-if [[ "$download_rc" -eq 0 ]]; then
-  existing_archive="$existing_dir/$remote_stage"
-  if [[ ! -f "$existing_archive" ]]; then
-    existing_archive="$existing_dir/$(basename "$remote_stage")"
-  fi
-  test -f "$existing_archive"
-  cmp -s "$archive" "$existing_archive" || {
-    echo "immutable stage path already contains different bytes" >&2
-    exit 2
-  }
-  "$PY" -m ouro_jlens.publish stage-verify --archive "$existing_archive"
-  printf 'stage_path=%s manifest_sha256=%s archive_sha256=' "$remote_stage" "$manifest_sha"
-  sha256sum "$archive" | cut -d' ' -f1
-  exit 0
-fi
-if ! grep -Eiq '404|not found|does not exist|cannot find' "$tmp/download.err"; then
-  echo "could not determine whether the immutable stage path exists" >&2
-  exit 2
-fi
-# Read the object back and verify both its bytes and its internal manifest.
-# A successful upload response alone is not an acknowledgement.
-hf upload "$STAGING" "$archive" "$remote_stage" --quiet
-remote_dir="$tmp/remote"
-mkdir -p "$remote_dir"
-hf download "$STAGING" "$remote_stage" --local-dir "$remote_dir" --quiet
-remote_archive="$remote_dir/$remote_stage"
-if [[ ! -f "$remote_archive" ]]; then
-  remote_archive="$remote_dir/$(basename "$remote_stage")"
-fi
-test -f "$remote_archive"
-cmp -s "$archive" "$remote_archive"
-"$PY" -m ouro_jlens.publish stage-verify --archive "$remote_archive"
-printf 'stage_path=%s manifest_sha256=%s archive_sha256=' "$remote_stage" "$manifest_sha"
-sha256sum "$archive" | cut -d' ' -f1
+JLENS_HF_TOKEN_FILE=${JLENS_HF_TOKEN_FILE:?JLENS_HF_TOKEN_FILE is required for stage publication}
+"$PY" - "$JLENS_HF_TOKEN_FILE" <<'PY'
+import sys
+
+from ouro_jlens.publish import read_hf_token_file
+
+read_hf_token_file(sys.argv[1])
+PY
+
+# HfPublisher submits the archive through HfApi.create_commit with an exact
+# parent OID.  It also reconciles unknown outcomes by digest and rejects a
+# differing immutable object; this script must not reintroduce a CLI
+# read-before-write race.
+"$PY" -m ouro_jlens.publish stage-publish \
+  --repo "$STAGING" --token-file "$JLENS_HF_TOKEN_FILE" \
+  --archive "$archive" --remote "$remote_stage"
