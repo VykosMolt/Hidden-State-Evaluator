@@ -275,6 +275,7 @@ def test_setup_script_executes_pip_through_selected_python_and_checks_override()
     script = Path("src/ouro_jlens/setup_b300.sh").read_text()
     assert '"$PY" -m pip install -q' in script
     assert '"$PY" -m pip install -q -e "$JLENS_DIR" --no-deps' in script
+    assert script.count("--break-system-packages") == 2
     assert '"$PY" -m ouro_jlens.publish runtime-verify' in script
     assert "transformers>=5.5" in script and "transformers==4.54.1" in script
     assert publish_module.RUNTIME_IMAGE in script

@@ -34,7 +34,7 @@ test -f src/ouro_jlens/runtime.lock.json
 # Keep every runtime dependency version explicit.  This is intentionally not
 # a floating "compatible" install: a result without these pins is not the
 # same experiment.
-"$PY" -m pip install -q \
+"$PY" -m pip install -q --break-system-packages \
   "transformers==4.54.1" \
   "numpy==2.4.3" \
   "scikit-learn==1.8.0" \
@@ -64,7 +64,7 @@ test "$(git -C "$JLENS_DIR" rev-parse HEAD)" = "$JLENS_REVISION"
 JLENS_TRANSFORMERS_REQUIREMENT='transformers>=5.5'
 JLENS_TRANSFORMERS_RUNTIME='4.54.1'
 echo "jlens compatibility override: ${JLENS_TRANSFORMERS_REQUIREMENT} -> transformers==${JLENS_TRANSFORMERS_RUNTIME}"
-"$PY" -m pip install -q -e "$JLENS_DIR" --no-deps
+"$PY" -m pip install -q -e "$JLENS_DIR" --no-deps --break-system-packages
 "$PY" -m ouro_jlens.publish runtime-verify
 
 MODEL_REPOSITORY=ByteDance/Ouro-2.6B
