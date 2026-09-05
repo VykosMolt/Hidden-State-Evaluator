@@ -72,6 +72,10 @@ if [[ "$token_mode" != "600" ]]; then
   echo "private HF token file does not have mode 0600" >&2
   exit 2
 fi
+# The restrictive umask exists only to create the credential channel.  Stage,
+# setup, and run directories are part of the deterministic payload contract
+# and must use their normal 0755/0644 modes.
+umask 022
 
 STAGING=${STAGING:-Vykos/ouro-jlens-staging}
 RESULTS=${RESULTS:?RESULTS repository is required}
