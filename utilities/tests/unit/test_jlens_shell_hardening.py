@@ -33,17 +33,26 @@ def _entry_environment(tmp_path: Path, *, gpu_names: str = "NVIDIA B300 SXM6 AC"
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     gpu_marker = tmp_path / "nvidia-smi.called"
-    hf_marker = tmp_path / "hf.called"
+    hf_marker = tmp_path / "stage-download.called"
     _fake_command(
         bin_dir,
         "nvidia-smi",
         f"printf '%b\\n' {gpu_names!r}; touch {gpu_marker!s}",
     )
-    _fake_command(bin_dir, "hf", f"touch {hf_marker!s}; exit 42")
+    bootstrap_python = _fake_command(
+        bin_dir,
+        "bootstrap-python",
+        "if [[ ${1:-} == -m && ${2:-} == ouro_jlens.publish "
+        "&& ${3:-} == stage-download ]]; then\n"
+        f"  touch {hf_marker!s}\n"
+        "  exit 42\n"
+        "fi\n"
+        f"exec {sys.executable!r} \"$@\"",
+    )
     manifest = "a" * 64
     env = {
         **os.environ,
-        "PYTHON": sys.executable,
+        "PYTHON": str(bootstrap_python),
         "PYTHONPATH": str(ROOT / "src"),
         "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
         "RESULTS": "org/results",
@@ -88,7 +97,9 @@ def test_shell_scripts_are_parseable_and_bind_every_launch_fact() -> None:
     assert "timeout --kill-after=2s 30s nvidia-smi" in entry
     assert "timeout --signal=TERM --kill-after=\"${JLENS_TIMEOUT_GRACE_SECONDS}s\"" in entry
     assert 'env HF_TOKEN="$(<' not in entry
-    assert 'HF_TOKEN="$(<"$JLENS_HF_TOKEN_FILE")"' in entry
+    assert "hf download" not in entry
+    assert "ouro_jlens.publish stage-download" in entry
+    assert '--token-file "$JLENS_HF_TOKEN_FILE"' in entry
     assert entry.index(stage_download) < entry.index("run_with_deadline bash src/ouro_jlens/setup_b300.sh")
     assert "deadline_remaining" in entry
     assert "GNU coreutils" in entry

@@ -34,6 +34,9 @@ import sys
 import tarfile
 import tempfile
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Mapping, Protocol
@@ -106,6 +109,7 @@ GIT_OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 # bounding tar-bomb expansion before any member data is materialized.
 MAX_STAGE_ARCHIVE_MEMBERS = 100_000
 MAX_STAGE_EXPANDED_BYTES = 4 * 1024 * 1024 * 1024
+MAX_STAGE_DOWNLOAD_BYTES = 1024 * 1024 * 1024
 SAFE_STAGE_FILE_MODE = 0o644
 SAFE_STAGE_EXECUTABLE_MODE = 0o755
 SAFE_STAGE_DIRECTORY_MODE = 0o755
@@ -857,6 +861,96 @@ def read_hf_token_file(path: str | Path) -> str:
     if HF_TOKEN_RE.fullmatch(token) is None:
         raise PublishError("HF token file content is malformed")
     return token
+
+
+def download_hf_file_stdlib(
+    repository: str,
+    remote_path: str | Path,
+    destination: str | Path,
+    *,
+    token_file: str | Path,
+) -> dict[str, int | str]:
+    """Download one private HF file before third-party tooling is installed.
+
+    The pinned RunPod base image guarantees Python but does not contain the
+    ``hf`` CLI.  This bootstrap path therefore uses only the standard library,
+    reads the credential from its protected file, bounds the response, and
+    installs the completed file without replacing an existing destination.
+    """
+
+    if not isinstance(repository, str) or HF_REPO_RE.fullmatch(repository) is None:
+        raise PublishError("invalid Hugging Face repository")
+    try:
+        relative = safe_relative(remote_path)
+    except (TypeError, ValueError) as exc:
+        raise PublishError("invalid Hugging Face remote path") from exc
+    output = Path(destination)
+    _reject_symlink_ancestors(output)
+    if output.is_symlink() or output.exists():
+        raise PublishError("stage download destination already exists")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    _reject_symlink_ancestors(output)
+
+    token = read_hf_token_file(token_file)
+    quoted_repo = urllib.parse.quote(repository, safe="/")
+    quoted_path = urllib.parse.quote(relative, safe="/")
+    request = urllib.request.Request(
+        f"https://huggingface.co/{quoted_repo}/resolve/main/{quoted_path}?download=true",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "User-Agent": "ouro-jlens-bootstrap/1",
+        },
+        method="GET",
+    )
+    try:
+        response = urllib.request.urlopen(request, timeout=60)
+    except (OSError, ValueError, urllib.error.HTTPError, urllib.error.URLError) as exc:
+        raise PublishError("authenticated stage download failed") from exc
+
+    fd, temporary_name = tempfile.mkstemp(
+        dir=output.parent, prefix=f".{output.name}.", suffix=".download"
+    )
+    temporary = _OwnedTempFile(Path(temporary_name), fd)
+    size = 0
+    digest = hashlib.sha256()
+    try:
+        os.fchmod(fd, SAFE_STAGE_FILE_MODE)
+        try:
+            with response:
+                status_code = getattr(response, "status", 200)
+                if (isinstance(status_code, bool) or not isinstance(status_code, int)
+                        or status_code < 200 or status_code >= 300):
+                    raise PublishError("authenticated stage download returned a non-success status")
+                declared = response.headers.get("Content-Length")
+                if declared is not None:
+                    try:
+                        declared_size = int(declared)
+                    except (TypeError, ValueError) as exc:
+                        raise PublishError("stage download content length is malformed") from exc
+                    if declared_size <= 0 or declared_size > MAX_STAGE_DOWNLOAD_BYTES:
+                        raise PublishError("stage download content length is outside bounds")
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    if not isinstance(chunk, bytes):
+                        raise PublishError("stage download returned non-byte content")
+                    if size > MAX_STAGE_DOWNLOAD_BYTES - len(chunk):
+                        raise PublishError("stage download exceeds the maximum size")
+                    _write_fd(fd, chunk)
+                    digest.update(chunk)
+                    size += len(chunk)
+        except PublishError:
+            raise
+        except (OSError, ValueError, urllib.error.HTTPError, urllib.error.URLError) as exc:
+            raise PublishError("authenticated stage download failed") from exc
+        if size <= 0:
+            raise PublishError("authenticated stage download was empty")
+        os.fsync(fd)
+        _install_owned_immutable(temporary, output)
+        return {"path": str(output), "size": size, "sha256": digest.hexdigest()}
+    finally:
+        temporary.cleanup()
 
 
 def _fsync_directory(path: Path) -> None:
@@ -3899,6 +3993,14 @@ def _cmd_stage_publish(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_stage_download(args: argparse.Namespace) -> int:
+    result = download_hf_file_stdlib(
+        args.repo, args.remote, args.output, token_file=args.token_file
+    )
+    print(json.dumps(result, sort_keys=True))
+    return 0
+
+
 def _cmd_runtime_verify(_args: argparse.Namespace) -> int:
     print(json.dumps(verify_runtime_lock(), sort_keys=True))
     return 0
@@ -3997,6 +4099,13 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--archive", required=True)
     p.add_argument("--remote", required=True)
     p.set_defaults(fn=_cmd_stage_publish)
+
+    p = sub.add_parser("stage-download")
+    p.add_argument("--repo", required=True)
+    p.add_argument("--token-file", required=True)
+    p.add_argument("--remote", required=True)
+    p.add_argument("--output", required=True)
+    p.set_defaults(fn=_cmd_stage_download)
 
     p = sub.add_parser("runtime-verify")
     p.set_defaults(fn=_cmd_runtime_verify)

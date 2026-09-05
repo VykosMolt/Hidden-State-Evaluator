@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from ouro_jlens import publish
 from ouro_jlens.publish import HfPublisher, PublishError, read_hf_token_file
 
 
@@ -53,6 +54,60 @@ def test_hf_token_file_requires_exact_private_regular_file(tmp_path: Path) -> No
     link.symlink_to(target)
     with pytest.raises(PublishError):
         read_hf_token_file(link)
+
+
+def test_stdlib_stage_download_needs_no_hf_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    token_path = _write_token(tmp_path / "token")
+    payload = b"verified-stage-bytes"
+    captured: dict[str, object] = {}
+
+    class Response:
+        status = 200
+        headers = {"Content-Length": str(len(payload))}
+
+        def __init__(self) -> None:
+            self._sent = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self, _size: int) -> bytes:
+            if self._sent:
+                return b""
+            self._sent = True
+            return payload
+
+    def urlopen(request, timeout):
+        captured["request"] = request
+        captured["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr(publish.urllib.request, "urlopen", urlopen)
+    destination = tmp_path / "nested" / "stage.tar.gz"
+    result = publish.download_hf_file_stdlib(
+        "org/staging",
+        f"stages/{MANIFEST}/stage.tar.gz",
+        destination,
+        token_file=token_path,
+    )
+    assert destination.read_bytes() == payload
+    assert result == {
+        "path": str(destination),
+        "size": len(payload),
+        "sha256": publish.sha256_bytes(payload),
+    }
+    request = captured["request"]
+    assert request.full_url == (
+        f"https://huggingface.co/org/staging/resolve/main/stages/{MANIFEST}/"
+        "stage.tar.gz?download=true"
+    )
+    assert request.get_header("Authorization") == f"Bearer {TOKEN}"
+    assert captured["timeout"] == 60
 
 
 def test_publisher_child_alone_receives_token_and_parent_env_is_unchanged(
@@ -122,20 +177,28 @@ def test_entry_scopes_bootstrap_to_stage_download_and_deletes_file_on_exit(
         bin_dir / "nvidia-smi",
         f"printf '%s\\n' 'NVIDIA B300 SXM6 AC'; touch {gpu_marker!s}",
     )
+    bootstrap_python = bin_dir / "bootstrap-python"
     _write_executable(
-        bin_dir / "hf",
-        "if [[ \"${HF_TOKEN:-}\" == " + repr(TOKEN) + " ]]; then touch "
-        + f"{hf_ok!s}; fi\n"
-        + "{ tr '\\\\0' '\\\\n' < \"/proc/$$/cmdline\"; "
-        + "tr '\\\\0' '\\\\n' < \"/proc/$PPID/cmdline\"; } "
-        + f"| grep -Fq {TOKEN!r} && touch {argv_leak!s} || true\n"
-        + f"if [[ -z \"${{JLENS_HF_TOKEN_BOOTSTRAP+x}}\" ]]; then touch {bootstrap_absent!s}; fi\n"
-        + f"printf '%s' \"$JLENS_HF_TOKEN_FILE\" > {token_path_marker!s}\n"
-        + "exit 42",
+        bootstrap_python,
+        "if [[ ${1:-} == -m && ${2:-} == ouro_jlens.publish "
+        "&& ${3:-} == stage-download ]]; then\n"
+        "  token_file=''\n"
+        "  while (($#)); do\n"
+        "    if [[ $1 == --token-file ]]; then token_file=$2; shift 2; else shift; fi\n"
+        "  done\n"
+        f"  if [[ $(<\"$token_file\") == {TOKEN!r} ]]; then touch {hf_ok!s}; fi\n"
+        "  { tr '\\\\0' '\\\\n' < \"/proc/$$/cmdline\"; "
+        "tr '\\\\0' '\\\\n' < \"/proc/$PPID/cmdline\"; } "
+        f"| grep -Fq {TOKEN!r} && touch {argv_leak!s} || true\n"
+        f"  if [[ -z \"${{JLENS_HF_TOKEN_BOOTSTRAP+x}}\" ]]; then touch {bootstrap_absent!s}; fi\n"
+        f"  printf '%s' \"$token_file\" > {token_path_marker!s}\n"
+        "  exit 42\n"
+        "fi\n"
+        f"exec {sys.executable!r} \"$@\"",
     )
     environment = {
         **os.environ,
-        "PYTHON": sys.executable,
+        "PYTHON": str(bootstrap_python),
         "PYTHONPATH": str(ROOT / "src"),
         "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
         "RESULTS": "org/results",

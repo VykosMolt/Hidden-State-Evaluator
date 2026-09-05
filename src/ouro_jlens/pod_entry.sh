@@ -190,13 +190,14 @@ run_with_deadline() {
 run_stage_download_with_token() {
   local duration
   duration=$(deadline_remaining) || return 124
-  # Keep the token scoped to this one authenticated stage-download command.
-  # setup_b300.sh and all later Python/pip/git children inherit only the token
-  # pathname, never HF_TOKEN or the bootstrap bytes.
-  HF_TOKEN="$(<"$JLENS_HF_TOKEN_FILE")" \
-    timeout --signal=TERM --kill-after="${JLENS_TIMEOUT_GRACE_SECONDS}s" \
-    "${duration}s" hf download \
-    "$STAGING" "$STAGE_PATH" --local-dir "$stage_tmp" --quiet
+  # The pinned base image has Python but intentionally does not assume the
+  # third-party ``hf`` CLI exists before setup.  The bootstrap publisher uses
+  # urllib, reads the protected token file itself, and writes only the one
+  # digest-addressed stage archive.
+  timeout --signal=TERM --kill-after="${JLENS_TIMEOUT_GRACE_SECONDS}s" \
+    "${duration}s" "$PY" -m ouro_jlens.publish stage-download \
+    --repo "$STAGING" --token-file "$JLENS_HF_TOKEN_FILE" \
+    --remote "$STAGE_PATH" --output "$stage_tmp/$STAGE_PATH"
 }
 
 check_free_space() {
