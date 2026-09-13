@@ -29,7 +29,7 @@
   "notes": "no FP8/FP4/quantization/speculative/vLLM/TensorRT-LLM/SGLang; no startup installation/compilation/clone/resolution; checkpoint never baked; no credentials",
   "o1_b200_source_sha256": "2d559e4736aa73471f830ad2a5fccb1bddd0938ba10a855852da33ab2a4649d7",
   "platform": "linux/amd64",
-  "registry_digest_ref": "UNRESOLVED_UNTIL_PUSH (docker push prints repo@sha256:...)",
+  "registry_digest_ref": "ghcr.io/vykosmolt/o1-b300-runner@sha256:35cd2a76276b3ac24c33f8173a5606cc6c79ef484b385c7d43f23cad0ac0a9d5",
   "schema": "o1b300.container_image_record.v2",
   "supported_driver_range": ">= r580 (CUDA 13.0 requirement; RunPod B300/B200 hosts report CUDA 13.0/13.2)",
   "system_packages": "base python:3.14-slim-bookworm only; no extra apt packages installed",
