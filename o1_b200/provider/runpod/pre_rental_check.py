@@ -292,6 +292,37 @@ def main() -> int:
     record("transfer_manifests_fresh", rc == 0,
            out.strip().splitlines()[-1] if out.strip() else "")
 
+    # 6c. the manifest BAKED INTO the image verifies the artifacts BAKED INTO
+    # the same image.  6b compares the worktree with itself, so an image built
+    # between a policies/ edit and the manifest regeneration passes 6b and
+    # refuses on the pod at ARTIFACT_VERIFY, after the pull and the 5 GB fetch
+    # were paid for (v0.3.13 on 2026-08-24; v0.3.22 in the 2026-09-13 local
+    # cold boot).  Out-of-band artifacts (the checkpoint) are mounted from the
+    # host paths the pod manifest records; everything else must already be in
+    # the image.  Needs the built image locally.
+    try:
+        with open(img_record_path, encoding="utf-8") as fh:
+            img = json.load(fh)
+        pod_man_path = os.path.join(_ROOT, "o1_b200", "deploy",
+                                    "POD_TRANSFER_MANIFEST.json")
+        with open(pod_man_path, encoding="utf-8") as fh:
+            pod_man = json.load(fh)
+        mounts = []
+        for spec in pod_man["artifacts"].values():
+            if spec.get("transfer_out_of_band"):
+                mounts += ["-v", f"{spec['host_path']}:{spec['path']}:ro"]
+        rc, out = _run(["docker", "run", "--rm", *mounts,
+                        "--entrypoint", "/opt/venv/bin/python",
+                        img["image_id_local"],
+                        "/opt/o1_b200/o1_b200/deploy/verify_artifacts.py",
+                        "--manifest",
+                        "/opt/o1_b200/o1_b200/deploy/POD_TRANSFER_MANIFEST.json"],
+                       timeout=1800)
+        record("baked_manifest_verifies_inside_image", rc == 0,
+               out.strip().splitlines()[-1] if out.strip() else "")
+    except Exception as exc:  # noqa: BLE001
+        record("baked_manifest_verifies_inside_image", False, exc)
+
     # 7. secret scan over the tree
     rc, out = _run(["grep", "-rIlE",
                     "(rpa_[A-Za-z0-9]{16,}|ghp_[A-Za-z0-9]{20,}|BEGIN [A-Z ]*PRIVATE KEY|AKIA[A-Z0-9]{16})",

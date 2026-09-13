@@ -72,9 +72,16 @@ WHEELSET_SHA=$(sha256sum "$WHEELS_SRC/WHEELS_B300.sha256" | cut -d' ' -f1)
 TORCH_WHEEL_SHA=$(grep -E " torch-" "$WHEELS_SRC/WHEELS_B300.sha256" | cut -d' ' -f1)
 TRITON_WHEEL_SHA=$(grep -E " triton-" "$WHEELS_SRC/WHEELS_B300.sha256" | cut -d' ' -f1)
 
-# resolve the base image to an immutable digest BEFORE building
-docker pull --platform linux/amd64 python:3.14-slim-bookworm >/dev/null
-BASE_DIGEST=$(docker inspect --format '{{index .RepoDigests 0}}' python:3.14-slim-bookworm)
+# resolve the base image to an immutable digest BEFORE building.  Docker Hub
+# moves the tag; O1_B300_BASE_DIGEST rebuilds on the SAME base as the previous
+# image so the untouched layers stay shareable with the registry.
+if [[ -n "${O1_B300_BASE_DIGEST:-}" ]]; then
+  BASE_DIGEST="$O1_B300_BASE_DIGEST"
+  docker pull --platform linux/amd64 "$BASE_DIGEST" >/dev/null
+else
+  docker pull --platform linux/amd64 python:3.14-slim-bookworm >/dev/null
+  BASE_DIGEST=$(docker inspect --format '{{index .RepoDigests 0}}' python:3.14-slim-bookworm)
+fi
 
 # Identity of the executable o1_b200 source going into the image.  Computed by
 # the SAME function pre_rental_check uses to verify it, so the two cannot
@@ -83,7 +90,10 @@ BASE_DIGEST=$(docker inspect --format '{{index .RepoDigests 0}}' python:3.14-sli
 O1_SRC_SHA=$(PYTHONPATH="$ROOT" python3 -c "from o1_b200.provider.runpod.pre_rental_check import _o1_source_tree_sha256 as h; print(h('$ROOT'))")
 echo "o1_b200 source sha256: $O1_SRC_SHA"
 
+# O1_B300_CACHE_FROM (with DOCKER_BUILDKIT=0) reuses the layers of a pulled
+# image, so a source-only rebuild pushes only the layers that changed.
 docker build --platform linux/amd64 \
+  ${O1_B300_CACHE_FROM:+--cache-from "$O1_B300_CACHE_FROM"} \
   --build-arg BASE_IMAGE="$BASE_DIGEST" \
   -f o1_b200/deploy/Dockerfile.b300 \
   -t "$IMAGE_NAME:$VERSION_TAG" .

@@ -39,6 +39,11 @@ export TRANSFORMERS_OFFLINE=1
 # runner/hf_transfer.py, which is spawned with these flags stripped.
 export HF_HUB_OFFLINE=1
 export CUBLAS_WORKSPACE_CONFIG=":4096:8"
+# Torch sizes one OpenMP region per CPU op to nproc; on a 192-thread host
+# that starves the GPU (jlens run 9, 2026-09-05: 58x slower until capped).
+# Defaults only: the pod env may override.
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-8}"
+export MKL_NUM_THREADS="${MKL_NUM_THREADS:-8}"
 export PYTHONPATH="$ROOT"
 
 MKDIR_ERR="$(LC_ALL=C mkdir -p "$OUT" "$ARTIFACTS" 2>&1 >/dev/null)" || {
