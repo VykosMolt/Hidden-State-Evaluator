@@ -8,6 +8,7 @@ Read-only live check: PASS
 | artifact_transfer_manifest | PASS |
 | authorization_template_unusable | PASS |
 | b200_runner_and_adapter_suites | PASS |
+| baked_manifest_verifies_inside_image | PASS |
 | base_package_suite | PASS |
 | bound_image_is_the_built_image | PASS |
 | built_image_matches_fl_source | PASS |

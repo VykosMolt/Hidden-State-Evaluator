@@ -9,7 +9,11 @@
       "ok": true
     },
     "b200_runner_and_adapter_suites": {
-      "detail": "ALL O1 B200 RUNNER TESTS PASSED  (317 checks, 336.4s wall, 10 job(s))",
+      "detail": "ALL O1 B200 RUNNER TESTS PASSED  (317 checks, 254.1s wall, 10 job(s))",
+      "ok": true
+    },
+    "baked_manifest_verifies_inside_image": {
+      "detail": "ALL ARTIFACTS VERIFIED",
       "ok": true
     },
     "base_package_suite": {
