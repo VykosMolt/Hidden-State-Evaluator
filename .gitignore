@@ -1,8 +1,23 @@
 venv/
 __pycache__/
+.pytest_cache/
 *.pyc
 .env
 /artifacts/jlens/
 checkpoints/
+runs/
 *.pt
 *.bin
+/jacobian-lens/
+/lifetime-rltt/
+/elastic_reasoner/
+.idea/
+
+# Not for git: caches, weights, data, and the per-line run records
+# (the publishable subset of opi/ lives in VykosMolt/Branching-Looped-Transformer)
+/shared/hf_cache/
+/shared/models/
+/shared/data/
+/opi/
+/rpe/
+/artifacts/logs/
