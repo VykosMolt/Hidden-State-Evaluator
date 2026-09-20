@@ -12,7 +12,6 @@ lives under `shared/`.
     shared/              code, docs, models, data, venv — used across lines
     artifacts/           run records: logs, ops, the 2026-07 storage-cleanup reports
     elastic_reasoner/    absorbed repo — FABLE/Astra two-agent Huginn pilot
-    jacobian-lens/       absorbed repo — J-Lens vs the raw logit lens
     lifetime-rltt/       absorbed repo — O1 / Foundation-Learner ladder
 
 ## opi/ — Operational Proto-Introspection
@@ -61,9 +60,9 @@ Used by more than one line, which is the sole criterion for living here.
 
 These keep their own git history and are gitignored by this repo.
 
-- **`jacobian-lens/`** — `origin` is `anthropics/jacobian-lens` (upstream, read-only).
-  Your work is on branch `jlens-ouro`, which tracks the `jlens` remote
-  (`VykosMolt/JLens-Ouro`). Push to `jlens`, never `origin`.
+- **J-Lens** is finished and no longer on this machine (local clone purged
+  2026-09-20). Everything is in `VykosMolt/JLens-Ouro`, branch `jlens-ouro`
+  (`main` there is Anthropic's upstream).
 - **`lifetime-rltt/`** — a container, not a repo: `o1-runner`
   (`VykosMolt/Lifetime-Meta-Learning`) and `foundation-learner-b200-v0` (no
   remote). They must stay siblings. **Do not edit anything under

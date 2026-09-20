@@ -66,7 +66,7 @@ sibling repositories were absorbed.
 | `docs/` | `shared/docs/` |
 | `compat/` | `shared/compat/` |
 | `requirements/` | `shared/requirements/` |
-| `~/jacobian-lens` | `jacobian-lens/` |
+| `~/jacobian-lens` | `jacobian-lens/` (purged 2026-09-20; `VykosMolt/JLens-Ouro`, branch `jlens-ouro`) |
 | `~/lifetime-rltt` | `lifetime-rltt/` |
 | `~/elastic_reasoner` | `elastic_reasoner/` |
 | `~/branching-looped-transformer` | dissolved — see below |
