@@ -92,5 +92,5 @@ byte-identical to material already here. What moved:
 
 The remaining 468 files had byte-identical copies here already. The GitHub repo
 `VykosMolt/Branching-Looped-Transformer` still exists; the local clone does not.
-A full pre-distribution snapshot is at
-`~/archive/branching-looped-transformer_predistribution_20260915.tgz`.
+The pre-distribution snapshot that was kept in `~/archive/` was a clean clone at
+`cb174ef`, an ancestor of the GitHub `main`; it was purged on 2026-09-20.
