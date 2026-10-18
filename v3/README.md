@@ -16,6 +16,7 @@ with SHA-256 and size, in `INPUTS_OFFLINE.sha256`. Every file in the package is 
 | `scripts/paper_style/` | Plot style used by `make_figures.py`. |
 | `results/` | Every result file the paper's numbers and figures are read from, including per-pair outputs. |
 | `figures/` | The four figures, as produced by `make_figures.py`. |
+| `relational_test_20261018/` | The post hoc relational test: protocol and its hash, gates, results, per-pair scores, weights, logs. |
 | `config.example.sh` | Template for the environment variables. |
 | `requirements.txt` | Exact package versions, and where each run was made. |
 | `INPUTS_OFFLINE.sha256` | Required inputs that are not in the package: `sha256  size_bytes  VARIABLE/relative_path`. |
@@ -104,6 +105,7 @@ the saved one exactly.
 | Sec. 2 evaluator size (4.7M parameters) | `paper_numbers.py` | `evaluator_core/pairwise_evaluator.py` |
 | App. B "state-only copies with identical weights" | none (record only) | `checkpoint_copies_identical.json` |
 | Figs. 1–4 | `make_figures.py` | `figures/*.pdf` |
+| Relational test (pair model vs decomposable model), if reported | `relational_test.py` | `relational_test_20261018/results_*.json`, `pairs_*.csv` |
 | Version 1 values (95.2, 84.5, 21.75, 83.3 → 62.4 by epoch, 60–70% training accuracy, 500-pair length and norm checks, correlation −0.94 on 100 pairs) and version 2's 74% partner share | not recomputed; quoted from versions 1 and 2 of arXiv:2604.09870 | |
 
 `length_probe_pairs.json` (length rules on the probe pairs under version 2's right truncation) is supporting
@@ -112,6 +114,27 @@ same value as in `probes_thinking.json`). `identical_at_1024_thinking.json`
 is the earlier, ad hoc calculation, which excluded only the 37 pairs with exactly equal pooled states; it is
 superseded by `identical_at_1024_tokens_thinking.json`, which identifies all 68 token-identical pairs (the 37 are
 among them).
+
+## Relational test (post hoc)
+
+`relational_test_20261018/` holds a controlled test that linear probes cannot make. A linear difference probe is
+decomposable (w.h_A - w.h_B), so it cannot separate relational from per-reply encoding. The test compares a pair model
+P (an MLP on [h_A, h_B, h_A - h_B, h_A * h_B], antisymmetrized) with a decomposable model D (s = f(h_A) - f(h_B),
+f an MLP) on the same pairs, split and features. Both share preprocessing (standardization, 512 principal
+components), grid, training and selection. The protocol, including the verdict rule, was written and hashed before
+any fit (`PROTOCOL.md`, `PROTOCOL.md.sha256`). It was designed after the linear results were seen.
+
+```bash
+python relational_test.py gate --out ../relational_test_20261018                  # exactness and data gates
+python relational_test.py run --analysis thinking_last --out ../relational_test_20261018   # primary
+python relational_test.py run --analysis thinking_all4 --out ../relational_test_20261018
+python relational_test.py run --analysis rltt_last     --out ../relational_test_20261018
+```
+
+Each run takes about 10 minutes on 8 CPU threads. Outputs per analysis: `results_*.json` (selection table, final
+seeds, accuracies, paired differences, verdict), `pairs_*.csv` (per held-out pair scores of D, P, capacity-matched P,
+every seed and the linear references), `weights_*.pt` (preprocessing and every final model; 44 MB, not included in
+this package, recreated by the commands above), `config_*.json` and `log_*.txt`. `gate.json` records the gates.
 
 ## Known limits
 

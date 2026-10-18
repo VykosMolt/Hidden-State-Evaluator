@@ -16,7 +16,7 @@
 | Pairwise nonlinear evaluator, HH-RLHF test split | 95.2% | 64.7% (scored in both orders) | position bias: tested with the preferred reply always first |
 | Linear relational probe | 84.5% | 61.5% (last loop) | leakage: tested on rows built from its own training pairs |
 | Linear single-response probe, per reply | 21.75% | 54.9% (last loop) | leakage, as above |
-| "Preference is encoded relationally" | claimed | not testable with linear probes: a probe on the difference of two replies is a per-reply score taken twice, and the probe trained on single replies ranks pairs within two points of it | version 1's evidence came from the leakage above |
+| "Preference is encoded relationally" | claimed | not testable with linear probes (a probe on the difference of two replies is a per-reply score taken twice); a nonlinear test finds that reading both replies together adds at most about a point over scoring each reply alone | version 1's evidence came from the leakage above |
 
 Version 2 (July 2026) prepended an erratum to the paper; its corrected relational probe number (0.5653) was itself
 lowered by a third error: right truncation cut off the differing replies, so 8.1% of held-out pairs became identical

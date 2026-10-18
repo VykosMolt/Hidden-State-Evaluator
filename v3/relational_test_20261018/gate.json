@@ -1,0 +1,51 @@
+{
+ "n_fit": 28732,
+ "n_val": 3268,
+ "n_eval": 8000,
+ "gate1": [
+  {
+   "model": "D",
+   "width": 64,
+   "depth": 1,
+   "dropout": 0.0,
+   "antisymmetric_exact": true,
+   "max_abs_cycle_residual": 5.960464477539063e-08,
+   "max_abs_score": 0.7274669408798218,
+   "decomposable_exact": true
+  },
+  {
+   "model": "D",
+   "width": 256,
+   "depth": 2,
+   "dropout": 0.2,
+   "antisymmetric_exact": true,
+   "max_abs_cycle_residual": 1.4901161193847656e-08,
+   "max_abs_score": 0.2691260576248169,
+   "decomposable_exact": true
+  },
+  {
+   "model": "P",
+   "width": 64,
+   "depth": 1,
+   "dropout": 0.0,
+   "antisymmetric_exact": true,
+   "max_abs_cycle_residual": 0.3390377461910248,
+   "max_abs_score": 0.5417363047599792
+  },
+  {
+   "model": "P",
+   "width": 256,
+   "depth": 2,
+   "dropout": 0.2,
+   "antisymmetric_exact": true,
+   "max_abs_cycle_residual": 0.18647858500480652,
+   "max_abs_score": 0.2290152609348297
+  }
+ ],
+ "gate2": {
+  "linear_relational_last_loop_heldout_acc": 0.615375,
+  "probes_thinking_converged": 0.615375,
+  "equal": true
+ },
+ "passed": true
+}
