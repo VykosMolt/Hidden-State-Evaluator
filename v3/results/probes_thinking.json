@@ -1,0 +1,142 @@
+{
+  "n_eval": 8000,
+  "n_eval_identical_after_left_truncation": 34,
+  "acc": {
+    "relational_final": {
+      "all_ties_half": [
+        0.6155,
+        [
+          0.6050609374999999,
+          0.6263125
+        ]
+      ],
+      "distinguishable": 0.6159929701230229
+    },
+    "pointwise_final_induced_pairwise": {
+      "all_ties_half": [
+        0.607,
+        [
+          0.5962484374999999,
+          0.617875
+        ]
+      ],
+      "distinguishable": 0.60745669093648
+    },
+    "pointwise_final_candidate": 0.5495,
+    "relational_all4": {
+      "all_ties_half": [
+        0.605125,
+        [
+          0.5944375,
+          0.6155640625
+        ]
+      ],
+      "distinguishable": 0.6055736881747427
+    },
+    "pointwise_all4_induced_pairwise": {
+      "all_ties_half": [
+        0.587875,
+        [
+          0.5770609375,
+          0.5985625
+        ]
+      ],
+      "distinguishable": 0.5882500627667587
+    },
+    "pointwise_all4_candidate": 0.5435,
+    "length_rule": {
+      "all_ties_half": [
+        0.5184375,
+        [
+          0.5075625,
+          0.5295
+        ]
+      ],
+      "distinguishable": 0.5185161938237509,
+      "direction_from_train": "larger wins"
+    },
+    "norm_final_rule": {
+      "all_ties_half": [
+        0.52925,
+        [
+          0.51825,
+          0.540125
+        ]
+      ],
+      "distinguishable": 0.5293748430831032,
+      "direction_from_train": "larger wins"
+    },
+    "surface_logistic": {
+      "all_ties_half": [
+        0.528875,
+        [
+          0.51775,
+          0.5398125
+        ]
+      ],
+      "distinguishable": 0.5289982425307557
+    }
+  },
+  "paired": {
+    "relational_final - pointwise_final_induced_pairwise": {
+      "all": [
+        0.0085,
+        [
+          -0.001,
+          0.017875
+        ]
+      ],
+      "distinguishable": 0.008536279186542806
+    },
+    "relational_all4 - pointwise_all4_induced_pairwise": {
+      "all": [
+        0.01725,
+        [
+          0.007375,
+          0.02725
+        ]
+      ],
+      "distinguishable": 0.01732362540798393
+    },
+    "relational_all4 - relational_final": {
+      "all": [
+        -0.010375,
+        [
+          -0.020753124999999997,
+          -0.000625
+        ]
+      ],
+      "distinguishable": -0.010419281948280191
+    },
+    "relational_final - surface_logistic": {
+      "all": [
+        0.086625,
+        [
+          0.072625,
+          0.100875
+        ]
+      ],
+      "distinguishable": 0.08699472759226713
+    },
+    "relational_all4 - surface_logistic": {
+      "all": [
+        0.07625,
+        [
+          0.061625,
+          0.0905
+        ]
+      ],
+      "distinguishable": 0.07657544564398694
+    },
+    "pointwise_final_induced_pairwise - surface_logistic": {
+      "all": [
+        0.078125,
+        [
+          0.063875,
+          0.0925
+        ]
+      ],
+      "distinguishable": 0.07845844840572433
+    }
+  }
+}

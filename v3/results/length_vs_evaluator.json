@@ -1,0 +1,35 @@
+{
+  "n_pairs": 8552,
+  "evaluator_epoch2_strict_antisym": [
+    0.6391487371375117,
+    [
+      0.6289756782039289,
+      0.6494387277829747
+    ]
+  ],
+  "shorter_tokens_wins": [
+    0.47094246959775493,
+    [
+      0.46082641487371373,
+      0.481232460243218
+    ]
+  ],
+  "shorter_chars_wins": [
+    0.47561973807296537,
+    [
+      0.4652712815715622,
+      0.48631898971000936
+    ]
+  ],
+  "evaluator_minus_shorter_tokens_paired": [
+    0.1682062675397568,
+    [
+      0.15271281571562206,
+      0.1837596468662301
+    ]
+  ],
+  "ties_tokens": 305,
+  "truncated_768_any": 190,
+  "evaluator_acc_when_lengths_equal": 0.4163934426229508,
+  "agreement_evaluator_vs_length_rule": 0.42864071783678914
+}

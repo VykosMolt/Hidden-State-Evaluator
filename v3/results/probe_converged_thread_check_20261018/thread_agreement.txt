@@ -1,0 +1,24 @@
+thinking_converged: aggregates exactly equal 54/54; equal at 3 decimals 54/54; max |diff| 0.000e+00
+  relational_final             max |score diff| 5.596e-14  sign changes 0
+  pointwise_final_chosen       max |score diff| 7.061e-12  sign changes 0
+  pointwise_final_rejected     max |score diff| 6.178e-12  sign changes 0
+  relational_all4              max |score diff| 1.563e-13  sign changes 0
+  pointwise_all4_chosen        max |score diff| 1.005e-10  sign changes 0
+  pointwise_all4_rejected      max |score diff| 8.672e-11  sign changes 0
+  length_rule                  max |score diff| 0.000e+00  sign changes 0
+  norm_final_rule              max |score diff| 0.000e+00  sign changes 0
+  surface_logistic             max |score diff| 5.107e-15  sign changes 0
+  max |weight diff|: {'relational_final_w': 1.9539925233402755e-14, 'pointwise_final_w': 1.307298713726368e-11, 'pointwise_final_b': 2.267308563119741e-11, 'relational_all4_w': 9.696410341319961e-14, 'pointwise_all4_w': 1.8651696853666522e-10, 'pointwise_all4_b': 8.005152096757229e-11, 'length_rule_sign': 0.0, 'norm_final_rule_sign': 0.0, 'surface_logistic_w': 3.7192471324942744e-15, 'surface_logistic_sd': 0.0}
+  threads: 1 8  iterations 1t/8t: {'relational_final': (5, 5), 'pointwise_final': (4, 4), 'relational_all4': (6, 6), 'pointwise_all4': (5, 5), 'surface_logistic': (3, 3)}
+rltt_left_converged: aggregates exactly equal 54/54; equal at 3 decimals 54/54; max |diff| 0.000e+00
+  relational_final             max |score diff| 3.553e-14  sign changes 0
+  pointwise_final_chosen       max |score diff| 6.319e-12  sign changes 0
+  pointwise_final_rejected     max |score diff| 6.305e-12  sign changes 0
+  relational_all4              max |score diff| 1.751e-13  sign changes 0
+  pointwise_all4_chosen        max |score diff| 7.061e-11  sign changes 0
+  pointwise_all4_rejected      max |score diff| 8.540e-11  sign changes 0
+  length_rule                  max |score diff| 0.000e+00  sign changes 0
+  norm_final_rule              max |score diff| 0.000e+00  sign changes 0
+  surface_logistic             max |score diff| 4.441e-15  sign changes 0
+  max |weight diff|: {'relational_final_w': 2.531308496145357e-14, 'pointwise_final_w': 1.6050716311610813e-11, 'pointwise_final_b': 6.978351230202406e-11, 'relational_all4_w': 1.3145040611561853e-13, 'pointwise_all4_w': 1.7220885828450605e-10, 'pointwise_all4_b': 1.4313217278072443e-10, 'length_rule_sign': 0.0, 'norm_final_rule_sign': 0.0, 'surface_logistic_w': 5.10702591327572e-15, 'surface_logistic_sd': 0.0}
+  threads: 1 8  iterations 1t/8t: {'relational_final': (5, 5), 'pointwise_final': (4, 4), 'relational_all4': (6, 6), 'pointwise_all4': (5, 5), 'surface_logistic': (3, 3)}

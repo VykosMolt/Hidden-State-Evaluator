@@ -1,0 +1,6 @@
+{
+  "test_pairs_token_identical_at_1024": 68,
+  "acc_all": 0.6470416276894294,
+  "acc_distinguishable_states": 0.6476805637110981,
+  "n_identical_states": 37
+}

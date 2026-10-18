@@ -1,0 +1,14 @@
+rel 154.5898973941803
+pw 1818.8190772533417
+  "lbfgs_iterations": 4096,
+  "function_evaluations": 5929,
+  "final_loss": 0.5968593490382613,
+  "grad_inf_norm": 2.044448058951401e-09,
+  "converged": false
+  "lbfgs_iterations": 20000,
+  "function_evaluations": 38972,
+  "final_loss": 0.6767676058195923,
+  "grad_inf_norm": 1.237657675159796e-06,
+  "converged": false
+
+[exited with code 0]

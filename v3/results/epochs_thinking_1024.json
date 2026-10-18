@@ -1,0 +1,110 @@
+{
+  "n_pairs": 8552,
+  "n_identical_states": 37,
+  "epochs": {
+    "1": {
+      "fixed_order_acc": 0.8299812909260992,
+      "swapped_order_acc": 0.3985032740879326,
+      "strict_antisym_acc": [
+        0.6365177736202058,
+        [
+          0.6262263213283443,
+          0.6466323666978484
+        ]
+      ],
+      "strict_antisym_acc_distinguishable": 0.637110980622431,
+      "mean_symmetric_component": 0.5264845804522236,
+      "sign_flip_rate": 0.5685219831618334,
+      "both_orders_prefer_first": 0.4314780168381665
+    },
+    "2": {
+      "fixed_order_acc": 0.9494855004677268,
+      "swapped_order_acc": 0.1916510757717493,
+      "strict_antisym_acc": [
+        0.6470416276894294,
+        [
+          0.6368685687558466,
+          0.657156220767072
+        ]
+      ],
+      "strict_antisym_acc_distinguishable": 0.6476805637110981,
+      "mean_symmetric_component": 1.2592841886322408,
+      "sign_flip_rate": 0.24216557530402244,
+      "both_orders_prefer_first": 0.7578344246959775
+    },
+    "3": {
+      "fixed_order_acc": 0.8858746492048644,
+      "swapped_order_acc": 0.33652946679139384,
+      "strict_antisym_acc": [
+        0.650432647333957,
+        [
+          0.6399657974742751,
+          0.6606057062675398
+        ]
+      ],
+      "strict_antisym_acc_distinguishable": 0.6510863182618908,
+      "mean_symmetric_component": 0.8301301728154726,
+      "sign_flip_rate": 0.4506548175865295,
+      "both_orders_prefer_first": 0.5493451824134705
+    },
+    "4": {
+      "fixed_order_acc": 0.6701356407857811,
+      "swapped_order_acc": 0.6313143124415341,
+      "strict_antisym_acc": [
+        0.6525374181478016,
+        [
+          0.6422474275023387,
+          0.6627104770813844
+        ]
+      ],
+      "strict_antisym_acc_distinguishable": 0.6532002348796242,
+      "mean_symmetric_component": -0.04273577129627835,
+      "sign_flip_rate": 0.8987371375116932,
+      "both_orders_prefer_first": 0.0700420954162769
+    },
+    "5": {
+      "fixed_order_acc": 0.6295603367633302,
+      "swapped_order_acc": 0.671889616463985,
+      "strict_antisym_acc": [
+        0.6528882132834425,
+        [
+          0.6425397567820393,
+          0.6630028063610851
+        ]
+      ],
+      "strict_antisym_acc_distinguishable": 0.6535525543159131,
+      "mean_symmetric_component": -0.11981453124831762,
+      "sign_flip_rate": 0.9041159962581852,
+      "both_orders_prefer_first": 0.02677736202057998
+    }
+  },
+  "check_epoch2_vs_audit": {
+    "pearson_normal": 0.9638219479492612,
+    "max_abs_diff_normal": 2.959068715572357,
+    "antisym_decision_agreement": 0.9386108512628625,
+    "audit_strict_antisym_acc": 0.6391487371375117
+  },
+  "norm_baseline": {
+    "smaller_norm_wins_prespecified": [
+      0.4771398503274088,
+      [
+        0.4663821328344247,
+        0.4875467726847521
+      ]
+    ],
+    "larger_norm_wins_posthoc": [
+      0.5228601496725912,
+      [
+        0.5124532273152479,
+        0.5336178671655754
+      ]
+    ]
+  },
+  "evaluator_e2_minus_best_norm_rule_paired": [
+    0.12418147801683817,
+    [
+      0.11014674929840973,
+      0.13774555659494855
+    ]
+  ]
+}

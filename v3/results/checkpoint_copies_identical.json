@@ -1,0 +1,37 @@
+{
+ "1": {
+  "state_copy_sha_matches_thinking_run": true,
+  "original_sha_matches_rltt_run": true,
+  "all_tensors_identical": true,
+  "n_tensors": 19,
+  "n_params": 4729985
+ },
+ "2": {
+  "state_copy_sha_matches_thinking_run": true,
+  "original_sha_matches_rltt_run": true,
+  "all_tensors_identical": true,
+  "n_tensors": 19,
+  "n_params": 4729985
+ },
+ "3": {
+  "state_copy_sha_matches_thinking_run": true,
+  "original_sha_matches_rltt_run": true,
+  "all_tensors_identical": true,
+  "n_tensors": 19,
+  "n_params": 4729985
+ },
+ "4": {
+  "state_copy_sha_matches_thinking_run": true,
+  "original_sha_matches_rltt_run": true,
+  "all_tensors_identical": true,
+  "n_tensors": 19,
+  "n_params": 4729985
+ },
+ "5": {
+  "state_copy_sha_matches_thinking_run": true,
+  "original_sha_matches_rltt_run": true,
+  "all_tensors_identical": true,
+  "n_tensors": 19,
+  "n_params": 4729985
+ }
+}

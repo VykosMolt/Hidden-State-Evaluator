@@ -1,0 +1,19 @@
+# Exact versions of the local environment (Python 3.14.8, Arch Linux, Intel Core Ultra 9 275HX, CPU runs with
+# OMP_NUM_THREADS=8; torch built with MKL, AVX2). Used for: the Ouro-RLTT evaluator run (A_rltt, RTX 5070 Ti laptop
+# GPU), all CPU summaries, figures and the token-identical analysis.
+#
+# The Ouro-Thinking evaluator run (A_thinking_1024), both probe feature extractions (thinking_left, rltt_left_cloud)
+# and the published probe fits (probes_thinking.json, probes_rltt_left.json) ran on a Runpod A40 pod:
+# image runpod/pytorch 1.0.2 (CUDA 12.8.1), torch 2.8.0, transformers 4.54.1, datasets 4.8.5. Refitting the probes in
+# the local environment below does not reproduce those fits bit for bit (see README, "Known limits"). The converged
+# probe fits (*_converged.*, fit_probes.py --converged) were made locally and give identical aggregates at 1 and 8
+# threads.
+torch==2.12.0.dev20260407+cu128
+transformers==4.54.1
+datasets==4.8.5
+tokenizers==0.21.4
+safetensors==0.7.0
+accelerate==1.13.0
+numpy==2.4.4
+pyarrow==24.0.0
+matplotlib==3.10.9

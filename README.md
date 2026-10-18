@@ -1,163 +1,54 @@
-# Ouro Loop-State Pairwise Evaluator
+# Ouro Loop-State Pairwise Evaluator (superseded)
 
-This repository contains the evaluator code from my work on **Ouro-2.6B-Thinking** loop states.
-
-The project began as an alignment / preference-readout experiment. I wanted to test whether human preference could be read from the hidden states produced by Ouro's internal loop iterations, without fine-tuning the base model. The surprising result was not just that preference was readable, but that it was readable mainly **relationally**: comparing two loop-state trajectories worked far better than trying to score each response independently.
-
-
-> ## ⚠️ Correction notice (2026-07-25)
+> **The headline numbers of version 1 were evaluation errors.** This repository is kept as the snapshot of the
+> original code. Its claims are superseded by version 3 of the paper:
 >
-> **The headline figures below have been corrected and are retained only as a record of
-> what was originally reported.** A project-wide evaluation audit found two independent
-> defects — source-item leakage across a row-level train/test split, and a
-> presentation-order prior in the fixed-order pairwise evaluator. The correction of record
-> is the **erratum to [arXiv:2604.09870](https://arxiv.org/abs/2604.09870) (v2)**.
+> Jan Kirin, *Relational Preference Encoding in Looped Transformer Internal States*, version 3 (October 2026),
+> replacing versions 1 and 2 of [arXiv:2604.09870](https://arxiv.org/abs/2604.09870).
 >
-> | Result | Reported here | Corrected |
-> |---|---:|---:|
-> | Pairwise nonlinear evaluator | 95.2% | **0.6392** (strict antisymmetrized) |
-> | Linear relational probe | 84.5% | **0.5653** |
-> | Independent / pointwise linear probe | 21.75% ("inverted polarity") | **0.5418** — *above* chance |
->
-> The direction of the original finding survives: preference **is** decoded more accurately
-> relationally than pointwise. Its magnitude does not, and the claim that preference is
-> *unavailable* pointwise is **withdrawn** — the clean pointwise probe reads 0.5418,
-> significantly above chance. The 95.2% figure was substantially a first-position ordering
-> prior and is reportable only as fixed-order, discovery-stage accuracy.
->
-> Full protocol, both failure mechanisms, and every corrected value are in
-> [`papers/kirin2026_paper1_v1.pdf`](papers/) §3.7 and
-> [`papers/kirin2026_paper2.pdf`](papers/).
+> Analysis scripts, per-pair outputs, fitted probe weights and the input manifest for version 3 are in [`v3/`](v3/);
+> start with [`v3/README.md`](v3/README.md).
 
-## Main result
+## What changed
 
-Using frozen hidden states extracted from Ouro loop iterations, I trained lightweight evaluator heads of roughly 5M parameters.
+| Claim | Version 1 (this repository) | Version 3 | Cause of the error |
+|---|---:|---:|---|
+| Pairwise nonlinear evaluator, HH-RLHF test split | 95.2% | 64.7% (scored in both orders) | position bias: tested with the preferred reply always first |
+| Linear relational probe | 84.5% | 61.5% (last loop) | leakage: tested on rows built from its own training pairs |
+| Linear single-response probe, per reply | 21.75% | 54.9% (last loop) | leakage, as above |
+| "Preference is encoded relationally" | claimed | not testable with linear probes: a probe on the difference of two replies is a per-reply score taken twice, and the probe trained on single replies ranks pairs within two points of it | version 1's evidence came from the leakage above |
 
-On HH-RLHF preference pairs:
+Version 2 (July 2026) prepended an erratum to the paper; its corrected relational probe number (0.5653) was itself
+lowered by a third error: right truncation cut off the differing replies, so 8.1% of held-out pairs became identical
+inputs and were scored as errors. Version 3 replaces both and
+lists every changed number in its Appendix A. The correction notice previously at the top of this README is
+superseded by this one.
 
-| Evaluator | Setup | Result |
-|---|---|---|
-| Pairwise evaluator | Compares chosen and rejected loop-state trajectories directly | **95.2% test accuracy** |
-| Independent nonlinear scorer | Scores each response separately, then compares scores | ~65% test accuracy |
-| Linear probe | Linear independent classification | 21.75% accuracy, below chance / inverted polarity |
+## Status of the original text
 
-The main result is therefore not simply "a preference classifier works." The stronger interpretation is that Ouro's loop-state trajectories expose a relational evaluative structure: the model's internal trajectory is much easier to judge comparatively than absolutely.
-(The best checkpoint was the epoch-2 pairwise evaluator, which reached 95.2% test accuracy. Earlier commits and intermediate runs reported lower epoch-1 numbers.)
+Everything below this line in earlier versions of this README (the "Main result" table, the 95.2% figure, the
+interpretation that loop-state trajectories expose a strong relational evaluative structure, and the follow-up
+claims built on it) is **withdrawn**. It remains in the git history as a record of what was reported.
 
-## Papers
+## Contents
 
-`papers/` contains the manuscripts covering this work and its corrections:
-
-| File | Pages | Contents |
-|---|---:|---|
-| `kirin2026_paper1_v1.pdf` | 49 | *Operational Proto-Introspection in Looped Language Models* — the successor project: process-quality taps, an executable branching substrate, and the readout–control boundary. |
-| `kirin2026_paper2.pdf` | 13 | *Two Evaluation Traps in Constructed-Row Pipelines* — the audit that produced the corrections in the notice above, with the protocol and reference checks. |
-
-Active development moved to
-[Branching-Looped-Transformer](https://github.com/VykosMolt/Branching-Looped-Transformer).
-This repository remains the snapshot of the original pairwise-evaluator work.
-
-## What this repository is
-
-This is the evaluator repository. It is focused on extracting Ouro loop-state features, training the pairwise evaluator, evaluating checkpoints, and running the linear probe experiments.
-
-The base Ouro model is kept frozen. The trainable part is the lightweight evaluator placed on top of extracted loop-state representations.
-
-## Repository contents
+The original code is unchanged from the version 1 experiments and is provided as is:
 
 | File | Purpose |
 |---|---|
 | `evaluator_pairwise.py` | Pairwise evaluator architecture. |
 | `train_pairwise_fast.py` | Training script for the pairwise evaluator. |
-| `evaluate_pairwise.py` | Evaluation script for trained evaluator checkpoints. |
+| `evaluate_pairwise.py` | Evaluation script for trained checkpoints. |
 | `extract_features.py` | Feature extraction from frozen Ouro loop states. |
-| `ouro_inspect.py` | Utilities for inspecting Ouro hidden states and loop behavior. |
-| `probe_test.py` | Linear probe experiments. |
-| `modeling_ouro_patched.py` | Local patched Ouro modeling file used for compatibility during the experiments. |
-| `requirements.txt` | Python dependencies. |
+| `ouro_inspect.py` | Utilities for inspecting Ouro hidden states. |
+| `probe_test.py` | Linear probe experiments of version 1. |
+| `modeling_ouro_patched.py` | Patched Ouro modeling file used during the experiments. |
+| `papers/` | Earlier manuscripts, kept for the record. |
+| `v3/` | Version 3's analysis package: portable scripts, results, per-pair outputs, fitted probe weights, figures, `MANIFEST.sha256` and `INPUTS_OFFLINE.sha256`. |
 
-## Method
-
-At a high level, the pairwise evaluator works like this:
-
-```text
-chosen response loop states     rejected response loop states
-             ↓                              ↓
-      attention pooling              attention pooling
-             ↓                              ↓
-         pooled chosen   -   pooled rejected
-                         ↓
-             sequence of loop differences
-                         ↓
-                        GRU
-                         ↓
-                 preference logit
-```
-
-The important design choice is that the evaluator is given the **difference between two loop-state trajectories**, rather than being asked to assign each response an absolute score independently.
-
-This matters because the independent / pointwise versions were much weaker, while the pairwise setup reached 95.2% test accuracy.
-
-## Interpretation
-
-I initially treated this as an alignment result. That is still the domain where the experiment was first tested, and HH-RLHF provides clean chosen / rejected pairs.
-
-But the result seems broader than a narrow preference-reader story. The evaluator appears to exploit structure in the loop trajectories themselves. In other words, the interesting object is not only the final answer or the final hidden state, but the **trajectory of recurrent refinement** produced by Ouro's loop iterations.
-
-A cautious interpretation is:
-
-- Ouro loop states contain strong relational evaluative information.
-- This information is much easier to read comparatively than absolutely.
-- Lightweight external evaluators can extract that signal while the base model remains frozen.
-- Looped latent trajectories may be useful objects for future reasoning, evaluation, and alignment work.
-
-## Follow-up direction
-
-After this experiment, I began testing whether the same pairwise evaluator signal transfers outside HH-RLHF-style preference data. Early math-domain experiments suggest that the evaluator does not create correct answers when no candidate is correct, but can help select better candidates when the candidate pool contains a correct answer.
-
-That has led me toward the broader hypothesis that Ouro-like loop-state trajectories should be treated as trainable reasoning objects: representations that can be pooled, compared, scored, anchored, and eventually grounded in perception / action loops.
-
-## Setup
-
-Create a virtual environment and install the requirements:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-
-pip install -r requirements.txt
-```
-
-The exact setup may depend on your local Ouro / Transformers environment. During these experiments I used the patched Ouro modeling file included in this repository for compatibility with my local setup.
-
-## Basic usage
-
-### 1. Extract features
-
-```bash
-python extract_features.py
-```
-
-### 2. Train the pairwise evaluator
-
-```bash
-python train_pairwise_fast.py
-```
-
-### 3. Evaluate a checkpoint
-
-```bash
-python evaluate_pairwise.py
-```
-
-Paths and dataset locations may need to be adjusted depending on where the extracted features and checkpoints are stored.
-
-## Notes
-
-This repository should not be read as a general reward-model package or as a universal correctness oracle.
-
-The result is narrower and, in my opinion, more interesting: frozen Ouro loop states appear to contain a strong relational signal, and a small evaluator can read that signal when it is allowed to compare trajectories directly.
+If you reuse this code: score every pair in both orders and report accuracy on s(c, r) - s(r, c) > 0; split
+probe data by pair, not by row; and check how many pairs truncation makes identical (version 3, Sec. 4).
 
 ## License
 
-This repository is released under the Apache-2.0 license.
+Apache-2.0.

@@ -1,0 +1,105 @@
+{
+ "tag": "thinking_converged",
+ "settings": "converged",
+ "solver": {
+  "max_iter": 100,
+  "tolerance_grad": 1e-10
+ },
+ "smallest_nonzero_heldout_decision_score": {
+  "relational_final": 1.8085688053837146e-06,
+  "relational_all4": 0.00021399383252662663,
+  "surface_logistic": 9.464484163872883e-07,
+  "pointwise_final_pair": 1.2388668779728107e-07,
+  "pointwise_final_reply": 7.778838848393477e-06,
+  "pointwise_all4_pair": 6.924332830671176e-06,
+  "pointwise_all4_reply": 0.00013139037601028747
+ },
+ "dtype": "float64",
+ "features": "thinking_left",
+ "n_train_pairs": 32000,
+ "n_eval_pairs": 8000,
+ "fits": {
+  "relational_final": {
+   "objective": "mean softplus(-d.w) + 0.5*|w|^2/n, no intercept",
+   "l2_n": 32000,
+   "l2_n_unit": "training pairs (one difference row per pair)",
+   "dim": 2048,
+   "optimizer": "Newton with backtracking",
+   "iterations": 5,
+   "final_loss": 0.596859349038114,
+   "grad_inf_norm": 4.646427315540831e-12,
+   "dtype": "float64",
+   "max_iter": 100,
+   "tolerance_grad": 1e-10,
+   "stopped_at_cap": false
+  },
+  "pointwise_final": {
+   "objective": "mean BCE(x.w + b, y) + 0.5*|w|^2/n, intercept unregularized",
+   "l2_n": 64000,
+   "l2_n_unit": "training responses (chosen and rejected rows of each training pair)",
+   "dim": 2048,
+   "optimizer": "Newton with backtracking",
+   "iterations": 4,
+   "final_loss": 0.6767675761775225,
+   "grad_inf_norm": 4.609120782759211e-15,
+   "dtype": "float64",
+   "max_iter": 100,
+   "tolerance_grad": 1e-10,
+   "stopped_at_cap": false
+  },
+  "relational_all4": {
+   "objective": "mean softplus(-d.w) + 0.5*|w|^2/n, no intercept",
+   "l2_n": 32000,
+   "l2_n_unit": "training pairs (one difference row per pair)",
+   "dim": 8192,
+   "optimizer": "Newton with backtracking",
+   "iterations": 6,
+   "final_loss": 0.5185705520392161,
+   "grad_inf_norm": 8.861761608677582e-15,
+   "dtype": "float64",
+   "max_iter": 100,
+   "tolerance_grad": 1e-10,
+   "stopped_at_cap": false
+  },
+  "pointwise_all4": {
+   "objective": "mean BCE(x.w + b, y) + 0.5*|w|^2/n, intercept unregularized",
+   "l2_n": 64000,
+   "l2_n_unit": "training responses (chosen and rejected rows of each training pair)",
+   "dim": 8192,
+   "optimizer": "Newton with backtracking",
+   "iterations": 5,
+   "final_loss": 0.6545713721088426,
+   "grad_inf_norm": 2.1202944152728077e-12,
+   "dtype": "float64",
+   "max_iter": 100,
+   "tolerance_grad": 1e-10,
+   "stopped_at_cap": false
+  },
+  "surface_logistic": {
+   "objective": "mean softplus(-d.w) + 0.5*|w|^2/n, no intercept",
+   "l2_n": 32000,
+   "l2_n_unit": "training pairs (one difference row per pair)",
+   "dim": 5,
+   "optimizer": "Newton with backtracking",
+   "iterations": 3,
+   "final_loss": 0.6865054909204371,
+   "grad_inf_norm": 3.8893274353918864e-11,
+   "dtype": "float64",
+   "max_iter": 100,
+   "tolerance_grad": 1e-10,
+   "stopped_at_cap": false
+  }
+ },
+ "torch_version": "2.12.0.dev20260407+cu128",
+ "torch_threads": 8,
+ "columns": {
+  "position": "index into the 40,000-pair selection (hh_train_indices_40000.json)",
+  "hh_train_index": "row of the Anthropic/hh-rlhf train split",
+  "label": "always 1: the human-preferred (chosen) reply is the first member; a positive pair score is correct, 0 is a tie (1/2)",
+  "identical_after_left_truncation": "1 if the two replies' pooled states are identical (identical texts)",
+  "relational_*": "w.(h_chosen - h_rejected)",
+  "pointwise_*_chosen / _rejected": "w.h + b for each reply; the pair score is chosen minus rejected; per-reply accuracy counts chosen > 0 and rejected <= 0",
+  "length_rule / norm_final_rule": "sign_from_train * (chosen - rejected) of untruncated token count / last-loop state norm",
+  "surface_logistic": "w.(differences in token count and the four loop norms, divided by train std)"
+ }
+}

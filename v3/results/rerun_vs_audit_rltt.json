@@ -1,0 +1,9 @@
+{
+  "note": "epoch-2 evaluator, Ouro-RLTT, 768 tokens: this rerun (A_rltt) vs version 2's July audit, same 8,552 test pairs",
+  "rerun_acc_ties_wrong": 0.644644527595884,
+  "rerun_acc_ties_half": 0.6496141253507951,
+  "audit_acc_ties_wrong": 0.6391487371375117,
+  "pairs_changing_sign": 311,
+  "median_abs_score_changing": 0.3183189034461975,
+  "median_abs_score_all": 1.4703995138406754
+}

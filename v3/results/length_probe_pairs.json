@@ -1,0 +1,25 @@
+{
+  "n_pairs": 8000,
+  "shorter_wins": [
+    0.48075,
+    [
+      0.4704375,
+      0.4908125
+    ]
+  ],
+  "longer_wins": [
+    0.51925,
+    [
+      0.509,
+      0.5295015624999999
+    ]
+  ],
+  "ties": 1162,
+  "both_truncated_384": 1036,
+  "for_reference_probes": {
+    "relational_thinking": 0.56525,
+    "relational_rltt": 0.56975,
+    "relational_base": 0.55525,
+    "pointwise_final_induced_pairwise_thinking": 0.567625
+  }
+}

@@ -1,0 +1,145 @@
+final {'relational_final': np.float64(0.6185), 'pointwise_final_induced_pairwise': np.float64(0.6114)}
+all4 {'relational_final': np.float64(0.6185), 'pointwise_final_induced_pairwise': np.float64(0.6114), 'relational_all4': np.float64(0.6031), 'pointwise_all4_induced_pairwise': np.float64(0.5915)}
+{
+  "n_eval": 8000,
+  "n_eval_identical_after_left_truncation": 34,
+  "acc": {
+    "relational_final": {
+      "all_ties_half": [
+        0.6185,
+        [
+          0.6079375,
+          0.6293125
+        ]
+      ],
+      "distinguishable": 0.6190057745418026
+    },
+    "pointwise_final_induced_pairwise": {
+      "all_ties_half": [
+        0.611375,
+        [
+          0.6006875,
+          0.6221875
+        ]
+      ],
+      "distinguishable": 0.6118503640472006
+    },
+    "pointwise_final_candidate": 0.5499375,
+    "relational_all4": {
+      "all_ties_half": [
+        0.603125,
+        [
+          0.5925625,
+          0.6136875
+        ]
+      ],
+      "distinguishable": 0.6035651518955562
+    },
+    "pointwise_all4_induced_pairwise": {
+      "all_ties_half": [
+        0.5915,
+        [
+          0.5806859375,
+          0.6021890624999999
+        ]
+      ],
+      "distinguishable": 0.5918905347727843
+    },
+    "pointwise_all4_candidate": 0.5453125,
+    "length_rule": {
+      "all_ties_half": [
+        0.5184375,
+        [
+          0.5075625,
+          0.5295
+        ]
+      ],
+      "distinguishable": 0.5185161938237509,
+      "direction_from_train": "larger wins"
+    },
+    "norm_final_rule": {
+      "all_ties_half": [
+        0.528,
+        [
+          0.5170625,
+          0.538875
+        ]
+      ],
+      "distinguishable": 0.5281195079086116,
+      "direction_from_train": "larger wins"
+    },
+    "surface_logistic": {
+      "all_ties_half": [
+        0.5315,
+        [
+          0.5205,
+          0.542375
+        ]
+      ],
+      "distinguishable": 0.531634446397188
+    }
+  },
+  "paired": {
+    "relational_final - pointwise_final_induced_pairwise": {
+      "all": [
+        0.007125,
+        [
+          -0.00225,
+          0.0165
+        ]
+      ],
+      "distinguishable": 0.007155410494602059
+    },
+    "relational_all4 - pointwise_all4_induced_pairwise": {
+      "all": [
+        0.011625,
+        [
+          0.0015,
+          0.021625
+        ]
+      ],
+      "distinguishable": 0.01167461712277178
+    },
+    "relational_all4 - relational_final": {
+      "all": [
+        -0.015375,
+        [
+          -0.025625,
+          -0.005125
+        ]
+      ],
+      "distinguishable": -0.015440622646246549
+    },
+    "relational_final - surface_logistic": {
+      "all": [
+        0.087,
+        [
+          0.072875,
+          0.101125
+        ]
+      ],
+      "distinguishable": 0.08737132814461461
+    },
+    "relational_all4 - surface_logistic": {
+      "all": [
+        0.071625,
+        [
+          0.057375,
+          0.086
+        ]
+      ],
+      "distinguishable": 0.07193070549836807
+    },
+    "pointwise_final_induced_pairwise - surface_logistic": {
+      "all": [
+        0.079875,
+        [
+          0.06575,
+          0.094125
+        ]
+      ],
+      "distinguishable": 0.08021591765001256
+    }
+  }
+}
+wrote weights, per-pair scores and fit metadata to /tmp/claude-1000/-home-moloch-Documents-Research-ouro-Operational-Proto-Introspection/07561c8b-32be-4f56-b8e6-e1f42d49fe0a/scratchpad/conv8

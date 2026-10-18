@@ -1,0 +1,228 @@
+{
+ "backbone": "thinking",
+ "run": "A_thinking_1024",
+ "max_length": 1024,
+ "truncation_side": "right",
+ "tokenizer": "Ouro-RLTT local checkpoint (RPE_RLTT_MODEL)",
+ "dataset": "Anthropic/hh-rlhf test",
+ "dataset_revision": "09be8c5bbc57cb3887f3a9732ad6aa7ec602a1fa",
+ "n_pairs": 8552,
+ "n_token_identical": 68,
+ "token_identical_dataset_indices": [
+  3033,
+  4480,
+  4672,
+  4682,
+  4704,
+  4761,
+  4802,
+  4826,
+  4864,
+  4906,
+  5035,
+  5043,
+  5053,
+  5070,
+  5198,
+  5211,
+  5216,
+  5223,
+  5292,
+  5306,
+  5315,
+  5365,
+  5394,
+  5402,
+  5404,
+  5473,
+  5482,
+  5557,
+  5596,
+  5652,
+  5664,
+  5721,
+  5765,
+  5766,
+  5786,
+  5795,
+  6003,
+  6040,
+  6088,
+  6108,
+  6158,
+  6185,
+  6231,
+  6304,
+  6416,
+  6493,
+  6523,
+  6550,
+  6558,
+  6675,
+  6967,
+  7074,
+  7077,
+  7082,
+  7578,
+  7597,
+  7630,
+  7757,
+  7772,
+  8007,
+  8051,
+  8177,
+  8327,
+  8373,
+  8381,
+  8413,
+  8482,
+  8532
+ ],
+ "n_token_identical_with_identical_texts": 36,
+ "n_state_identical": 37,
+ "state_identical_dataset_indices": [
+  4480,
+  4672,
+  4682,
+  4704,
+  4761,
+  4802,
+  4864,
+  4906,
+  5035,
+  5043,
+  5053,
+  5198,
+  5211,
+  5216,
+  5292,
+  5306,
+  5315,
+  5365,
+  5394,
+  5404,
+  5482,
+  5557,
+  5652,
+  5664,
+  5721,
+  5765,
+  5766,
+  5795,
+  6040,
+  6550,
+  6967,
+  7074,
+  7077,
+  7597,
+  8007,
+  8051,
+  8177
+ ],
+ "n_state_identical_within_token_identical": 37,
+ "n_state_identical_outside_token_identical": 0,
+ "note": "state-identical = pooled states of chosen and rejected exactly equal (what summarize_epochs.py excluded); chosen and rejected are run as separate left-padded batches of 4, so identical inputs can meet different padding and batch companions; this is the likely (not tested) reason some token-identical pairs have slightly different bfloat16 states.",
+ "bootstrap": {
+  "seed": 20260710,
+  "draws": 10000,
+  "unit": "pair",
+  "same_as": "summarize_epochs.py"
+ },
+ "epochs": {
+  "1": {
+   "acc_all": 0.6365177736202058,
+   "ci_all": [
+    0.6262263213283443,
+    0.6466323666978484
+   ],
+   "acc_excluding_token_identical": 0.6376709099481377,
+   "ci_excluding_token_identical": [
+    0.6271776284771334,
+    0.6479255068363979
+   ],
+   "change_points": 0.11531363279319029,
+   "acc_excluding_state_identical_saved": 0.637110980622431,
+   "token_identical_pairs": {
+    "exact_score_ties": 37,
+    "counted_correct": 33.5,
+    "accuracy": 0.49264705882352944
+   }
+  },
+  "2": {
+   "acc_all": 0.6470416276894294,
+   "ci_all": [
+    0.6368685687558466,
+    0.657156220767072
+   ],
+   "acc_excluding_token_identical": 0.6479255068363979,
+   "ci_excluding_token_identical": [
+    0.6376709099481377,
+    0.6582979726544083
+   ],
+   "change_points": 0.08838791469685248,
+   "acc_excluding_state_identical_saved": 0.6476805637110981,
+   "token_identical_pairs": {
+    "exact_score_ties": 37,
+    "counted_correct": 36.5,
+    "accuracy": 0.5367647058823529
+   }
+  },
+  "3": {
+   "acc_all": 0.650432647333957,
+   "ci_all": [
+    0.6399657974742751,
+    0.6606057062675398
+   ],
+   "acc_excluding_token_identical": 0.6515794436586516,
+   "ci_excluding_token_identical": [
+    0.6414397689768977,
+    0.6617161716171617
+   ],
+   "change_points": 0.114679632469461,
+   "acc_excluding_state_identical_saved": 0.6510863182618908,
+   "token_identical_pairs": {
+    "exact_score_ties": 37,
+    "counted_correct": 34.5,
+    "accuracy": 0.5073529411764706
+   }
+  },
+  "4": {
+   "acc_all": 0.6525374181478016,
+   "ci_all": [
+    0.6422474275023387,
+    0.6627104770813844
+   ],
+   "acc_excluding_token_identical": 0.6535832154644036,
+   "ci_excluding_token_identical": [
+    0.6434464875058934,
+    0.6638378123526638
+   ],
+   "change_points": 0.10457973166019263,
+   "acc_excluding_state_identical_saved": 0.6532002348796242,
+   "token_identical_pairs": {
+    "exact_score_ties": 37,
+    "counted_correct": 35.5,
+    "accuracy": 0.5220588235294118
+   }
+  },
+  "5": {
+   "acc_all": 0.6528882132834425,
+   "ci_all": [
+    0.6425397567820393,
+    0.6630028063610851
+   ],
+   "acc_excluding_token_identical": 0.6538189533239038,
+   "ci_excluding_token_identical": [
+    0.6436822253653937,
+    0.6640735502121641
+   ],
+   "change_points": 0.0930740040461342,
+   "acc_excluding_state_identical_saved": 0.6535525543159131,
+   "token_identical_pairs": {
+    "exact_score_ties": 37,
+    "counted_correct": 36.5,
+    "accuracy": 0.5367647058823529
+   }
+  }
+ }
+}
