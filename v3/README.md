@@ -1,8 +1,14 @@
 # RPE v3: analysis package
 
-Scripts, result files and per-pair outputs for version 3 of Jan Kirin, *Relational Preference Encoding in Looped
-Transformer Internal States* ([arXiv:2604.09870](https://arxiv.org/abs/2604.09870)). Version 3 replaces versions 1
-and 2, whose headline numbers came from evaluation errors.
+Scripts, result files and per-pair outputs for version 3 of Jan Kirin, *Reading Human Preference from Looped Transformer Internal States* ([arXiv:2604.09870](https://arxiv.org/abs/2604.09870)). Version 3 replaces versions 1
+and 2, titled *Relational Preference Encoding in Looped Transformer Internal States*, whose headline numbers came from
+evaluation errors.
+
+The linear probes rank pairs with the same family of functions, trained with different objectives. The primary
+nonlinear comparison estimates a joint reader's advantage over a per-reply scorer at +0.7 percentage points
+(95% CI [0.0, 1.4]); its prespecified verdict is unresolved. The all-loop and RLTT secondary comparisons bound
+the advantage below one point for the tested networks. These comparisons do not determine how preference is
+represented in general or isolate the cause of the original evaluator's performance.
 
 The package is small: it does not contain model weights, feature shards or evaluator checkpoints. Those are listed,
 with SHA-256 and size, in `INPUTS_OFFLINE.sha256`. Every file in the package is listed in `MANIFEST.sha256`.
@@ -105,8 +111,10 @@ the saved one exactly.
 | Sec. 2 evaluator size (4.7M parameters) | `paper_numbers.py` | `evaluator_core/pairwise_evaluator.py` |
 | App. B "state-only copies with identical weights" | none (record only) | `checkpoint_copies_identical.json` |
 | Figs. 1–4 | `make_figures.py` | `figures/*.pdf` |
-| Relational test (pair model vs decomposable model), if reported | `relational_test.py` | `relational_test_20261018/results_*.json`, `pairs_*.csv` |
-| Version 1 values (95.2, 84.5, 21.75, 83.3 → 62.4 by epoch, 60–70% training accuracy, 500-pair length and norm checks, correlation −0.94 on 100 pairs) and version 2's 74% partner share | not recomputed; quoted from versions 1 and 2 of arXiv:2604.09870 | |
+| Sec. 3.4 relational test: per-reply network 64.9, pair network 65.6, lead +0.7 [0.0, 1.4] (unresolved); all four loops −0.3 [−1.0, 0.4]; Ouro-RLTT +0.0 [−0.7, 0.7]; linear probe on the same 512 components 62.5, per-reply network minus it +2.3 [1.5, 3.1], minus the raw-feature probe +3.3 [2.3, 4.4]; capacity-matched pair network minus per-reply network +0.65 [−0.05, 1.36] (`paired."P_matched - D"`) | `relational_test.py` | `relational_test_20261018/results_thinking_last.json`, `results_thinking_all4.json`, `results_rltt_last.json`, `pairs_*.csv`, `PROTOCOL.md` |
+| Sec. 4.1 random-order accuracies on the test pairs (61.4, 57.1, 61.1, 65.1, 65.1 after epochs 1 to 5) | mean of `fixed_order_acc` and `swapped_order_acc` for each epoch | `epochs_thinking_1024.json` |
+| Sec. 4 "23 to 33 points" | differences of values above: 84.5 − 61.5, 95.2 − 64.7, 54.9 − 21.75 | |
+| Version 1 values (95.2, 84.5 on 1,000 examples, 21.75, 83.3 → 62.4 by epoch, 60–70% training accuracy, 500-pair length and norm checks, correlation −0.94 on 100 pairs) and version 2's 74% partner share | not recomputed; quoted from versions 1 and 2 of arXiv:2604.09870 | |
 
 `length_probe_pairs.json` (length rules on the probe pairs under version 2's right truncation) is supporting
 material; the paper quotes the probe-pair length rule from `probes_thinking_converged.json` (no fit involved; the
